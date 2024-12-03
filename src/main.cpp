@@ -290,9 +290,17 @@ int main(int argc, char **argv)
       }
       std::cout << std::endl;
 
+
+      std::free(res);
+
+
+      // also need to free the image_data from devil
+      // so all devIL code probably need to be in this function or use inline on the function mby?
+
     } catch (const sycl::exception& e) {
       std::cout << "Exception caught: " << e.what() << std::endl;
     }
+
 
 
 
