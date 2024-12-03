@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <iostream>
 #include <sycl/sycl.hpp>
 
@@ -108,7 +109,8 @@ static void parseargs(int argc, char** argv, std::string& inputFile) {
 // #endif
 // }
 
-void processImage(const std::string& inputFile, unsigned char* image_data)
+// image_data is a reference to a pointer so that we can update the nullptr to the image data from devIL
+void processImage(const std::string& inputFile, unsigned char* &image_data, int &w, int &h)
 {
   using namespace std;
   // load in the image 
@@ -137,18 +139,25 @@ void processImage(const std::string& inputFile, unsigned char* image_data)
     }
 
     // Get image dimensions
-    const auto w = ilGetInteger(IL_IMAGE_WIDTH);
-    const auto h = ilGetInteger(IL_IMAGE_HEIGHT);
+    w = ilGetInteger(IL_IMAGE_WIDTH);
+    h = ilGetInteger(IL_IMAGE_HEIGHT);
     cout << "Loading " << w << " x " << h << " image " << inputFile << endl;
 
     // Get raw image data
     image_data = ilGetData();
 
+
+  // print out first 10 bytes of the image
+  // for (int i = 0; i < 10; i++) {
+  //   std::cout << static_cast<int>(image_data[i*10]) << " ";
+  // }
+
     // Example usage of image_data with your PopSift class
     // job = PopSift.enqueue(w, h, image_data);
 
     // Clean up the DevIL image
-    ilDeleteImages(1, &image);
+    // ilDeleteImages(1, &image);
+    // need to clean it up later on 
 
 #else
   cout << "Devil not enabled, cannot load image backup not implemented yet :D" << endl;
@@ -156,11 +165,11 @@ void processImage(const std::string& inputFile, unsigned char* image_data)
 }
 
 
-const std::string secret{
-  "Ifmmp-!xpsme\"\012J(n!tpssz-!Ebwf/!"
-  "J(n!bgsbje!J!dbo(u!ep!uibu/!.!IBM\01"};
-
-const auto sz = secret.size();
+// const std::string secret{
+//   "Ifmmp-!xpsme\"\012J(n!tpssz-!Ebwf/!"
+//   "J(n!bgsbje!J!dbo(u!ep!uibu/!.!IBM\01"};
+//
+// const auto sz = secret.size();
 
 
 int main(int argc, char **argv)
@@ -210,29 +219,97 @@ int main(int argc, char **argv)
 
 
 
-  unsigned char* image_data{};
-  processImage(inputFile, image_data);
+  unsigned char* image_data = nullptr;
+  int w, h;
+  processImage(inputFile, image_data, w, h);
+  
+
+  // unsigned char test_img[] = {0, 1, 9, 255, 255, 15, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4};
+
+  // unsigned char* test_p_img = &test_img[0];
+  // print out the first 10 bytes of the image
+  for (int i = 0; i < 10; i++) {
+    std::cout << static_cast<int>(image_data[i]) << " ";
+  }
+  std::cout << std::endl;
+
+
+  std::cout << "Image size: " << w << " x " << h << std::endl;
 
 
   {
     using namespace sycl;
 
-    queue q;
+    try {
+      queue q;
 
 
-    std::cout << "Selected device: "
-      << q.get_device().get_info<info::device::name>()
-      << "\n";
+      std::cout << "Selected device: "
+        << q.get_device().get_info<info::device::name>()
+        << "\n";
 
-    char* result = malloc_shared<char>(sz, q);
-    std::memcpy(result, secret.data(), sz);
 
-    q.parallel_for(sz, [=](auto& i) {
-      result[i] -= 1;
-    }).wait();
+      // seems like sycl::image does only support four dimensional images hence seems to not make alot of sense for a grayscale image
+      // hence using buffers instead. Might look at codeplay bindless images later on and see if that would work well for grayscale
 
-    std::cout << result << "\n";
-    free(result, q);
+
+      buffer<unsigned char, 2> srcImage(image_data, range<2>(w, h));
+
+      // the same as above just different syntax
+      // auto srcImage = buffer<unsigned char, 2>(image_data, range<2>(w, h));
+
+      // even more verbose -- same as above
+      // buffer<unsigned char, 2> srcImage = buffer<unsigned char, 2>(image_data, range<2>(w, h));
+
+
+      // unsigned char* result = malloc_shared<unsigned char>(w*h, q);
+
+
+      // unsigned char* res = std::malloc(w*h);
+      unsigned char* res = static_cast<unsigned char*>(std::malloc(w * h * sizeof(unsigned char)));
+
+
+      buffer<unsigned char, 2> dstImage(res, range<2>(w, h));
+
+
+      q.submit([&](handler& cgh) {
+
+        accessor img(srcImage, cgh, read_only);
+        accessor result(dstImage, cgh, write_only);
+        cgh.parallel_for(range<2>(w, h), [=](id<2> idx) {
+          result[idx] = img[idx] - 1;
+        });
+      });
+
+      q.wait();
+
+      // print out the first 10 bytes of the image
+
+      for (int i = 0; i < 10; i++) {
+        std::cout << static_cast<int>(res[i]) << " ";
+      }
+      std::cout << std::endl;
+
+    } catch (const sycl::exception& e) {
+      std::cout << "Exception caught: " << e.what() << std::endl;
+    }
+
+
+
+
+
+
+      // auto img = srcImage.get_access<access::mode::read>(cgh);
+
+    // char* result = malloc_shared<char>(sz, q);
+    // std::memcpy(result, secret.data(), sz);
+    //
+    // q.parallel_for(sz, [=](auto& i) {
+    //   result[i] -= 1;
+    // }).wait();
+    //
+    // std::cout << result << "\n";
+    // free(result, q);
     return 0;
 
 
