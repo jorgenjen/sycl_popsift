@@ -12,19 +12,6 @@
 #endif
 
 
-
-
-
-
-/* static void parseargs(int argc, char** argv, std::string& inputFile) { */
-/*   // should switch to the boost library later on -- as in popsift */
-/*   if (argc < 2) { */
-/*     throw std::runtime_error("Usage: " + std::string(argv[0]) + " <input file>"); */
-/*   } */
-/*   inputFile = std::string(argv[1]); */
-/* } */
-
-
 // should probably use a similar options struct as popsift in the future revisions
 // just for initial layout
 static void parseargs(int argc, char** argv, std::string& inputFile) {
@@ -67,48 +54,6 @@ static void parseargs(int argc, char** argv, std::string& inputFile) {
 }
 
 
-
-
-// void processImageOld(const std::string& inputFile, unsigned char& image_data)
-// {
-//   using namespace std;
-//
-//   // load in the image 
-//
-// #ifdef USE_DEVIL
-//
-//   /* unsigned char* image_data; */
-//
-//   cout << "USING DEVIL" << endl;
-//
-//   ilImage img;
-//   if( img.Load( inputFile.c_str() ) == false ) {
-//     cerr << "Could not load image " << inputFile << endl;
-//     return 0;
-//   }
-//   if( img.Convert( IL_LUMINANCE ) == false ) {
-//     cerr << "Failed converting image " << inputFile << " to unsigned greyscale image" << endl;
-//     exit( -1 );
-//   }
-//   const auto w = img.Width();
-//   const auto h = img.Height();
-//   cout << "Loading " << w << " x " << h << " image " << inputFile << endl;
-//
-//   // stores the image to given pointer
-//   image_data = img.GetData();
-//
-//   // should probably use a version of this class
-//   /* job = PopSift.enqueue( w, h, image_data ); */
-//
-//
-//   img.Clear();
-//
-//
-// #else
-//   cout << "Devil not enabled, cannot load image backup not implemented yet :D" << endl;
-// #endif
-// }
-
 // image_data is a reference to a pointer so that we can update the nullptr to the image data from devIL
 void processImage(const std::string& inputFile, unsigned char* &image_data, int &w, int &h)
 {
@@ -147,15 +92,10 @@ void processImage(const std::string& inputFile, unsigned char* &image_data, int 
     image_data = ilGetData();
 
 
-  // print out first 10 bytes of the image
-  // for (int i = 0; i < 10; i++) {
-  //   std::cout << static_cast<int>(image_data[i*10]) << " ";
-  // }
-
     // Example usage of image_data with your PopSift class
     // job = PopSift.enqueue(w, h, image_data);
 
-    // Clean up the DevIL image
+    // Clean up the DevIL image -- can't do it here need to be after we are done with it
     // ilDeleteImages(1, &image);
     // need to clean it up later on 
 
@@ -163,13 +103,6 @@ void processImage(const std::string& inputFile, unsigned char* &image_data, int 
   cout << "Devil not enabled, cannot load image backup not implemented yet :D" << endl;
 #endif
 }
-
-
-// const std::string secret{
-//   "Ifmmp-!xpsme\"\012J(n!tpssz-!Ebwf/!"
-//   "J(n!bgsbje!J!dbo(u!ep!uibu/!.!IBM\01"};
-//
-// const auto sz = secret.size();
 
 
 int main(int argc, char **argv)
@@ -300,30 +233,8 @@ int main(int argc, char **argv)
     } catch (const sycl::exception& e) {
       std::cout << "Exception caught: " << e.what() << std::endl;
     }
-
-
-
-
-
-
-
-      // auto img = srcImage.get_access<access::mode::read>(cgh);
-
-    // char* result = malloc_shared<char>(sz, q);
-    // std::memcpy(result, secret.data(), sz);
-    //
-    // q.parallel_for(sz, [=](auto& i) {
-    //   result[i] -= 1;
-    // }).wait();
-    //
-    // std::cout << result << "\n";
-    // free(result, q);
     return 0;
-
-
   }
-
-
 }
 
 
