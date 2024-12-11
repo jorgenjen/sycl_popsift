@@ -1,3 +1,26 @@
+# # Followring documentation
+# if (CMAKE_HOST_WIN32)
+#   # need CMake 3.25.0+ for IntelLLVM support of target link properties on Windows
+#   cmake_minimum_required(VERSION 3.25)
+# else()
+#   # CMake 3.23.5 is the minimum recommended for IntelLLVM on Linux
+#   cmake_minimum_required(VERSION 3.23.5)
+# endif()
+#
+#
+# project(sycl_popSift VERSION 1.0.0 LANGUAGES CXX)
+#
+# # Recommended over IntelDPCPP according to intel docs it might be deprecated in the future 
+# find_package(IntelSYCL REQUIRED) # should de added after project definition
+#
+
+# FROM DOCS:
+# Add the sources that require SYCL support to add_sycl_to_target(). 
+# Not specifying any sources to add_sycl_to_target() adds SYCL compilation to all sources, 
+# which may affect compilation time significantly:
+
+
+
 if(UNIX)
     # Direct CMake to use icpx rather than the default C++ compiler/linker
     set(CMAKE_CXX_COMPILER icpx)
@@ -5,27 +28,97 @@ else() # Windows
     # Force CMake to use icx-cl rather than the default C++ compiler/linker 
     # (needed on Windows only)
     include (CMakeForceCompiler)
-    CMAKE_FORCE_CXX_COMPILER (icx-cl IntelDPCPP)
+    CMAKE_FORCE_CXX_COMPILER (icx-cl IntelDPCPP) # Should probably change this to IntelSYCL if possible
     include (Platform/Windows-Clang)
 endif()
 
+
+
+# 
+
+find_package(IntelDPCPP REQUIRED)
+
+# TODO: Check if it is possible to lower this VERISON requirement
 cmake_minimum_required (VERSION 3.4)
 
-project(sycl_popsift)
-
+# project(sycl_popsift)
+project(PopSift VERSION 1.0.0 LANGUAGES CXX)
 
 message(STATUS "Hello, SYCL POPSIFT -- could be used for different cmake compoilation message")
 
 # This needs to be updated later on in addidtion to the whole thing to support GPU :D
-set(SOURCE_FILE src/main.cpp) 
-set(TARGET_NAME sycl_popsift)
+# set(SOURCE_FILE src/main.cpp) 
+# set(TARGET_NAME sycl_popsift)
+
+# To generate compile_commands.json -- useful for clangd LSP
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 
-# Find Boost libraries
-find_package(Boost 1.70 REQUIRED COMPONENTS filesystem program_options)
+# Set build path as a folder named as the platform (linux, windows, darwin...) plus the processor type
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
 
-# Look for DevIL library
-find_package(DevIL COMPONENTS IL ILU) # yields IL_FOUND, IL_LIBRARIES, IL_INCLUDE_DIR
+
+# TODO: Add more options like Popsift has if suitable
+option(PopSift_BUILD_EXAMPLES "Build PopSift applications."  ON) # JUst for a test
+
+
+# TODO: FIgure of what this does and see if it is needed (and helpful)
+if(PopSift_USE_POSITION_INDEPENDENT_CODE AND NOT MSVC)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+
+
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake")
+
+# set(CMAKE_BUILD_TYPE Debug)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release)
+  message(STATUS "Build type not set, building in Release configuration")
+  # Set the possible values of build type for cmake-gui
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+else()
+  message(STATUS "Building in ${CMAKE_BUILD_TYPE} configuration")
+endif()
+
+# ensure the proper linker flags when building the static version on MSVC
+if(MSVC AND NOT BUILD_SHARED_LIBS)
+  foreach(config "DEBUG" "RELEASE" "MINSIZEREL" "RELWITHDEBINFO")
+    string(REPLACE /MD /MT CMAKE_C_FLAGS_${config} "${CMAKE_C_FLAGS_${config}}")
+    string(REPLACE /MD /MT CMAKE_CXX_FLAGS_${config} "${CMAKE_CXX_FLAGS_${config}}")
+    message(STATUS "CMAKE_C_FLAGS_${config} ${CMAKE_C_FLAGS_${config}}")
+    message(STATUS "CMAKE_CXX_FLAGS_${config} ${CMAKE_CXX_FLAGS_${config}}")
+  endforeach()
+endif()
+
+# ==============================================================================
+# GNUInstallDirs CMake module
+# - Define GNU standard installation directories
+# - Provides install directory variables as defined by the GNU Coding Standards.
+# ==============================================================================
+include(GNUInstallDirs)
+
+# Require threads because of std::thread.
+find_package(Threads REQUIRED)
+
+# TODO: Not sure what version this sould be set to and if it needs to be set at all
+
+set(PopSift_CXX_STANDARD 17)
+
+set(CMAKE_CXX_STANDARD ${PopSift_CXX_STANDARD})
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_subdirectory(src)
+
+
+# TODO: Add to following commented out code to the applicatin cmakelists.txt
+
+# Only needed for application not the library
+# # Find Boost libraries
+# find_package(Boost 1.70 REQUIRED COMPONENTS filesystem program_options)
+#
+# # Look for DevIL library
+# find_package(DevIL COMPONENTS IL ILU) # yields IL_FOUND, IL_LIBRARIES, IL_INCLUDE_DIR
 
 # This is a Windows-specific flag that enables exception handling in host code
 if(WIN32)
@@ -33,8 +126,8 @@ if(WIN32)
 endif()
 
 # Lists that we build and include in the target
-set(PD_INCLUDE_DIRS    ${Boost_INCLUDE_DIRS})
-set(PD_LINK_LIBS       ${Boost_LIBRARIES}) 
+# set(PD_INCLUDE_DIRS    ${Boost_INCLUDE_DIRS})
+# set(PD_LINK_LIBS       ${Boost_LIBRARIES}) 
 
 
 if(IL_FOUND OR DevIL_FOUND)
@@ -55,9 +148,9 @@ set(COMPILE_FLAGS "-fsycl -Wall ${WIN_FLAG} ${PD_COMPILE_OPTIONS}")
 set(LINK_FLAGS "-fsycl")
 
 
-add_executable(${TARGET_NAME} ${SOURCE_FILE})
-set_target_properties(${TARGET_NAME} PROPERTIES COMPILE_FLAGS "${COMPILE_FLAGS}")
-set_target_properties(${TARGET_NAME} PROPERTIES LINK_FLAGS "${LINK_FLAGS}")
-
-target_include_directories(${TARGET_NAME} PUBLIC ${PD_INCLUDE_DIRS})
-target_link_libraries(${TARGET_NAME} ${PD_LINK_LIBS})
+# add_executable(${TARGET_NAME} ${SOURCE_FILE})
+# set_target_properties(${TARGET_NAME} PROPERTIES COMPILE_FLAGS "${COMPILE_FLAGS}")
+# set_target_properties(${TARGET_NAME} PROPERTIES LINK_FLAGS "${LINK_FLAGS}")
+#
+# target_include_directories(${TARGET_NAME} PUBLIC ${PD_INCLUDE_DIRS})
+# target_link_libraries(${TARGET_NAME} ${PD_LINK_LIBS})
