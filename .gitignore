@@ -1,2 +1,4 @@
 build
 .cache/clangd/index
+not_in_use_cmake
+src/tmp
