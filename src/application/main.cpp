@@ -4,7 +4,7 @@
 
 
 // for testing of class
-#include <sycl_popsift/lib_class.hpp>
+#include <sycl_popsift/popsift.hpp>
 
 #include <boost/filesystem.hpp>
 #include <boost/program_options.hpp>

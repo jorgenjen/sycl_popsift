@@ -1,17 +1,18 @@
 # Get all header and source files in library
-file(GLOB POPSIFT_LIBRARY_SOURCES sycl_popsift/*.cpp sycl_popsift/*.hpp)
+file(GLOB POPSIFT_LIBRARY_SOURCES_SYCL sycl_popsift/*.cpp sycl_popsift/*.hpp)
+file(GLOB POPSIFT_LIBRARY_SOURCES_NO_SYCL sycl_popsift/common/* sycl_popsift/non_sycl/*)
 
 # Consider removing this message
-message(STATUS "PopSift Library Sources: ${POPSIFT_LIBRARY_SOURCES}")
+message(STATUS "PopSift Library Sources: ${POPSIFT_LIBRARY_SOURCES_SYCL} ${POPSIFT_LIBRARY_SOURCES_NO_SYCL}")
 
 # TODO: Figure out if it should be STATIC, SHARED or not set like in popsift (aka using BUILD_SHARED_LIBS to do
 # do it differntly for MSVC and shared libs
 
 # Do not specify SHARED or STATIC in add_library. Let the variable BUILD_SHARED_LIBS determine this.
-add_library(sycl_popsift ${POPSIFT_LIBRARY_SOURCES})
+add_library(sycl_popsift ${POPSIFT_LIBRARY_SOURCES_SYCL} ${POPSIFT_SOURCES_NO_SYCL})
 
 # add_sycl_to_target(TARGET sycl_popsift SOURCES sycl_popsift/lib_class.cpp sycl_popsift/lib_class.hpp)
-add_sycl_to_target(TARGET sycl_popsift SOURCES ${POPSIFT_LIBRARY_SOURCES})
+add_sycl_to_target(TARGET sycl_popsift SOURCES ${POPSIFT_LIBRARY_SOURCES_SYCL})
 
 
 target_link_libraries(sycl_popsift
