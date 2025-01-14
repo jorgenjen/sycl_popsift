@@ -111,22 +111,8 @@ void processImage(const std::string& inputFile, unsigned char* &image_data, int 
 int main(int argc, char **argv)
 {
 
-  // Testing the PopSift class
-
-  PopSift PopSift(10, 20);
-
-  PopSift.printDim();
-  PopSift.printDevice();
 
 
-  {
-    using namespace std;
-    #ifdef USE_DEVIL
-      cout << "Devil is enabled" << endl;
-    #else
-      cout << "Devil is not enabled" << endl;
-    #endif
-  }
 
   std::string         inputFile{};
 
@@ -168,6 +154,19 @@ int main(int argc, char **argv)
   int w, h;
   processImage(inputFile, image_data, w, h);
   
+
+
+
+
+  // Testing the PopSift class
+
+  PopSift PopSift(10, 20, image_data);
+
+  PopSift.printDim();
+  PopSift.printImage();
+  PopSift.modifyImage();
+  PopSift.printImage();
+  // PopSift.printDevice();
 
   // unsigned char test_img[] = {0, 1, 9, 255, 255, 15, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4};
 
