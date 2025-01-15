@@ -1,4 +1,5 @@
 #include "popsift.hpp"
+#include "sycl/accessor.hpp"
 
 #include <sycl/sycl.hpp>
 #include <iostream>
@@ -8,7 +9,9 @@ using namespace std;
 PopSift::PopSift(int w, int h, unsigned char* imageData)
   : _w(w),
   _h(h),
+  // _imageData(imageData, sycl::range<2>(w, h), {sycl::property::buffer::use_host_ptr()})
   _imageData(imageData, sycl::range<2>(w, h))
+
 {
 
   // sycl::queue _deviceQueue;
@@ -41,38 +44,38 @@ void PopSift::printDevice()
   }
 }
 
-void PopSift::printImage()
+
+// Helper function for development
+// ranges are inclusive on 0th dimension and exclusive on 1th dimension
+void PopSift::printImageRegion(sycl::range<2> horiz, sycl::range<2> vert)
 {
   // print out the first 10 bytes of the image
-
   using namespace sycl;
 
+  // wait for all previous enqued task to end before doing the print to show desired data
+  _deviceQueue.wait();
 
-  // MR segfault
-  _deviceQueue.submit([&](handler& cgh) {
+  host_accessor<unsigned char, 2, access::mode::read> h_acc(_imageData);
 
-    accessor img(_imageData, cgh, read_only);
-    
-    // int printCount = std::min(static_cast<size_t>(10), _w *_h);
-    int printCount = 10;
+  if (vert.get(0) > _w && vert.get(0) < 0 || 
+      vert.get(1) > _w && vert.get(1) < 0 ||
+      vert.get(0) >= vert.get(1)
+  )
+  {
+    std::cout << "Image region is not legal" << std::endl;
+  }
 
-    for (size_t i = 0; i < printCount; ++i)
+  std::cout << "Image region: horiz = (" << horiz.get(0) << " -> " << horiz.get(1)
+            << ") vert = (" << vert.get(0) << " -> " << vert.get(1) << ")" << std::endl;
+  // using range in a odd way (I know :D)
+  for (int i = vert.get(0); i < vert.get(1); ++i)
+  {
+    for (int j = horiz.get(0); j < horiz.get(1); ++j)
     {
-      size_t row = i / _w;
-      size_t col = i % _w;
-      unsigned char pixel_val = img[row][col];
-
-      std::cout << static_cast<int>(pixel_val); 
+         std::printf("%03u ", h_acc[j][i]);
     }
-    std::cout << std::endl;
-
-    // for (int i = 0; i < 10; i++) {
-    //   // std::cout << static_cast<int>(img[i]) << " ";
-    //   id<2> idx(i, 0);
-    //   std::cout << img[idx] << " ";
-    // }
-    // std::cout << std::endl;
-  });
+       std::cout << std::endl;
+  }
 }
 
 
@@ -89,10 +92,10 @@ void PopSift::modifyImage()
   }
 
   // Modify the image
-  
   std::cout << "Modifyig image now" << std::endl;
 
   _deviceQueue.submit([&](handler& cgh) {
+    printf("w=%d  -- h=%d", _w, _h);
 
     accessor img(_imageData, cgh, read_write);
     cgh.parallel_for(range<2>(_w, _h), [=](id<2> idx) {

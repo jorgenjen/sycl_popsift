@@ -160,25 +160,26 @@ int main(int argc, char **argv)
 
   // Testing the PopSift class
 
-  PopSift PopSift(10, 20, image_data);
+  PopSift PopSift(w, h, image_data);
 
   PopSift.printDim();
-  PopSift.printImage();
+  PopSift.printImageRegion(sycl::range(20, 25), sycl::range(20, 25));
   PopSift.modifyImage();
-  PopSift.printImage();
+  PopSift.printImageRegion(sycl::range(20, 25), sycl::range(20, 25));
+  // PopSift.printImage(10);
   // PopSift.printDevice();
 
   // unsigned char test_img[] = {0, 1, 9, 255, 255, 15, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4};
 
   // unsigned char* test_p_img = &test_img[0];
   // print out the first 10 bytes of the image
-  for (int i = 0; i < 10; i++) {
-    std::cout << static_cast<int>(image_data[i]) << " ";
-  }
-  std::cout << std::endl;
+  // for (int i = 0; i < 10; i++) {
+  //   std::cout << static_cast<int>(image_data[i]) << " ";
+  // }
+  // std::cout << std::endl;
 
 
-  std::cout << "Image size: " << w << " x " << h << std::endl;
+  // std::cout << "Image size: " << w << " x " << h << std::endl;
 
   
   exit(EXIT_SUCCESS); // To avoid two queues at the same time for this test

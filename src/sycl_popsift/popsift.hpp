@@ -21,7 +21,7 @@ public:
   void printDim();
   void printDevice();
   void modifyImage();
-  void printImage();
+  void printImageRegion(sycl::range<2> horiz, sycl::range<2> vert);
   // destructor
   // ~PopSift();
 
