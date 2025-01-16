@@ -1,10 +1,12 @@
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <sycl/sycl.hpp>
 
 
-// for testing of class
+// Popsift includes
 #include <sycl_popsift/popsift.hpp>
+#include <sycl_popsift/non_sycl/sift_conf.hpp>
 
 #include <boost/filesystem.hpp>
 #include <boost/program_options.hpp>
@@ -111,9 +113,9 @@ void processImage(const std::string& inputFile, unsigned char* &image_data, int 
 int main(int argc, char **argv)
 {
 
+  popsift::Config config; // Init with default parameters
 
-
-
+  std::cout << "Le upscalefactor: " << config.getUpscaleFactor() << std::endl;
   std::string         inputFile{};
 
   try {
@@ -141,11 +143,12 @@ int main(int argc, char **argv)
       std::cout << "Regurlar file will be processed" << std::endl;
       /* inputFiles.push_back( inputFile ); */
     } else {
-      std::cout << "Input file is neither regular file nor directory, nothing to do" << std::endl;
+      std::cout << "Input file is neither regular file nor directory, nothing to do" << std::endl << "Exiting..." << std::endl;
       return EXIT_FAILURE;
     }
   } else {
-    std::cout << "Input file does not exist, nothing to do" << std::endl;
+    std::cout << "Input file does not exist, nothing to do" << std::endl << "Exiting..." << std::endl;
+    return EXIT_FAILURE;
   }
 
 

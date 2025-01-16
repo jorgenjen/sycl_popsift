@@ -5,8 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-#include "../common/debug_macros.h"
-#include "sift_conf.h"
+#include "../common/debug_macros.hpp"
+#include "sift_conf.hpp"
 
 #include <iostream>
 
@@ -28,7 +28,7 @@ Config::Config( )
     , _desc_mode( Config::Loop )
     , _grid_filter_mode( Config::RandomScale )
     , verbose( false )
-    // , _max_extrema( 20000 )
+    // , _max_extrema( 20000 ) // Uncommented in popsift aswell not done by Jørgen Jensovld :D
     , _max_extrema( 100000 )
     , _filter_max_extrema( -1 )
     , _filter_grid_size( 2 )

@@ -1,3 +1,17 @@
+#pragma once
+
+// #include <cuda_runtime.h>
+
+#include <cassert>
+#include <cstdlib>
+#include <iomanip>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <sstream>
+
+
+
 #define POP_FATAL(s)                                                                                                   \
     {                                                                                                                  \
         std::stringstream ss;                                                                                          \
