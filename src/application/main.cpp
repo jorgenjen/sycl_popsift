@@ -60,10 +60,14 @@ static void parseargs(int argc, char** argv, std::string& inputFile) {
 
 
 // image_data is a reference to a pointer so that we can update the nullptr to the image data from devIL
-void processImage(const std::string& inputFile, unsigned char* &image_data, int &w, int &h)
+SiftJob* processImage(const std::string& inputFile, unsigned char* &image_data, int &w, int &h, PopSift& PopSift)
 {
   using namespace std;
   // load in the image 
+
+  SiftJob* job;
+  // unsigned char* image_data; // should move image_data to local varaible
+
 
 #ifdef USE_DEVIL
     // Initialize DevIL
@@ -97,12 +101,20 @@ void processImage(const std::string& inputFile, unsigned char* &image_data, int 
     image_data = ilGetData();
 
 
+
+  // enqueue the job - image is copied in this method
+  job = PopSift.enqueue( w, h, image_data );
+
+
+
     // Example usage of image_data with your PopSift class
     // job = PopSift.enqueue(w, h, image_data);
 
     // Clean up the DevIL image -- can't do it here need to be after we are done with it
-    // ilDeleteImages(1, &image);
+    ilDeleteImages(1, &image);
     // need to clean it up later on 
+
+  return job;
 
 #else
   cout << "Devil not enabled, cannot load image backup not implemented yet :D" << endl;
@@ -155,7 +167,13 @@ int main(int argc, char **argv)
 
   unsigned char* image_data = nullptr;
   int w, h;
-  processImage(inputFile, image_data, w, h);
+
+  // TODO: Not really supposed to pass the image data to popsift in final implenentation need to refactor!!! On sunday
+  PopSift PopSift(w, h, image_data);
+
+  // Queue for multiple jobs
+  // std::queue<SiftJob*> jobs;
+  SiftJob* leJob = processImage(inputFile, image_data, w, h, PopSift);
   
 
 
@@ -163,7 +181,6 @@ int main(int argc, char **argv)
 
   // Testing the PopSift class
 
-  PopSift PopSift(w, h, image_data);
 
   PopSift.printDim();
   PopSift.printImageRegion(sycl::range(20, 25), sycl::range(20, 25));
@@ -184,6 +201,7 @@ int main(int argc, char **argv)
 
   // std::cout << "Image size: " << w << " x " << h << std::endl;
 
+  PopSift.uninit();
   
   exit(EXIT_SUCCESS); // To avoid two queues at the same time for this test
   std::cout << "Creating sycl queue" << std::endl;
