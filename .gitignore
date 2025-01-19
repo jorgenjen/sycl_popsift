@@ -2,3 +2,5 @@ build
 .cache/clangd/index
 not_in_use_cmake
 src/tmp
+compile_run.sh
+redo_build_cmake.sh

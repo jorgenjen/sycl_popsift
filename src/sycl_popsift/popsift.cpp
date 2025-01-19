@@ -62,7 +62,9 @@ void PopSift::uninit( )
         std::cerr << "[warning] Attempt to release resources from an uninitialized instance" << std::endl;
         return;
     }
+    std::cout << "Uninting the pipe now" << std::endl;
     _pipe.uninit();
+    std::cout << "Done with the pip epipe now" << std::endl;
 
     _isInit = false;
 }
@@ -195,6 +197,11 @@ void PopSift::extractDownloadLoop( )
         // DO THE JOB!!!
 
 
+        // FUFULL THE PROMISE
+       
+        job->jobDone(5);
+
+
 
 
         // applyConfiguration();
@@ -251,6 +258,18 @@ void SiftJob::printJob()
 
 }
 
+int SiftJob::getHost()
+{
+  return _f.get();
+
+}
+
+// popsift::FeaturesHost* SiftJob::getHost()
+// {
+//     return dynamic_cast<popsift::FeaturesHost*>( _f.get() );
+// }
+
+
 
 
 
@@ -261,17 +280,23 @@ void SiftJob::printJob()
 // should be called as part of cleanup of popsift
 void PopSift::Pipe::uninit()
 {
-    _queue_stage1.push( nullptr );
+    std::cout << "In le uniinit in le pipe" << std::endl;
+    // NOTE: This was pushed into stage1 this causes it to finish and be pushed to 2 by thread in 
+    // queue 1 and the pulled by two which also terminates it
+    _queue_stage2.push( nullptr ); 
     if(_thread_stage2 != nullptr)
     {
+      
+    std::cout << "Trying to join the stage2 thread" << std::endl;
         _thread_stage2->join();
+    std::cout << "Joined now.." << std::endl;
         _thread_stage2.reset(nullptr);
     }
-    if(_thread_stage1 != nullptr)
-    {
-        _thread_stage1->join();
-        _thread_stage1.reset(nullptr);
-    }
+    // if(_thread_stage1 != nullptr)
+    // {
+    //     _thread_stage1->join();
+    //     _thread_stage1.reset(nullptr);
+    // }
 
     // while( !_unused.empty() )
     // {

@@ -176,16 +176,20 @@ int main(int argc, char **argv)
   SiftJob* leJob = processImage(inputFile, image_data, w, h, PopSift);
   
 
+  // print job and wait for promise to be fufilled
+  int val = leJob->getHost();
+
+  std::cout << "The value resturned from future/promise: " << val << std::endl;
 
 
 
   // Testing the PopSift class
 
 
-  PopSift.printDim();
-  PopSift.printImageRegion(sycl::range(20, 25), sycl::range(20, 25));
-  PopSift.modifyImage();
-  PopSift.printImageRegion(sycl::range(20, 25), sycl::range(20, 25));
+  // PopSift.printDim();
+  // PopSift.printImageRegion(sycl::range(20, 25), sycl::range(20, 25));
+  // PopSift.modifyImage();
+  // PopSift.printImageRegion(sycl::range(20, 25), sycl::range(20, 25));
   // PopSift.printImage(10);
   // PopSift.printDevice();
 
@@ -201,9 +205,12 @@ int main(int argc, char **argv)
 
   // std::cout << "Image size: " << w << " x " << h << std::endl;
 
-  PopSift.uninit();
+  std::cout << "Time to uninit this bitch" << std::endl;
+  // PopSift.uninit();
+  std::cout << "We have uninited now we exit..." << std::endl;
   
-  exit(EXIT_SUCCESS); // To avoid two queues at the same time for this test
+  // exit(EXIT_SUCCESS); // To avoid two queues at the same time for this test
+  return EXIT_SUCCESS;
   std::cout << "Creating sycl queue" << std::endl;
 
   {

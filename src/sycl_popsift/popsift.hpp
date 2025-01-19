@@ -53,7 +53,6 @@ public:
 
   // NOTE: Temporary to fufill the promise see popsift later on for proper implmentation and do that
   void jobDone(int tmpRes);
-
   /** fulfill the promise */
   // void setFeatures( popsift::FeaturesBase* f );
   //
@@ -72,9 +71,9 @@ class PopSift
 {
   struct Pipe
   {
-    std::unique_ptr<std::thread>            _thread_stage1;
+    // std::unique_ptr<std::thread>            _thread_stage1;
     std::unique_ptr<std::thread>            _thread_stage2;
-    popsift::SyncQueue<SiftJob*>            _queue_stage1;
+    // popsift::SyncQueue<SiftJob*>            _queue_stage1;
     popsift::SyncQueue<SiftJob*>            _queue_stage2;
     // popsift::SyncQueue<popsift::ImageBase*> _unused;
 
