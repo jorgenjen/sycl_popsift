@@ -280,7 +280,6 @@ void SiftJob::printJob()
 int SiftJob::getHost()
 {
   return _f.get();
-
 }
 
 void SiftJob::setImg( popsift::Image* img, sycl::queue q )
@@ -297,46 +296,6 @@ popsift::Image* SiftJob::getImg()
 {
   return _img;
 }
-
-// popsift::FeaturesHost* SiftJob::getHost()
-// {
-//     return dynamic_cast<popsift::FeaturesHost*>( _f.get() );
-// }
-
-
-
-
-
-
-
-
-
-// // should be called as part of cleanup of popsift
-// void PopSift::Pipe::uninit()
-// {
-//     // NOTE: This was pushed into stage1 this causes it to finish and be pushed to 2 by thread in 
-//     // queue 1 and the pulled by two which also terminates it
-//     _queue_stage1.push( nullptr ); 
-//     if(_thread_stage2 != nullptr)
-//     {
-//      
-//     std::cout << "Trying to join the stage2 thread" << std::endl;
-//         _thread_stage2->join();
-//     std::cout << "Joined now.." << std::endl;
-//         _thread_stage2.reset(nullptr);
-//     }
-//     // if(_thread_stage1 != nullptr)
-//     // {
-//     //     _thread_stage1->join();
-//     //     _thread_stage1.reset(nullptr);
-//     // }
-//
-//     // while( !_unused.empty() )
-//     // {
-//     //     popsift::ImageBase* img = _unused.pull();
-//     //     delete img;
-//     // }
-// }
 
 
 void PopSift::Pipe::uninit()
