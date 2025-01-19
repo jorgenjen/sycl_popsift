@@ -4,6 +4,7 @@
 #include <sycl/sycl.hpp>
 
 #include "common/sync_queue.h"
+#include "sycl_popsift/non_sycl/sift_conf.hpp"
 
 
 #include <future>
@@ -94,7 +95,8 @@ public:
 
 
   // Constructors
-  explicit PopSift(int w, int h, unsigned char* imageData);
+  explicit PopSift(const popsift::Config& config);
+
   // should be one more for float images
 
 
@@ -106,6 +108,13 @@ public:
    * @brief Release the resources.
    */
   void uninit( );
+
+  /**
+   * @brief Provide the configuration if you used the PopSift default
+   *  constructor
+   */
+  bool configure( const popsift::Config& config, bool force = false );
+
 
 
   void printDim();
@@ -123,7 +132,7 @@ public:
 private:
   int _w;
   int _h;
-  sycl::buffer<unsigned char, 2> _imageData;
+  // sycl::buffer<unsigned char, 2> _imageData;
   sycl::queue _deviceQueue;
 
 

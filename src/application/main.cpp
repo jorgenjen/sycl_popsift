@@ -11,11 +11,15 @@
 #include <boost/filesystem.hpp>
 #include <boost/program_options.hpp>
 
+#include <list>
+
+
 #ifdef USE_DEVIL
 #include <IL/il.h>
 #include <IL/ilu.h>
 #endif
 
+using namespace std;
 
 // should probably use a similar options struct as popsift in the future revisions
 // just for initial layout
@@ -59,60 +63,71 @@ static void parseargs(int argc, char** argv, std::string& inputFile) {
 }
 
 
-// image_data is a reference to a pointer so that we can update the nullptr to the image data from devIL
-SiftJob* processImage(const std::string& inputFile, unsigned char* &image_data, int &w, int &h, PopSift& PopSift)
+static void collectFilenames( list<string>& inputFiles, const boost::filesystem::path& inputFile )
 {
-  using namespace std;
-  // load in the image 
+  std::vector<boost::filesystem::path> vec;
+    std::copy( boost::filesystem::directory_iterator( inputFile ),
+               boost::filesystem::directory_iterator(),
+               std::back_inserter(vec) );
+    for (const auto& currPath : vec)
+    {
+        if( boost::filesystem::is_regular_file(currPath) )
+        {
+            inputFiles.push_back( currPath.string() );
+        }
+        else if( boost::filesystem::is_directory(currPath) )
+        {
+            collectFilenames( inputFiles, currPath);
+        }
+    }
+}
 
+
+
+// image_data is a reference to a pointer so that we can update the nullptr to the image data from devIL
+SiftJob* process_image(const std::string& inputFile, PopSift& PopSift)
+{
   SiftJob* job;
+  unsigned char* image_data;
+  int w,h;
   // unsigned char* image_data; // should move image_data to local varaible
 
-
 #ifdef USE_DEVIL
-    // Initialize DevIL
-    ilInit();
+  // Initialize DevIL
+  ilInit();
 
-    // Generate and bind an image handle
-    ILuint image;
-    ilGenImages(1, &image);
-    ilBindImage(image);
+  // Generate and bind an image handle
+  ILuint image;
+  ilGenImages(1, &image);
+  ilBindImage(image);
 
-    // Load the image
-    if (!ilLoadImage(inputFile.c_str())) {
-        cerr << "Could not load image " << inputFile << endl;
-        ilDeleteImages(1, &image); // Clean up
-        // return -1;
-    }
+  // Load the image
+  if (!ilLoadImage(inputFile.c_str())) {
+    cerr << "Could not load image " << inputFile << endl;
+    ilDeleteImages(1, &image); // Clean up
+    return nullptr;
+  }
 
-    // Convert to grayscale (luminance)
-    if (!ilConvertImage(IL_LUMINANCE, IL_UNSIGNED_BYTE)) {
-        cerr << "Failed converting image " << inputFile << " to unsigned greyscale image" << endl;
-        ilDeleteImages(1, &image); // Clean up
-        // return -1;
-    }
+  // Convert to grayscale
+  if (!ilConvertImage(IL_LUMINANCE, IL_UNSIGNED_BYTE)) {
+    cerr << "Failed converting image " << inputFile << " to unsigned greyscale image" << endl;
+    ilDeleteImages(1, &image); // Clean up
+    // return -1;
+  }
 
-    // Get image dimensions
-    w = ilGetInteger(IL_IMAGE_WIDTH);
-    h = ilGetInteger(IL_IMAGE_HEIGHT);
-    cout << "Loading " << w << " x " << h << " image " << inputFile << endl;
+  w = ilGetInteger(IL_IMAGE_WIDTH);
+  h = ilGetInteger(IL_IMAGE_HEIGHT);
+  cout << "Loading " << w << " x " << h << " image " << inputFile << endl;
 
-    // Get raw image data
-    image_data = ilGetData();
-
-
+  // Get raw image data
+  image_data = ilGetData();
 
   // enqueue the job - image is copied in this method
   job = PopSift.enqueue( w, h, image_data );
 
-
-
-    // Example usage of image_data with your PopSift class
-    // job = PopSift.enqueue(w, h, image_data);
-
-    // Clean up the DevIL image -- can't do it here need to be after we are done with it
-    ilDeleteImages(1, &image);
-    // need to clean it up later on 
+  // Clean up the DevIL image -- can't do it here need to be after we are done with it
+  ilDeleteImages(1, &image);
+  // need to clean it up later on 
 
   return job;
 
@@ -126,12 +141,13 @@ int main(int argc, char **argv)
 {
 
   popsift::Config config; // Init with default parameters
+  list<string>    inputFiles;
+  string          inputFile{};
 
-  std::cout << "Le upscalefactor: " << config.getUpscaleFactor() << std::endl;
-  std::string         inputFile{};
+  cout << "Le upscalefactor: " << config.getUpscaleFactor() << endl;
 
   try {
-    parseargs( argc, argv, inputFile ); // Parse command line
+    parseargs( argc, argv, inputFile ); // Parse command line -- should add config as parameter so it can be modified
     std::cout << inputFile << std::endl;
   }
   catch (std::exception& e) {
@@ -144,16 +160,15 @@ int main(int argc, char **argv)
   if( boost::filesystem::exists( inputFile ) ) {
     if( boost::filesystem::is_directory( inputFile ) ) {
       std::cout << "BOOST " << inputFile << " is directory -- Multiple files are currently not supported" << std::endl;
-      // Will support multiple files later on
-      /* collectFilenames( inputFiles, inputFile ); */
-      /* if( inputFiles.empty() ) { */
-      /*     cerr << "No files in directory, nothing to do" << endl; */
-      /*     return EXIT_SUCCESS; */
-      /* } */
+       collectFilenames( inputFiles, inputFile ); 
+       if( inputFiles.empty() ) { 
+           cerr << "No files in directory, nothing to do" << endl; 
+           return EXIT_SUCCESS; 
+       } 
     } else if( boost::filesystem::is_regular_file( inputFile ) ) {
 
       std::cout << "Regurlar file will be processed" << std::endl;
-      /* inputFiles.push_back( inputFile ); */
+      inputFiles.push_back( inputFile );
     } else {
       std::cout << "Input file is neither regular file nor directory, nothing to do" << std::endl << "Exiting..." << std::endl;
       return EXIT_FAILURE;
@@ -164,22 +179,43 @@ int main(int argc, char **argv)
   }
 
 
+  PopSift PopSift(config);
 
-  unsigned char* image_data = nullptr;
-  int w, h;
+  std::queue<SiftJob*> jobs;
+  for (const auto& currFile : inputFiles)
+  {
+    cout << "current file: " << currFile << endl;
+    SiftJob* job = process_image(currFile, PopSift);
+    jobs.push(job);
+  }
+
+  while( !jobs.empty() )
+  {
+    SiftJob* job = jobs.front();
+    jobs.pop();
+    if( job ) {
+      int val = job->getHost();
+      std::cout << "The value resturned from future/promise: " << val << std::endl;
+
+      delete job;
+    }
+  }
+
+
+  // unsigned char* image_data = nullptr;
+  // int w, h;
 
   // TODO: Not really supposed to pass the image data to popsift in final implenentation need to refactor!!! On sunday
-  PopSift PopSift(w, h, image_data);
 
   // Queue for multiple jobs
   // std::queue<SiftJob*> jobs;
-  SiftJob* leJob = processImage(inputFile, image_data, w, h, PopSift);
+  // SiftJob* leJob = process_image(inputFile, PopSift);
   
 
   // print job and wait for promise to be fufilled
-  int val = leJob->getHost();
+  // int val = leJob->getHost();
 
-  std::cout << "The value resturned from future/promise: " << val << std::endl;
+  // std::cout << "The value resturned from future/promise: " << val << std::endl;
 
 
 
@@ -193,91 +229,9 @@ int main(int argc, char **argv)
   // PopSift.printImage(10);
   // PopSift.printDevice();
 
-  // unsigned char test_img[] = {0, 1, 9, 255, 255, 15, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4};
-
-  // unsigned char* test_p_img = &test_img[0];
-  // print out the first 10 bytes of the image
-  // for (int i = 0; i < 10; i++) {
-  //   std::cout << static_cast<int>(image_data[i]) << " ";
-  // }
-  // std::cout << std::endl;
-
-
-  // std::cout << "Image size: " << w << " x " << h << std::endl;
-
-  std::cout << "Time to uninit this bitch" << std::endl;
-  // PopSift.uninit();
-  std::cout << "We have uninited now we exit..." << std::endl;
+  // PopSift.uninit(); // don't see the need as it will be done automatically bu the destructor of the popsift class
   
-  // exit(EXIT_SUCCESS); // To avoid two queues at the same time for this test
   return EXIT_SUCCESS;
-  std::cout << "Creating sycl queue" << std::endl;
-
-  {
-    using namespace sycl;
-
-    try {
-      queue q;
-
-
-      std::cout << "Selected device: "
-        << q.get_device().get_info<info::device::name>()
-        << "\n";
-
-
-      // seems like sycl::image does only support four dimensional images hence seems to not make alot of sense for a grayscale image
-      // hence using buffers instead. Might look at codeplay bindless images later on and see if that would work well for grayscale
-
-
-      buffer<unsigned char, 2> srcImage(image_data, range<2>(w, h));
-
-      // the same as above just different syntax
-      // auto srcImage = buffer<unsigned char, 2>(image_data, range<2>(w, h));
-
-      // even more verbose -- same as above
-      // buffer<unsigned char, 2> srcImage = buffer<unsigned char, 2>(image_data, range<2>(w, h));
-
-
-      // unsigned char* result = malloc_shared<unsigned char>(w*h, q);
-
-
-      // unsigned char* res = std::malloc(w*h);
-      unsigned char* res = static_cast<unsigned char*>(std::malloc(w * h * sizeof(unsigned char)));
-
-
-      buffer<unsigned char, 2> dstImage(res, range<2>(w, h));
-
-
-      q.submit([&](handler& cgh) {
-
-        accessor img(srcImage, cgh, read_only);
-        accessor result(dstImage, cgh, write_only);
-        cgh.parallel_for(range<2>(w, h), [=](id<2> idx) {
-          result[idx] = img[idx] - 1;
-        });
-      });
-
-      q.wait();
-
-      // print out the first 10 bytes of the image
-
-      for (int i = 0; i < 10; i++) {
-        std::cout << static_cast<int>(res[i]) << " ";
-      }
-      std::cout << std::endl;
-
-
-      std::free(res);
-
-
-      // also need to free the image_data from devil
-      // so all devIL code probably need to be in this function or use inline on the function mby?
-
-    } catch (const sycl::exception& e) {
-      std::cout << "Exception caught: " << e.what() << std::endl;
-    }
-    return 0;
-  }
 }
 
 

@@ -1,6 +1,7 @@
 #include "popsift.hpp"
 #include "sycl/accessor.hpp"
 #include "common/debug_macros.hpp"
+#include "sycl_popsift/non_sycl/sift_conf.hpp"
 
 #include <sycl/sycl.hpp>
 #include <iostream>
@@ -10,12 +11,11 @@
 
 using namespace std;
 
-PopSift::PopSift(int w, int h, unsigned char* imageData)
-  : _w(w),
-  _h(h),
-  // _imageData(imageData, sycl::range<2>(w, h), {sycl::property::buffer::use_host_ptr()})
-  _imageData(imageData, sycl::range<2>(w, h))
+PopSift::PopSift(const popsift::Config& config)
 {
+
+  // should use the confige here to configure but requires that you have the pyramid and all that
+
 
   // sycl::queue _deviceQueue;
   // sycl::buffer<unsigned char, 2> _imageData(imageData, sycl::range<2>(_w, _h));
@@ -98,63 +98,63 @@ void PopSift::printDevice()
 
 // Helper function for development
 // ranges are inclusive on 0th dimension and exclusive on 1th dimension
-void PopSift::printImageRegion(sycl::range<2> horiz, sycl::range<2> vert)
-{
-  // print out the first 10 bytes of the image
-  using namespace sycl;
+// void PopSift::printImageRegion(sycl::range<2> horiz, sycl::range<2> vert)
+// {
+//   // print out the first 10 bytes of the image
+//   using namespace sycl;
+//
+//   // wait for all previous enqued task to end before doing the print to show desired data
+//   _deviceQueue.wait();
+//
+//   host_accessor<unsigned char, 2, access::mode::read> h_acc(_imageData);
+//
+//   if (vert.get(0) > _w && vert.get(0) < 0 || 
+//       vert.get(1) > _w && vert.get(1) < 0 ||
+//       vert.get(0) >= vert.get(1)
+//   )
+//   {
+//     std::cout << "Image region is not legal" << std::endl;
+//   }
+//
+//   std::cout << "Image region: horiz = (" << horiz.get(0) << " -> " << horiz.get(1)
+//             << ") vert = (" << vert.get(0) << " -> " << vert.get(1) << ")" << std::endl;
+//   // using range in a odd way (I know :D)
+//   for (int i = vert.get(0); i < vert.get(1); ++i)
+//   {
+//     for (int j = horiz.get(0); j < horiz.get(1); ++j)
+//     {
+//          std::printf("%03u ", h_acc[j][i]);
+//     }
+//        std::cout << std::endl;
+//   }
+// }
 
-  // wait for all previous enqued task to end before doing the print to show desired data
-  _deviceQueue.wait();
 
-  host_accessor<unsigned char, 2, access::mode::read> h_acc(_imageData);
-
-  if (vert.get(0) > _w && vert.get(0) < 0 || 
-      vert.get(1) > _w && vert.get(1) < 0 ||
-      vert.get(0) >= vert.get(1)
-  )
-  {
-    std::cout << "Image region is not legal" << std::endl;
-  }
-
-  std::cout << "Image region: horiz = (" << horiz.get(0) << " -> " << horiz.get(1)
-            << ") vert = (" << vert.get(0) << " -> " << vert.get(1) << ")" << std::endl;
-  // using range in a odd way (I know :D)
-  for (int i = vert.get(0); i < vert.get(1); ++i)
-  {
-    for (int j = horiz.get(0); j < horiz.get(1); ++j)
-    {
-         std::printf("%03u ", h_acc[j][i]);
-    }
-       std::cout << std::endl;
-  }
-}
-
-
-void PopSift::modifyImage()
-{
-  using namespace sycl;
-  try {
-
-    std::cout << "Selected device in PopSift method (modifyImage) using SYCL: "
-      << _deviceQueue.get_device().get_info<info::device::name>()
-      << "\n";
-  } catch (const sycl::exception& e) {
-    std::cout << "Exception caught: " << e.what() << std::endl;
-  }
-
-  // Modify the image
-  std::cout << "Modifyig image now" << std::endl;
-
-  _deviceQueue.submit([&](handler& cgh) {
-    printf("w=%d  -- h=%d", _w, _h);
-
-    accessor img(_imageData, cgh, read_write);
-    cgh.parallel_for(range<2>(_w, _h), [=](id<2> idx) {
-      img[idx] = img[idx] - 1;
-    });
-  });
-
-}
+// void PopSift::modifyImage()
+// {
+//   using namespace sycl;
+//   try {
+//
+//     std::cout << "Selected device in PopSift method (modifyImage) using SYCL: "
+//       << _deviceQueue.get_device().get_info<info::device::name>()
+//       << "\n";
+//   } catch (const sycl::exception& e) {
+//     std::cout << "Exception caught: " << e.what() << std::endl;
+//   }
+//
+//   // Modify the image
+//   std::cout << "Modifyig image now" << std::endl;
+//
+//   _deviceQueue.submit([&](handler& cgh) {
+//     printf("w=%d  -- h=%d", _w, _h);
+//
+//     accessor img(_imageData, cgh, read_write);
+//     cgh.parallel_for(range<2>(_w, _h), [=](id<2> idx) {
+//       img[idx] = img[idx] - 1;
+//     });
+//   });
+//
+// }
 
 SiftJob* PopSift::enqueue( int                  w,
                            int                  h,
@@ -280,7 +280,6 @@ int SiftJob::getHost()
 // should be called as part of cleanup of popsift
 void PopSift::Pipe::uninit()
 {
-    std::cout << "In le uniinit in le pipe" << std::endl;
     // NOTE: This was pushed into stage1 this causes it to finish and be pushed to 2 by thread in 
     // queue 1 and the pulled by two which also terminates it
     _queue_stage2.push( nullptr ); 
