@@ -1,5 +1,6 @@
 add_library(sycl_popsift
             sycl_popsift/popsift.cpp sycl_popsift/popsift.hpp
+            sycl_popsift/s_image.cpp sycl_popsift/s_image.hpp
             sycl_popsift/non_sycl/sift_conf.cpp sycl_popsift/non_sycl/sift_conf.hpp
             sycl_popsift/common/debug_macros.cpp sycl_popsift/common/debug_macros.hpp
             sycl_popsift/common/sync_queue.h
@@ -10,6 +11,7 @@ add_library(sycl_popsift
 
 add_sycl_to_target(TARGET sycl_popsift SOURCES 
   sycl_popsift/popsift.cpp sycl_popsift/popsift.hpp
+  sycl_popsift/s_image.cpp sycl_popsift/s_image.hpp
 )
 
 

@@ -5,6 +5,7 @@
 
 #include "common/sync_queue.h"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
+#include "s_image.hpp"
 
 
 #include <future>
@@ -23,10 +24,8 @@ class SiftJob
   int                 _h;
   unsigned char*      _imageData; // Copies image to this from caller (I guess due to not trusting calleer and host performance is a non issue)
 
-
-  // TODO: Look into using this image structure
-  // popsift::ImageBase* _img;
-    std::exception_ptr _err;
+  popsift::Image* _img; 
+  std::exception_ptr _err;
 
 public:
   /**
@@ -52,6 +51,11 @@ public:
   int getHost(); // currently using int to have same pattern of initialization and such
 
 
+  void setImg(popsift::Image* img, sycl::queue q);
+
+  popsift::Image* getImg();
+
+
   // NOTE: Temporary to fufill the promise see popsift later on for proper implmentation and do that
   void jobDone(int tmpRes);
   /** fulfill the promise */
@@ -72,11 +76,11 @@ class PopSift
 {
   struct Pipe
   {
-    // std::unique_ptr<std::thread>            _thread_stage1;
+    std::unique_ptr<std::thread>            _thread_stage1;
     std::unique_ptr<std::thread>            _thread_stage2;
-    // popsift::SyncQueue<SiftJob*>            _queue_stage1;
+    popsift::SyncQueue<SiftJob*>            _queue_stage1;
     popsift::SyncQueue<SiftJob*>            _queue_stage2;
-    // popsift::SyncQueue<popsift::ImageBase*> _unused;
+    popsift::SyncQueue<popsift::Image*> _unused;
 
     // popsift::Pyramid*                      _pyramid{nullptr};
 
@@ -126,6 +130,7 @@ public:
 
   SiftJob* enqueue(int w, int h, const unsigned char* imageData);
   void extractDownloadLoop();
+  void uploadImages();
   // destructor
   // ~PopSift();
 
@@ -133,7 +138,7 @@ private:
   int _w;
   int _h;
   // sycl::buffer<unsigned char, 2> _imageData;
-  sycl::queue _deviceQueue;
+  sycl::queue _device_queue;
 
 
 

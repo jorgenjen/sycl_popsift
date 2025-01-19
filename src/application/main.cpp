@@ -159,7 +159,6 @@ int main(int argc, char **argv)
   // check the image
   if( boost::filesystem::exists( inputFile ) ) {
     if( boost::filesystem::is_directory( inputFile ) ) {
-      std::cout << "BOOST " << inputFile << " is directory -- Multiple files are currently not supported" << std::endl;
        collectFilenames( inputFiles, inputFile ); 
        if( inputFiles.empty() ) { 
            cerr << "No files in directory, nothing to do" << endl; 

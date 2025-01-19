@@ -17,25 +17,18 @@ PopSift::PopSift(const popsift::Config& config)
   // should use the confige here to configure but requires that you have the pyramid and all that
 
 
-  // sycl::queue _deviceQueue;
+  // sycl::queue _device_queue;
   // sycl::buffer<unsigned char, 2> _imageData(imageData, sycl::range<2>(_w, _h));
 
   cout << "PopSift constructor" << endl;
 
-    // CUrrently only supporting ByteImages and not using _unused as I don't know it's purpose yet...
-//   if( imode == ByteImages )
-//   {
-//     _pipe._unused.push( new popsift::Image);
-//     _pipe._unused.push( new popsift::Image);
-//   }
-//   else
-// {
-//     _pipe._unused.push( new popsift::ImageFloat );
-//     _pipe._unused.push( new popsift::ImageFloat );
-//   }
+  // Push two images as we use two one to load in data and other to compute and they alter using the queue
+  _pipe._unused.push( new popsift::Image(_device_queue));
+  _pipe._unused.push( new popsift::Image(_device_queue));
+
 
   // TODO: Setup these threads
-  // _pipe._thread_stage1.reset( new std::thread( &PopSift::uploadImages, this ));
+  _pipe._thread_stage1.reset( new std::thread( &PopSift::uploadImages, this ));
   _pipe._thread_stage2.reset( new std::thread( &PopSift::extractDownloadLoop, this ));
 
   // NOTE: Currently not supporting extraction and config like that
@@ -82,11 +75,11 @@ void PopSift::printDevice()
     using namespace sycl;
 
     try {
-      // queue q& = _deviceQueue;
+      // queue q& = _device_queue;
 
 
       std::cout << "Selected device in PopSift method using SYCL: "
-        << _deviceQueue.get_device().get_info<info::device::name>()
+        << _device_queue.get_device().get_info<info::device::name>()
         << "\n";
     } catch (const sycl::exception& e) {
       std::cout << "Exception caught: " << e.what() << std::endl;
@@ -104,7 +97,7 @@ void PopSift::printDevice()
 //   using namespace sycl;
 //
 //   // wait for all previous enqued task to end before doing the print to show desired data
-//   _deviceQueue.wait();
+//   _device_queue.wait();
 //
 //   host_accessor<unsigned char, 2, access::mode::read> h_acc(_imageData);
 //
@@ -136,7 +129,7 @@ void PopSift::printDevice()
 //   try {
 //
 //     std::cout << "Selected device in PopSift method (modifyImage) using SYCL: "
-//       << _deviceQueue.get_device().get_info<info::device::name>()
+//       << _device_queue.get_device().get_info<info::device::name>()
 //       << "\n";
 //   } catch (const sycl::exception& e) {
 //     std::cout << "Exception caught: " << e.what() << std::endl;
@@ -145,7 +138,7 @@ void PopSift::printDevice()
 //   // Modify the image
 //   std::cout << "Modifyig image now" << std::endl;
 //
-//   _deviceQueue.submit([&](handler& cgh) {
+//   _device_queue.submit([&](handler& cgh) {
 //     printf("w=%d  -- h=%d", _w, _h);
 //
 //     accessor img(_imageData, cgh, read_write);
@@ -173,8 +166,30 @@ SiftJob* PopSift::enqueue( int                  w,
 
     SiftJob* job = new SiftJob( w, h, imageData );
     // NOTE: Currently skipping first stage as I don't have explicit memory tranfer from host to device first
-    _pipe._queue_stage2.push( job );
+    _pipe._queue_stage1.push( job );
     return job;
+}
+
+void PopSift::uploadImages( )
+{
+  SiftJob* job;
+  while( ( job = _pipe._queue_stage1.pull() ) != nullptr ) {
+    popsift::Image* img = _pipe._unused.pull(); // getting a unused Image (reusing it)
+
+    // copy image to device
+    job->setImg( img, _device_queue );
+    // WARNING: the copy is asynchronous so could result in issues as the job could start before it is done 
+    // but I think as the following tasks are also in the same sycl queue it should be fine due to it making the task 
+    // graph properly and that the memcoyp is a dependency but not sure might have to set it to be a dependency before the 
+    // next dependent kernel runs...
+
+
+    // job->setImg( img );
+    _pipe._queue_stage2.push( job );
+  }
+  // Push nullptr to stage2 queue to make that one terminates aswell
+  // safe to do as we know know no more jobs will be pushed to stage 1 queue
+  _pipe._queue_stage2.push( nullptr );
 }
 
 
@@ -190,28 +205,32 @@ void PopSift::extractDownloadLoop( )
     while( ( job = p._queue_stage2.pull() ) != nullptr ) {
         // get the next job in queue or wait until a new job arrives
 
-        std::cout << "the job is --> ";
-        job->printJob();
-        
-
-        // DO THE JOB!!!
+    popsift::Image* img = job->getImg();
+    std::cout << "the job is --> ";
+    job->printJob();
 
 
-        // FUFULL THE PROMISE
-       
-        job->jobDone(5);
+    // DO THE JOB!!!
+
+
+    // FUFULL THE PROMISE
+
+    job->jobDone(5);
+
+
+    p._unused.push( img ); // uploaded input image no longer needed, release for reuse
 
 
 
 
-        // applyConfiguration();
+    // applyConfiguration();
 
-        // popsift::ImageBase* img = job->getImg();
+    // popsift::ImageBase* img = job->getImg();
 
-        // TODO: Do similar private init and appyl scalefactor that this method calls
-        // private_init( img->getWidth(), img->getHeight() );
+    // TODO: Do similar private init and appyl scalefactor that this method calls
+    // private_init( img->getWidth(), img->getHeight() );
 
-    }
+  }
 }
 
 
@@ -264,6 +283,21 @@ int SiftJob::getHost()
 
 }
 
+void SiftJob::setImg( popsift::Image* img, sycl::queue q )
+{
+    img->resetDimensions( _w, _h );
+    img->load( _imageData );
+    _img = img;
+
+}
+
+// Not sure if this is a good way of doing it
+// just doing it to have same methods as popsift code
+popsift::Image* SiftJob::getImg()
+{
+  return _img;
+}
+
 // popsift::FeaturesHost* SiftJob::getHost()
 // {
 //     return dynamic_cast<popsift::FeaturesHost*>( _f.get() );
@@ -277,30 +311,55 @@ int SiftJob::getHost()
 
 
 
-// should be called as part of cleanup of popsift
+// // should be called as part of cleanup of popsift
+// void PopSift::Pipe::uninit()
+// {
+//     // NOTE: This was pushed into stage1 this causes it to finish and be pushed to 2 by thread in 
+//     // queue 1 and the pulled by two which also terminates it
+//     _queue_stage1.push( nullptr ); 
+//     if(_thread_stage2 != nullptr)
+//     {
+//      
+//     std::cout << "Trying to join the stage2 thread" << std::endl;
+//         _thread_stage2->join();
+//     std::cout << "Joined now.." << std::endl;
+//         _thread_stage2.reset(nullptr);
+//     }
+//     // if(_thread_stage1 != nullptr)
+//     // {
+//     //     _thread_stage1->join();
+//     //     _thread_stage1.reset(nullptr);
+//     // }
+//
+//     // while( !_unused.empty() )
+//     // {
+//     //     popsift::ImageBase* img = _unused.pull();
+//     //     delete img;
+//     // }
+// }
+
+
 void PopSift::Pipe::uninit()
 {
-    // NOTE: This was pushed into stage1 this causes it to finish and be pushed to 2 by thread in 
-    // queue 1 and the pulled by two which also terminates it
-    _queue_stage2.push( nullptr ); 
-    if(_thread_stage2 != nullptr)
-    {
-      
-    std::cout << "Trying to join the stage2 thread" << std::endl;
-        _thread_stage2->join();
-    std::cout << "Joined now.." << std::endl;
-        _thread_stage2.reset(nullptr);
-    }
-    // if(_thread_stage1 != nullptr)
-    // {
-    //     _thread_stage1->join();
-    //     _thread_stage1.reset(nullptr);
-    // }
+  _queue_stage1.push( nullptr );
+  if(_thread_stage2 != nullptr)
+  {
+    _thread_stage2->join();
+    _thread_stage2.reset(nullptr);
+  }
+  if(_thread_stage1 != nullptr)
+  {
+    // should not really ever run as for stage2 to be nullptr
+    // stage1 has to have already become nullptr hence not needed 
+    // as far as I understand...
+    _thread_stage1->join();
+    _thread_stage1.reset(nullptr);
+  }
 
-    // while( !_unused.empty() )
-    // {
-    //     popsift::ImageBase* img = _unused.pull();
-    //     delete img;
-    // }
+  while( !_unused.empty() )
+  {
+    popsift::Image* img = _unused.pull();
+    delete img;
+  }
 }
 
