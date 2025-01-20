@@ -20,6 +20,10 @@ struct Image
 
   void load( void* input );
 
+  inline int getWidth()  const { return _w; }
+  inline int getHeight() const { return _h; }
+
+
 protected:
   int _w;     // width  of current image
   int _h;     // height of current image

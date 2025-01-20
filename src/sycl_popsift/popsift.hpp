@@ -107,38 +107,50 @@ public:
   // destructor
   ~PopSift();
 
+    /**
+     * @brief Provide the configuration if you used the PopSift default
+     *  constructor
+     */
+    bool configure( const popsift::Config& config, bool force = false );
+
+
 
   /**
    * @brief Release the resources.
    */
   void uninit( );
 
-  /**
-   * @brief Provide the configuration if you used the PopSift default
-   *  constructor
-   */
-  bool configure( const popsift::Config& config, bool force = false );
+
+  SiftJob* enqueue(int w, int h, const unsigned char* imageData);
 
 
-
+private:
   void printDim();
   void printDevice();
   void modifyImage();
   void printImageRegion(sycl::range<2> horiz, sycl::range<2> vert);
 
 
+  bool applyConfiguration( bool force = false );
 
-  SiftJob* enqueue(int w, int h, const unsigned char* imageData);
+  bool private_init( int w, int h );
+  bool private_uninit( );
+  void private_apply_scale_factor( int& w, int& h );
+
+
+
   void extractDownloadLoop();
   void uploadImages();
   // destructor
   // ~PopSift();
 
-private:
+// Private attributes:
   int _w;
   int _h;
   // sycl::buffer<unsigned char, 2> _imageData;
   sycl::queue _device_queue;
+
+  popsift::Config _config;
 
 
 

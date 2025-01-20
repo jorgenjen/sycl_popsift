@@ -3,6 +3,8 @@
 #include "common/debug_macros.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 
+#include <cmath> // ceilf
+
 #include <sycl/sycl.hpp>
 #include <iostream>
 #include <cstring>
@@ -16,7 +18,7 @@ PopSift::PopSift(const popsift::Config& config)
 
   // should use the confige here to configure but requires that you have the pyramid and all that
 
-
+  configure(config);
   // sycl::queue _device_queue;
   // sycl::buffer<unsigned char, 2> _imageData(imageData, sycl::range<2>(_w, _h));
 
@@ -42,24 +44,87 @@ PopSift::PopSift(const popsift::Config& config)
 }
 PopSift::~PopSift()
 {
-    if(_isInit)
-    {
-        uninit();
-    }
+  if(_isInit)
+  {
+    uninit();
+  }
 }
+
+bool PopSift::configure( const popsift::Config& config, bool /*force*/ )
+{
+  // TODO: Implemenet pyramid
+
+  // if( _pipe._pyramid != nullptr ) {
+  //     return false;
+  // }
+
+  _config = config;
+  _config.levels = max( 2, config.levels );
+
+  return true;
+}
+
 
 void PopSift::uninit( )
 {
-    if(!_isInit)
-    {
-        std::cerr << "[warning] Attempt to release resources from an uninitialized instance" << std::endl;
-        return;
-    }
-    std::cout << "Uninting the pipe now" << std::endl;
-    _pipe.uninit();
-    std::cout << "Done with the pip epipe now" << std::endl;
+  if(!_isInit)
+  {
+    std::cerr << "[warning] Attempt to release resources from an uninitialized instance" << std::endl;
+    return;
+  }
+  std::cout << "Uninting the pipe now" << std::endl;
+  _pipe.uninit();
+  std::cout << "Done with the pip epipe now" << std::endl;
 
-    _isInit = false;
+  _isInit = false;
+}
+
+
+
+// Apply configuration should reside here
+
+void PopSift::private_apply_scale_factor( int& w, int& h )
+{
+  /* up=-1 -> scale factor=2
+   * up= 0 -> scale factor=1
+   * up= 1 -> scale factor=0.5
+   */
+  float upscaleFactor = _config.getUpscaleFactor();
+  float scaleFactor = 1.0f / powf( 2.0f, -upscaleFactor );
+
+
+  cout << "The scale factor: " << scaleFactor << endl; 
+
+  if( _config.octaves < 0 ) {
+    int oct = max(int (floor( logf( (float)min( w, h ) )
+                             / logf( 2.0f ) ) - 3.0f + scaleFactor ), 1);
+    _config.octaves = oct;
+  }
+
+  w = ceilf( w * scaleFactor );
+  h = ceilf( h * scaleFactor );
+}
+
+bool PopSift::private_init( int w, int h )
+{
+  Pipe& p = _pipe;
+
+  cout << "PopSift::private_init(" << w << "," << h << ")" << endl;
+
+  private_apply_scale_factor( w, h );
+
+  cout << "PopSift::after_scale_factor(" << w << "," << h << ")" << endl;
+  
+  // TODO: Implement pyramid
+
+  // if( p._pyramid != nullptr ) {
+  //   p._pyramid->resetDimensions( _config, w, h );
+  //   return true;
+  // }
+  //
+  // p._pyramid = new popsift::Pyramid( _config, w, h );
+
+  return true;
 }
 
 
@@ -195,22 +260,30 @@ void PopSift::uploadImages( )
 
 void PopSift::extractDownloadLoop( )
 {
-    // cudaSetDevice(_device);
-    // applyConfiguration(true); // Applies configuration is only run once as the thread is started
+  // cudaSetDevice(_device);
+  // applyConfiguration(true); // Applies configuration is only run once as the thread is started
 
-    std::cout << "Starting download loop thread" << std::endl;
-    Pipe& p = _pipe;
+  std::cout << "Starting download loop thread" << std::endl;
+  Pipe& p = _pipe;
 
-    SiftJob* job;
-    while( ( job = p._queue_stage2.pull() ) != nullptr ) {
-        // get the next job in queue or wait until a new job arrives
+  SiftJob* job;
+  while( ( job = p._queue_stage2.pull() ) != nullptr ) 
+  {
+    // applyConfiguration();
+
+    // get the next job in queue or wait until a new job arrives
 
     popsift::Image* img = job->getImg();
     std::cout << "the job is --> ";
     job->printJob();
 
 
+    private_init( img->getWidth(), img->getHeight() );
+
+
+
     // DO THE JOB!!!
+
 
 
     // FUFULL THE PROMISE
