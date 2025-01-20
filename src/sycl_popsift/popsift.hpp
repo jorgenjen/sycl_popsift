@@ -80,9 +80,9 @@ class PopSift
     std::unique_ptr<std::thread>            _thread_stage2;
     popsift::SyncQueue<SiftJob*>            _queue_stage1;
     popsift::SyncQueue<SiftJob*>            _queue_stage2;
-    popsift::SyncQueue<popsift::Image*> _unused;
+    popsift::SyncQueue<popsift::Image*>     _unused;
 
-    // popsift::Pyramid*                      _pyramid{nullptr};
+    // popsift::Pyramid*                       _pyramid{nullptr};
 
     /**
      * @brief Release the allocated resources, if any.
