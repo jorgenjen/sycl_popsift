@@ -1,13 +1,14 @@
 #include "sycl_popsift/popsift.hpp"
+
 #include "common/debug_macros.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 
-#include <cmath> // ceilf
+#include <sycl/sycl.hpp>
 
+#include <cmath> // ceilf
 #include <cstring>
 #include <iostream>
 #include <sstream>
-#include <sycl/sycl.hpp>
 
 // using namespace std;
 using std::cout;
@@ -15,128 +16,289 @@ using std::endl;
 using std::max;
 using std::min;
 
-PopSift::PopSift(const popsift::Config &config) {
-  // should use the confige here to configure but requires that you have the
-  // pyramid and all that
+PopSift::PopSift(const popsift::Config& config)
+{
+    // should use the confige here to configure but requires that you have the
+    // pyramid and all that
 
-  configure(config);
-  // sycl::queue _device_queue;
-  // sycl::buffer<unsigned char, 2> _imageData(imageData, sycl::range<2>(_w,
-  // _h));
+    configure(config);
+    // sycl::queue _device_queue;
+    // sycl::buffer<unsigned char, 2> _imageData(imageData, sycl::range<2>(_w,
+    // _h));
 
-  cout << "PopSift constructor" << endl;
+    cout << "PopSift constructor" << endl;
 
-  // Push two images as we use two one to load in data and other to compute and
-  // they alter using the queue
-  _pipe._unused.push(new popsift::Image(_device_queue));
-  _pipe._unused.push(new popsift::Image(_device_queue));
+    // Push two images as we use two one to load in data and other to compute
+    // and they alter using the queue
+    _pipe._unused.push(new popsift::Image(_device_queue));
+    _pipe._unused.push(new popsift::Image(_device_queue));
 
-  // TODO(jorgejen): Setup these threads.
-  _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
-  _pipe._thread_stage2.reset(
-      new std::thread(&PopSift::extractDownloadLoop, this));
+    // TODO(jorgejen): Setup these threads.
+    _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
+    _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
 
-  // NOTE: Currently not supporting extraction and config like that
-  // _pipe._thread_stage1.reset( new std::thread( &PopSift::uploadImages, this
-  // )); if( mode == popsift::Config::ExtractingMode )
-  //   _pipe._thread_stage2.reset( new std::thread(
-  //   &PopSift::extractDownloadLoop, this ));
-  // else
-  //   _pipe._thread_stage2.reset( new std::thread( &PopSift::matchPrepareLoop,
-  //   this ));
+    // NOTE: Currently not supporting extraction and config like that
+    // _pipe._thread_stage1.reset( new std::thread( &PopSift::uploadImages, this
+    // )); if( mode == popsift::Config::ExtractingMode )
+    //   _pipe._thread_stage2.reset( new std::thread(
+    //   &PopSift::extractDownloadLoop, this ));
+    // else
+    //   _pipe._thread_stage2.reset( new std::thread(
+    //   &PopSift::matchPrepareLoop, this ));
 }
-PopSift::~PopSift() {
-  if (_isInit) {
-    uninit();
-  }
-}
-
-bool PopSift::configure(const popsift::Config &config, bool /*force*/) {
-  // TODO(jorgejen): Implemenet pyramid.
-
-  // if( _pipe._pyramid != nullptr ) {
-  //     return false;
-  // }
-
-  _config = config;
-  _config.levels = max(2, config.levels);
-
-  return true;
+PopSift::~PopSift()
+{
+    if(_isInit)
+    {
+        uninit();
+    }
 }
 
-void PopSift::uninit() {
-  if (!_isInit) {
-    std::cerr << "[warning] Attempt to release resources from an uninitialized "
-                 "instance"
-              << std::endl;
-    return;
-  }
-  std::cout << "Uninting the pipe now" << std::endl;
-  _pipe.uninit();
-  std::cout << "Done with the pip epipe now" << std::endl;
+bool PopSift::configure(const popsift::Config& config, bool /*force*/)
+{
+    // TODO(jorgejen): Implemenet pyramid.
 
-  _isInit = false;
+    // if( _pipe._pyramid != nullptr ) {
+    //     return false;
+    // }
+
+    _config = config;
+    _config.levels = max(2, config.levels);
+
+    return true;
+}
+
+void PopSift::uninit()
+{
+    if(!_isInit)
+    {
+        std::cerr << "[warning] Attempt to release resources from an uninitialized "
+                     "instance"
+                  << std::endl;
+        return;
+    }
+    std::cout << "Uninting the pipe now" << std::endl;
+    _pipe.uninit();
+    std::cout << "Done with the pip epipe now" << std::endl;
+
+    _isInit = false;
 }
 
 // Apply configuration should reside here
 
-void PopSift::private_apply_scale_factor(int &w, int &h) {
-  /* up=-1 -> scale factor=2
-   * up= 0 -> scale factor=1
-   * up= 1 -> scale factor=0.5
-   */
-  float upscaleFactor = _config.getUpscaleFactor();
-  float scaleFactor = 1.0f / powf(2.0f, -upscaleFactor);
+void PopSift::private_apply_scale_factor(int* w, int* h)
+{
+    /* up=-1 -> scale factor=2
+     * up= 0 -> scale factor=1
+     * up= 1 -> scale factor=0.5
+     */
+    float upscaleFactor = _config.getUpscaleFactor();
+    float scaleFactor = 1.0f / powf(2.0f, -upscaleFactor);
 
-  cout << "The scale factor: " << scaleFactor << endl;
+    cout << "The scale factor: " << scaleFactor << endl;
 
-  if (_config.octaves < 0) {
-    int oct = max(
-        int(floor(logf((float)min(w, h)) / logf(2.0f)) - 3.0f + scaleFactor),
-        1);
-    _config.octaves = oct;
-  }
+    if(_config.octaves < 0)
+    {
+        int oct = max(int(floor(logf((float)min(*w, *h)) / logf(2.0f)) - 3.0f + scaleFactor), 1);
+        cout << "Octaves: " << oct << endl;
+        _config.octaves = oct;
+    }
 
-  w = ceilf(w * scaleFactor);
-  h = ceilf(h * scaleFactor);
+    *w = ceilf(*w * scaleFactor);
+    *h = ceilf(*h * scaleFactor);
 }
 
-bool PopSift::private_init(int w, int h) {
-  Pipe &p = _pipe;
+bool PopSift::private_init(int w, int h)
+{
+    Pipe& p = _pipe;
 
-  cout << "PopSift::private_init(" << w << "," << h << ")" << endl;
+    cout << "PopSift::private_init(" << w << "," << h << ")" << endl;
 
-  private_apply_scale_factor(w, h);
+    private_apply_scale_factor(&w, &h);
 
-  cout << "PopSift::after_scale_factor(" << w << "," << h << ")" << endl;
+    cout << "PopSift::after_scale_factor(" << w << "," << h << ")" << endl;
 
-  // TODO(jorgejen): Implement pyramid
+    // TODO(jorgejen): Implement pyramid
 
-  // if( p._pyramid != nullptr ) {
-  //   p._pyramid->resetDimensions( _config, w, h );
-  //   return true;
-  // }
-  //
-  // p._pyramid = new popsift::Pyramid( _config, w, h );
+    if(p._pyramid != nullptr)
+    {
+        // p._pyramid->resetDimensions(_config, w, h);
+        return true;
+    }
 
-  return true;
+    p._pyramid = new popsift::Pyramid(_config, w, h);
+
+    return true;
 }
 
 void PopSift::printDim() { cout << "Width: " << _w << endl; }
 
-void PopSift::printDevice() {
-  {
-    try {
-      // queue q& = _device_queue;
+void PopSift::printDevice()
+{
+    {
+        try
+        {
+            // queue q& = _device_queue;
 
-      std::cout
-          << "Selected device in PopSift method using SYCL: "
-          << _device_queue.get_device().get_info<sycl::info::device::name>()
-          << "\n";
-    } catch (const sycl::exception &e) {
-      std::cout << "Exception caught: " << e.what() << std::endl;
+            std::cout << "Selected device in PopSift method using SYCL: "
+                      << _device_queue.get_device().get_info<sycl::info::device::name>() << "\n";
+        }
+        catch(const sycl::exception& e)
+        {
+            std::cout << "Exception caught: " << e.what() << std::endl;
+        }
     }
-  }
+}
+
+SiftJob* PopSift::enqueue(int w, int h, const unsigned char* imageData)
+{
+    // TODO(jorgejen): Implement support for float images and have this
+    // configuration step if( _image_mode != ByteImages )
+    // {
+    //     stringstream ss;
+    //     ss << "Image mode error" << endl
+    //        << "E    Cannot load byte images into a PopSift pipeline
+    //        configured for float images";
+    //     POP_FATAL(ss.str());
+    // }
+
+    // HERE TEXTURE FIT WAS DONE -- NOt currently using texture memory
+
+    SiftJob* job = new SiftJob(w, h, imageData);
+    _pipe._queue_stage1.push(job);
+    return job;
+}
+
+void PopSift::uploadImages()
+{
+    SiftJob* job;
+    while((job = _pipe._queue_stage1.pull()) != nullptr)
+    {
+        popsift::Image* img = _pipe._unused.pull(); // getting a unused Image (reusing it)
+
+        // copy image to device
+        job->setImg(img, _device_queue);
+        // WARNING: the copy is asynchronous so could result in issues as the
+        // job could start before it is done but I think as the following tasks
+        // are also in the same sycl queue it should be fine due to it making
+        // the task graph properly and that the memcoyp is a dependency but not
+        // sure might have to set it to be a dependency before the next
+        // dependent kernel runs...
+
+        // job->setImg( img );
+        _pipe._queue_stage2.push(job);
+    }
+    // Push nullptr to stage2 queue to make that one terminates aswell
+    // safe to do as we know know no more jobs will be pushed to stage 1 queue
+    _pipe._queue_stage2.push(nullptr);
+}
+
+void PopSift::extractDownloadLoop()
+{
+    // cudaSetDevice(_device);
+    // applyConfiguration(true); // Applies configuration is only run once as
+    // the thread is started
+
+    std::cout << "Starting download loop thread" << std::endl;
+    Pipe& p = _pipe;
+
+    SiftJob* job;
+    while((job = p._queue_stage2.pull()) != nullptr)
+    {
+        // applyConfiguration();
+
+        // get the next job in queue or wait until a new job arrives
+
+        popsift::Image* img = job->getImg();
+        std::cout << "the job is --> ";
+        job->printJob();
+
+        private_init(img->getWidth(), img->getHeight());
+
+        // DO THE JOB!!!
+        p._pyramid->step1(_config, img);
+
+        // FUFULL THE PROMISE
+
+        job->jobDone(5);
+
+        // uploaded input image no longer needed, release for reuse
+        p._unused.push(img);
+
+        // applyConfiguration();
+
+        // popsift::ImageBase* img = job->getImg();
+
+        // TODO(jorgejen): Do similar private init and appyl scalefactor that
+        // this method calls private_init( img->getWidth(), img->getHeight() );
+    }
+}
+
+SiftJob::SiftJob(int w, int h, const unsigned char* imageData)
+  : _w(w)
+  , _h(h)
+{
+    _f = _p.get_future(); // tie the future to the promise so that it can be
+                          // retrieved when it is eventually set
+
+    // copy the data from caller
+    _imageData = (unsigned char*)malloc(w * h);
+    if(_imageData != nullptr)
+    {
+        memcpy(_imageData, imageData, w * h);
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << "Memory limitation" << endl << "E    Failed to allocate memory for SiftJob";
+        POP_FATAL(ss.str());
+    }
+}
+
+SiftJob::~SiftJob() { free(_imageData); }
+
+// To fufill promise temporary promise solution while I don't have a
+// featuresBase object to return
+void SiftJob::jobDone(int tmpRes) { _p.set_value(tmpRes); }
+
+// TMP function for testing structure
+void SiftJob::printJob() { std::printf("Width: %d -- height: %d\n", _w, _h); }
+
+int SiftJob::getHost() { return _f.get(); }
+
+void SiftJob::setImg(popsift::Image* img, sycl::queue q)
+{
+    img->resetDimensions(_w, _h);
+    img->load(_imageData);
+    _img = img;
+}
+
+// Not sure if this is a good way of doing it
+// just doing it to have same methods as popsift code
+popsift::Image* SiftJob::getImg() { return _img; }
+
+void PopSift::Pipe::uninit()
+{
+    _queue_stage1.push(nullptr);
+    if(_thread_stage2 != nullptr)
+    {
+        _thread_stage2->join();
+        _thread_stage2.reset(nullptr);
+    }
+    if(_thread_stage1 != nullptr)
+    {
+        // should not really ever run as for stage2 to be nullptr
+        // stage1 has to have already become nullptr hence not needed
+        // as far as I understand...
+        _thread_stage1->join();
+        _thread_stage1.reset(nullptr);
+    }
+
+    while(!_unused.empty())
+    {
+        popsift::Image* img = _unused.pull();
+        delete img;
+    }
 }
 
 // Helper function for development
@@ -200,143 +362,3 @@ void PopSift::printDevice() {
 //   });
 //
 // }
-
-SiftJob *PopSift::enqueue(int w, int h, const unsigned char *imageData) {
-  // TODO(jorgejen): Implement support for float images and have this
-  // configuration step if( _image_mode != ByteImages )
-  // {
-  //     stringstream ss;
-  //     ss << "Image mode error" << endl
-  //        << "E    Cannot load byte images into a PopSift pipeline configured
-  //        for float images";
-  //     POP_FATAL(ss.str());
-  // }
-
-  // HERE TEXTURE FIT WAS DONE -- NOt currently using texture memory
-
-  SiftJob *job = new SiftJob(w, h, imageData);
-  // NOTE: Currently skipping first stage as I don't have explicit memory
-  // tranfer from host to device first
-  _pipe._queue_stage1.push(job);
-  return job;
-}
-
-void PopSift::uploadImages() {
-  SiftJob *job;
-  while ((job = _pipe._queue_stage1.pull()) != nullptr) {
-    popsift::Image *img =
-        _pipe._unused.pull(); // getting a unused Image (reusing it)
-
-    // copy image to device
-    job->setImg(img, _device_queue);
-    // WARNING: the copy is asynchronous so could result in issues as the job
-    // could start before it is done but I think as the following tasks are also
-    // in the same sycl queue it should be fine due to it making the task graph
-    // properly and that the memcoyp is a dependency but not sure might have to
-    // set it to be a dependency before the next dependent kernel runs...
-
-    // job->setImg( img );
-    _pipe._queue_stage2.push(job);
-  }
-  // Push nullptr to stage2 queue to make that one terminates aswell
-  // safe to do as we know know no more jobs will be pushed to stage 1 queue
-  _pipe._queue_stage2.push(nullptr);
-}
-
-void PopSift::extractDownloadLoop() {
-  // cudaSetDevice(_device);
-  // applyConfiguration(true); // Applies configuration is only run once as the
-  // thread is started
-
-  std::cout << "Starting download loop thread" << std::endl;
-  Pipe &p = _pipe;
-
-  SiftJob *job;
-  while ((job = p._queue_stage2.pull()) != nullptr) {
-    // applyConfiguration();
-
-    // get the next job in queue or wait until a new job arrives
-
-    popsift::Image *img = job->getImg();
-    std::cout << "the job is --> ";
-    job->printJob();
-
-    private_init(img->getWidth(), img->getHeight());
-
-    // DO THE JOB!!!
-
-    // FUFULL THE PROMISE
-
-    job->jobDone(5);
-
-    // uploaded input image no longer needed, release for reuse
-    p._unused.push(img);
-
-    // applyConfiguration();
-
-    // popsift::ImageBase* img = job->getImg();
-
-    // TODO(jorgejen): Do similar private init and appyl scalefactor that this
-    // method calls private_init( img->getWidth(), img->getHeight() );
-  }
-}
-
-SiftJob::SiftJob(int w, int h, const unsigned char *imageData)
-    : _w(w), _h(h)
-// , _img(nullptr) // Currently not in use
-{
-  _f = _p.get_future(); // tie the future to the promise so that it can be
-                        // retrieved when it is eventually set
-
-  // copy the data from caller
-  _imageData = (unsigned char *)malloc(w * h);
-  if (_imageData != nullptr) {
-    memcpy(_imageData, imageData, w * h);
-  } else {
-    std::stringstream ss;
-    ss << "Memory limitation" << endl
-       << "E    Failed to allocate memory for SiftJob";
-    POP_FATAL(ss.str());
-  }
-}
-
-SiftJob::~SiftJob() { free(_imageData); }
-
-// To fufill promise temporary promise solution while I don't have a
-// featuresBase object to return
-void SiftJob::jobDone(int tmpRes) { _p.set_value(tmpRes); }
-
-// TMP function for testing structure
-void SiftJob::printJob() { std::printf("Width: %d -- height: %d\n", _w, _h); }
-
-int SiftJob::getHost() { return _f.get(); }
-
-void SiftJob::setImg(popsift::Image *img, sycl::queue q) {
-  img->resetDimensions(_w, _h);
-  img->load(_imageData);
-  _img = img;
-}
-
-// Not sure if this is a good way of doing it
-// just doing it to have same methods as popsift code
-popsift::Image *SiftJob::getImg() { return _img; }
-
-void PopSift::Pipe::uninit() {
-  _queue_stage1.push(nullptr);
-  if (_thread_stage2 != nullptr) {
-    _thread_stage2->join();
-    _thread_stage2.reset(nullptr);
-  }
-  if (_thread_stage1 != nullptr) {
-    // should not really ever run as for stage2 to be nullptr
-    // stage1 has to have already become nullptr hence not needed
-    // as far as I understand...
-    _thread_stage1->join();
-    _thread_stage1.reset(nullptr);
-  }
-
-  while (!_unused.empty()) {
-    popsift::Image *img = _unused.pull();
-    delete img;
-  }
-}

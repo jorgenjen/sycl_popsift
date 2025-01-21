@@ -1,0 +1,8 @@
+# Modifications to clangd-format so that it agrees with cpplint
+SpacesBeforeTrailingComments: 2
+AccessModifierOffset: -3 # -3 for 4 space tabs and -1 for 2 space tabs to match with cpplint 
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+
