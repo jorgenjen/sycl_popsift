@@ -4,31 +4,36 @@
 
 namespace popsift {
 
-struct Image {
+struct Image
+{
     Image() = delete;
 
-    Image(sycl::queue &q);
+    Image(sycl::queue& q);
 
     /** Create a device-sided buffer of the given dimensions */
-    Image(int w, int h, sycl::queue &q);
+    Image(int w, int h, sycl::queue& q);
 
     ~Image();
 
     void resetDimensions(int w, int h);
 
-    void load(void *input);
+    void load(void* input);
 
     inline int getWidth() const { return _w; }
     inline int getHeight() const { return _h; }
 
- protected:
-    int _w;      // width  of current image
-    int _h;      // height of current image
-    int _max_w;  // allocated width  of image
-    int _max_h;  // allocated height of image
+    // Simple function for testing and development
+    void host_move(void* outptu);
+    void print_region(int start_x, int start_y, int end_x, int end_y);
 
-    sycl::queue &_device_queue;  // reference to the queue
+  protected:
+    int _w;     // width  of current image
+    int _h;     // height of current image
+    int _max_w; // allocated width  of image
+    int _max_h; // allocated height of image
 
-    unsigned char *_device_img;
+    sycl::queue& _device_queue; // reference to the queue
+
+    unsigned char* _device_img;
 };
-}  // namespace popsift
+} // namespace popsift
