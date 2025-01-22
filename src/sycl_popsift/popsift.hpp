@@ -142,6 +142,11 @@ class PopSift
 
     popsift::Config _config;
 
+    /* Keep a copy of the config to avoid unnecessary re-configurations
+     * in configure()
+     */
+    popsift::Config _shadow_config; // Not sure if I want this
+
     Pipe _pipe;
     /// whether the object is initialized
     bool _isInit{true};

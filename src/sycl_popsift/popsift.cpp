@@ -2,6 +2,7 @@
 
 #include "common/debug_macros.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
+#include "sycl_popsift/sift_constants.hpp"
 
 #include <sycl/sycl.hpp>
 
@@ -77,14 +78,35 @@ void PopSift::uninit()
                   << std::endl;
         return;
     }
-    std::cout << "Uninting the pipe now" << std::endl;
+
+    if(popsift::d_consts != nullptr)
+        sycl::free(popsift::d_consts, _device_queue);
+    else
+        std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
+
     _pipe.uninit();
-    std::cout << "Done with the pip epipe now" << std::endl;
 
     _isInit = false;
 }
 
 // Apply configuration should reside here
+bool PopSift::applyConfiguration(bool force)
+{
+    if(force || (_config != _shadow_config))
+    {
+        cout << "Applying configuration RN duudes!" << endl;
+        // popsift::init_filter(_config, _config.sigma, _config.levels);
+        popsift::init_constants(_config.sigma,
+                                _config.levels,
+                                _config.getPeakThreshold(),
+                                _config._edge_limit,
+                                _config.getMaxExtrema(),
+                                _config.getNormalizationMultiplier(),
+                                _device_queue);
+    }
+    _shadow_config = _config;
+    return true;
+}
 
 void PopSift::private_apply_scale_factor(int* w, int* h)
 {
@@ -196,7 +218,7 @@ void PopSift::uploadImages()
 void PopSift::extractDownloadLoop()
 {
     // cudaSetDevice(_device);
-    // applyConfiguration(true); // Applies configuration is only run once as
+    applyConfiguration(true); // Applies configuration is only run once as
     // the thread is started
 
     std::cout << "Starting download loop thread" << std::endl;
@@ -214,6 +236,8 @@ void PopSift::extractDownloadLoop()
         job->printJob();
 
         private_init(img->getWidth(), img->getHeight());
+
+        // img->print_region(4, 4, 20, 20);
 
         // DO THE JOB!!!
         p._pyramid->step1(_config, img);

@@ -81,10 +81,10 @@ void Image::resetDimensions(int w, int h)
                   << std::endl;
 }
 
-void Image::load(void* input) { _device_queue.memcpy(_device_img, input, _w * _h); }
+sycl::event Image::load(void* input) { return _device_queue.memcpy(_device_img, input, _w * _h); }
 
 // only for printing and debugging
-void Image::host_move(void* output) { _device_queue.memcpy(output, _device_img, _w * _h); };
+sycl::event Image::host_move(void* output) { return _device_queue.memcpy(output, _device_img, _w * _h); };
 
 // only for printing and debugging -- quite inefficient
 void Image::print_region(int start_x, int start_y, int end_x, int end_y)
@@ -100,7 +100,7 @@ void Image::print_region(int start_x, int start_y, int end_x, int end_y)
         cout << "Memory allocation failed" << endl;
         return;
     }
-    host_move(img);
+    sycl::event write_event = host_move(img);
 
     if(start_x > _w || end_x > _w || start_y > _h || end_y > _h)
     {
@@ -119,7 +119,16 @@ void Image::print_region(int start_x, int start_y, int end_x, int end_y)
     }
     printf("Image region (%d, %d) -> (%d, %d)\n", start_x, start_y, end_x, end_y);
 
-    _device_queue.wait(); // wait for memcpy to finish
+    try
+    {
+        write_event.wait();
+    }
+    catch(const sycl::exception& e)
+    {
+        std::cerr << "SYCL exception caught: " << e.what() << std::endl;
+        return;
+    }
+    // _device_queue.wait(); // wait for memcpy to finish
     for(int i = start_y; i < end_y; ++i)
     {
         for(int j = start_x; j < end_x; ++j)
