@@ -91,12 +91,12 @@ extern ConstInfo h_consts;
 extern ConstInfo* d_consts;
 // ConstInfo* d_consts = nullptr;
 
-void init_constants(float sigma0,
-                    int levels,
-                    float threshold,
-                    float edge_limit,
-                    int max_extrema,
-                    int normalization_multiplier,
-                    sycl::queue& Q);
+sycl::event init_constants(float sigma0,
+                           int levels,
+                           float threshold,
+                           float edge_limit,
+                           int max_extrema,
+                           int normalization_multiplier,
+                           sycl::queue& Q);
 
 } // namespace popsift

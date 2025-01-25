@@ -25,13 +25,13 @@ ConstInfo h_consts;
 ConstInfo* d_consts = nullptr;
 // __device__ __constant__ ConstInfo d_consts;
 
-void init_constants(float sigma0,
-                    int levels,
-                    float threshold,
-                    float edge_limit,
-                    int max_extrema,
-                    int normalization_multiplier,
-                    sycl::queue& Q)
+sycl::event init_constants(float sigma0,
+                           int levels,
+                           float threshold,
+                           float edge_limit,
+                           int max_extrema,
+                           int normalization_multiplier,
+                           sycl::queue& Q)
 {
     // cudaError_t err;
 
@@ -75,7 +75,7 @@ void init_constants(float sigma0,
         std::cerr << "Memory allocation failed: " << e.what() << std::endl;
         // Here, d_consts was never assigned, so there's no need to free it
     }
-    Q.memcpy(d_consts, &h_consts, sizeof(ConstInfo));
+    return Q.memcpy(d_consts, &h_consts, sizeof(ConstInfo));
 
     // TODO: ADd error checking here
 
