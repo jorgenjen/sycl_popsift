@@ -11,7 +11,7 @@
 #include <thread>
 
 namespace popsift {
-class ImageBase;
+class Image;
 class Pyramid;
 
 };

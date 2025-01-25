@@ -1,6 +1,7 @@
 #include "sycl_popsift/popsift.hpp"
 
 #include "common/debug_macros.hpp"
+#include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
 
@@ -95,14 +96,14 @@ bool PopSift::applyConfiguration(bool force)
     if(force || (_config != _shadow_config))
     {
         cout << "Applying configuration RN duudes!" << endl;
-        // popsift::init_filter(_config, _config.sigma, _config.levels);
-        popsift::init_constants(_config.sigma,
-                                _config.levels,
-                                _config.getPeakThreshold(),
-                                _config._edge_limit,
-                                _config.getMaxExtrema(),
-                                _config.getNormalizationMultiplier(),
-                                _device_queue);
+        sycl::event filter_d_write = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue);
+        sycl::event const_d_write = popsift::init_constants(_config.sigma,
+                                                            _config.levels,
+                                                            _config.getPeakThreshold(),
+                                                            _config._edge_limit,
+                                                            _config.getMaxExtrema(),
+                                                            _config.getNormalizationMultiplier(),
+                                                            _device_queue);
     }
     _shadow_config = _config;
     return true;
