@@ -119,21 +119,11 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
               << "dim1 = " << local.get(1) << "\n";
 
     std::cout << "H gauss" << h_gauss.required_filter_stages << std::endl;
-    GaussInfo* me_gauss;
-    try
-    {
-        me_gauss = sycl::malloc_device<GaussInfo>(1, _device_queue);
-    }
-    catch(const sycl::exception& e)
-    {
-        std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-    }
-
-    _device_queue.memcpy(me_gauss, &h_gauss, sizeof(GaussInfo)).wait();
 
     _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(d_gauss_write);
-        // auto gauss_ptr = _d_gauss;
+        auto gauss_ptr = _d_gauss; // needed to avoid implicitly capturing this which
+        // is not allowed
         sycl::stream out(1024, 256, cgh); // for debugging
 
         cgh.parallel_for(sycl::nd_range{global, local}, [=](sycl::nd_item<2> it) {
@@ -142,12 +132,13 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
             sycl::range gr = it.get_global_range();
             sycl::range lr = it.get_local_range();
 
-            if(x == 10 && y == 10)
+            if(x == 1279 && y == 851) // final work item for 1280 x 851 image
             {
                 out << "\n\n\t\tHello sycl! (" << x << ", " << y << ")" << sycl::endl;
                 out << "\t\tglobal range: " << gr.get(0) << " ; " << gr.get(1) << sycl::endl;
                 out << "\t\tlocal range: " << lr.get(0) << " ; " << lr.get(1) << sycl::endl;
-                out << "\t\tGauus stufus: " << me_gauss->required_filter_stages << sycl::endl;
+                // out << "\t\tGauus stufus: " << me_gauss->required_filter_stages << sycl::endl;
+                out << "\t\tGauus stufus: " << gauss_ptr->required_filter_stages << sycl::endl;
                 out << "\n\n\n";
             }
 
