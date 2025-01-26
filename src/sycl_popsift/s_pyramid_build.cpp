@@ -12,7 +12,7 @@ namespace popsift {
 // namespace gauss { // is only for one function get_by_2_pick_every_second
 // }
 
-void Pyramid::build_pyramid(const Config& conf, Image* base_img)
+void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_gauss_write)
 {
     // #if (PYRAMID_PRINT_DEBUG==1)
     //     cerr << "Entering " << __FUNCTION__ << " with base image "  << endl
@@ -52,7 +52,7 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img)
                 if(octave == 0)
                 {
                     cout << "first ocatve first level" << endl;
-                    // horiz_from_input_image(conf, base, stream);
+                    horiz_from_input_image(conf, base_img, d_gauss_write);
                     // vert_from_interm(octave, 0, stream, gaussTableChoice);
                 }
                 // else

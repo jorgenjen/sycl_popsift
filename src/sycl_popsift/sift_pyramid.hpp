@@ -9,6 +9,7 @@
 
 // #include "features.h"
 // #include "sift_constants.h"
+#include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/s_image.hpp"
 #include "sycl_popsift/sift_octave.hpp"
@@ -71,6 +72,9 @@ class Pyramid
     /* used to implement a global barrier per octave */
     int* _d_extrema_num_blocks;
 
+    sycl::queue _device_queue;
+    popsift::GaussInfo* _d_gauss;
+
     /* the download of converted descriptors should be asynchronous */
     // cudaStream_t _download_stream;
 
@@ -82,13 +86,13 @@ class Pyramid
     };
 
   public:
-    Pyramid(const Config& config, int w, int h);
+    Pyramid(const Config& config, int w, int h, sycl::queue& Q, popsift::GaussInfo* d_gauss);
     ~Pyramid();
 
     void resetDimensions(const Config& conf, int width, int height);
 
     /** step 1: load image and build pyramid */
-    void step1(const Config& conf, Image* img);
+    void step1(const Config& conf, Image* img, sycl::event d_gauss_wirte);
 
     /** step 2: find extrema, orientations and descriptor */
     void step2(const Config& conf);
@@ -110,7 +114,7 @@ class Pyramid
     inline Octave& getOctave(const int o) { return _octaves[o]; }
 
   private:
-    void horiz_from_input_image(const Config& conf, Image* base);
+    void horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
 
     // inline void downscale_from_prev_octave(int octave, cudaStream_t stream);
 
@@ -130,7 +134,7 @@ class Pyramid
     //                               cudaStream_t stream);
 
     void reset_extrema_mgmt();
-    void build_pyramid(const Config& conf, Image* base);
+    void build_pyramid(const Config& conf, Image* base, sycl::event d_gauss_write);
     void find_extrema(const Config& conf);
     void reallocExtrema(int numExtrema);
 

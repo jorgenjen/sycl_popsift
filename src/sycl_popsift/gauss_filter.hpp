@@ -81,13 +81,14 @@ struct GaussInfo
     static int vlFeatRelativeSpan(float sigma);
 };
 
-extern GaussInfo* d_gauss;
+// Moved to popsift protected attribute
+// extern GaussInfo* d_gauss;
 // extern __device__ __constant__ GaussInfo d_gauss;
 // extern thread_local GaussInfo h_gauss; // not sure if it shoud be thread local or not
 extern GaussInfo h_gauss;
 
 /* init_filter must be called early to initialize the Gauss tables.
  */
-sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queue& Q);
+sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queue& Q, popsift::GaussInfo* d_gauss);
 
 } // namespace popsift

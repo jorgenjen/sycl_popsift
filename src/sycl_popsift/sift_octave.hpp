@@ -22,7 +22,8 @@ namespace popsift {
 //     cudaSurfaceObject_t tex;
 // };
 
-class Octave {
+class Octave
+{
     int _w{};
     int _h{};
     int _max_w{};
@@ -61,13 +62,16 @@ class Octave {
     // cudaEvent_t _ori_done{};
     // cudaEvent_t _desc_done{};
 
- public:
+  public:
     Octave();
     ~Octave() { this->free(); }
 
-    void resetDimensions(const Config &conf, int w, int h);
+    void resetDimensions(const Config& conf, int w, int h);
 
+    // DON'T know why this is set to uint32_t as both parameter passed and setter is int
+    // hence no need for the extra numbers given by uint??
     // inline void debugSetOctave( uint32_t o ) { _debug_octave_id = o; }
+    inline void debugSetOctave(int o) { _debug_octave_id = o; }
 
     inline int getLevels() const { return _levels; }
     inline int getWidth() const { return _w; }
@@ -126,17 +130,16 @@ class Octave {
      * @param levels
      * @param gauss_group
      */
-    void alloc(const Config &conf, int width, int height, int levels,
-               int gauss_group);
+    void alloc(const Config& conf, int width, int height, int levels, int gauss_group);
     void free();
 
     /**
      * debug:
      * download a level and write to disk
      */
-    void download_and_save_array(const char *basename, int octave);
+    void download_and_save_array(const char* basename, int octave);
 
- private:
+  private:
     void alloc_data_planes();
     void alloc_data_tex();
     void alloc_interm_array();
@@ -156,4 +159,4 @@ class Octave {
     void free_data_planes();
 };
 
-}  // namespace popsift
+} // namespace popsift

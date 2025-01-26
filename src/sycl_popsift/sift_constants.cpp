@@ -66,9 +66,13 @@ sycl::event init_constants(float sigma0,
     // sycl::buffer<ConstInfo> d_consts(h_consts);
 
     // send constantst to device
+
     try
     {
-        d_consts = sycl::malloc_device<ConstInfo>(1, Q);
+        if(d_consts == nullptr)
+            d_consts = sycl::malloc_device<ConstInfo>(1, Q);
+        else
+            std::cout << "\n\n\t\td_consts is nullptr -- no malloc needed\n\n" << std::endl;
     }
     catch(const sycl::exception& e)
     {

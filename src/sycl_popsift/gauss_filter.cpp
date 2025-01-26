@@ -22,7 +22,7 @@ using namespace std;
 namespace popsift {
 
 // __device__ __constant__ GaussInfo d_gauss;
-GaussInfo* d_gauss = nullptr;
+// GaussInfo* d_gauss = nullptr;
 
 // __align__(128) thread_local GaussInfo h_gauss;
 // thread_local GaussInfo h_gauss;
@@ -96,7 +96,7 @@ GaussInfo h_gauss; // not sure if I need thread local and not sure how to do ali
  * Initialize the Gauss filter table in constant memory
  *************************************************************/
 
-sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queue& Q)
+sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queue& Q, GaussInfo* d_gauss)
 {
     if(sigma0 > 2.0)
     {
@@ -176,7 +176,10 @@ sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queu
 
     try
     {
-        d_gauss = sycl::malloc_device<GaussInfo>(1, Q);
+        if(d_gauss == nullptr)
+            d_gauss = sycl::malloc_device<GaussInfo>(1, Q);
+        else
+            std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl;
     }
     catch(const sycl::exception& e)
     {

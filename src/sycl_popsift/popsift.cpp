@@ -24,6 +24,10 @@ PopSift::PopSift(const popsift::Config& config)
     // pyramid and all that
 
     configure(config);
+
+    // Set the static memer pointers to nullptr
+    // _d_gauss = nullptr;
+
     // sycl::queue _device_queue;
     // sycl::buffer<unsigned char, 2> _imageData(imageData, sycl::range<2>(_w,
     // _h));
@@ -58,13 +62,14 @@ PopSift::~PopSift()
 
 bool PopSift::configure(const popsift::Config& config, bool /*force*/)
 {
-    // TODO(jorgejen): Implemenet pyramid.
+    if(_pipe._pyramid != nullptr)
+    {
+        return false;
+    }
 
-    // if( _pipe._pyramid != nullptr ) {
-    //     return false;
-    // }
-
+    std::cout << "Before config" << std::endl;
     _config = config;
+    std::cout << "AFTER config" << std::endl;
     _config.levels = max(2, config.levels);
 
     return true;
@@ -85,6 +90,11 @@ void PopSift::uninit()
     else
         std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
 
+    if(_d_gauss != nullptr)
+        sycl::free(_d_gauss, _device_queue);
+    else
+        std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
+
     _pipe.uninit();
 
     _isInit = false;
@@ -93,17 +103,22 @@ void PopSift::uninit()
 // Apply configuration should reside here
 bool PopSift::applyConfiguration(bool force)
 {
+    // TODO: Figure out why on second image it returns mismatch on octaves when they in fact are the same
+    // so something seems to be wrong here. Once figured out revert the equal function back to the commented out one
     if(force || (_config != _shadow_config))
     {
-        cout << "Applying configuration RN duudes!" << endl;
-        sycl::event filter_d_write = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue);
-        sycl::event const_d_write = popsift::init_constants(_config.sigma,
-                                                            _config.levels,
-                                                            _config.getPeakThreshold(),
-                                                            _config._edge_limit,
-                                                            _config.getMaxExtrema(),
-                                                            _config.getNormalizationMultiplier(),
-                                                            _device_queue);
+        cout << "\n\n\t\tApplying configuration nuuuuuu!!\n\n" << endl;
+        // for re ren we need to free and re malloc or change the size or not malloc again if it is already malloced
+        _d_gauss_write = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue, _d_gauss);
+
+        // for now!
+        // _d_consts_write = popsift::init_constants(_config.sigma,
+        //                                           _config.levels,
+        //                                           _config.getPeakThreshold(),
+        //                                           _config._edge_limit,
+        //                                           _config.getMaxExtrema(),
+        //                                           _config.getNormalizationMultiplier(),
+        //                                           _device_queue);
     }
     _shadow_config = _config;
     return true;
@@ -135,21 +150,23 @@ bool PopSift::private_init(int w, int h)
 {
     Pipe& p = _pipe;
 
-    cout << "PopSift::private_init(" << w << "," << h << ")" << endl;
+    cout << "\n\n\t\tPopSift::private_init(" << w << "," << h << ")" << endl;
 
     private_apply_scale_factor(&w, &h);
 
-    cout << "PopSift::after_scale_factor(" << w << "," << h << ")" << endl;
+    cout << "\n\n\t\tPopSift::after_scale_factor(" << w << "," << h << ")" << endl;
 
     // TODO(jorgejen): Implement pyramid
 
     if(p._pyramid != nullptr)
     {
-        // p._pyramid->resetDimensions(_config, w, h);
+        cout << "\tNot null ptr" << endl;
+        p._pyramid->resetDimensions(_config, w, h);
         return true;
     }
+    cout << "\t null null null you fucking goodb boy" << endl;
 
-    p._pyramid = new popsift::Pyramid(_config, w, h);
+    p._pyramid = new popsift::Pyramid(_config, w, h, _device_queue, _d_gauss);
 
     return true;
 }
@@ -219,6 +236,7 @@ void PopSift::uploadImages()
 void PopSift::extractDownloadLoop()
 {
     // cudaSetDevice(_device);
+    std::cout << "Befoe apply conf conf dong" << std::endl;
     applyConfiguration(true); // Applies configuration is only run once as
     // the thread is started
 
@@ -228,7 +246,10 @@ void PopSift::extractDownloadLoop()
     SiftJob* job;
     while((job = p._queue_stage2.pull()) != nullptr)
     {
-        // applyConfiguration();
+        // will do nothing if configuraiton has not changed
+
+        std::cout << "\t\tApply conf inner to force!" << std::endl;
+        applyConfiguration();
 
         // get the next job in queue or wait until a new job arrives
 
@@ -241,7 +262,7 @@ void PopSift::extractDownloadLoop()
         // img->print_region(4, 4, 20, 20);
 
         // DO THE JOB!!!
-        p._pyramid->step1(_config, img);
+        p._pyramid->step1(_config, img, _d_gauss_write);
 
         // FUFULL THE PROMISE
 

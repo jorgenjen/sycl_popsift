@@ -1,21 +1,31 @@
 
 #include "sycl_popsift/sift_pyramid.hpp"
 
+#include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/s_image.hpp" // not sure if needed to include here aswell clean up #includes at some point
+
+#include <cmath>
 
 namespace popsift {
 
-Pyramid::Pyramid(const Config& config, int width, int height)
+Pyramid::Pyramid(const Config& config, int width, int height, sycl::queue& Q, popsift::GaussInfo* d_gauss)
   : _num_octaves(config.octaves)
   , _levels(config.levels + 3)
   , _assume_initial_blur(config.hasInitialBlur())
   , _initial_blur(config.getInitialBlur())
+  , _device_queue(Q)
+  , _d_gauss(d_gauss)
 {
     _octaves = new Octave[_num_octaves];
 
     int w = width;
     int h = height;
 
+    // IMPORTANT: do next!!
+    // TODO: IMPORTANT -> Implement the constructor to pyramid
+
+    // NOT SURE IF I want them to be global like in POPSIFT or if
+    // I want them to be an attribute of the pyramid calss
     // memset(&hct, 0, sizeof(ExtremaCounters));
     // cudaMemcpyToSymbol(dct, &hct, sizeof(ExtremaCounters), 0,
     // cudaMemcpyHostToDevice);
@@ -26,13 +36,14 @@ Pyramid::Pyramid(const Config& config, int width, int height)
     // _d_extrema_num_blocks = popsift::cuda::malloc_devT<int>(_num_octaves,
     // __FILE__, __LINE__);
     //
-    // for(int o = 0; o < _num_octaves; o++)
-    // {
-    //     _octaves[o].debugSetOctave(o);
-    //     _octaves[o].alloc(config, w, h, _levels, _gauss_group);
-    //     w = ceilf(w / 2.0f);
-    //     h = ceilf(h / 2.0f);
-    // }
+    for(int o = 0; o < _num_octaves; o++)
+    {
+        _octaves[o].debugSetOctave(o);
+        _octaves[o].alloc(config, w, h, _levels, _gauss_group);
+        w = ceilf(w / 2.0f);
+        h = ceilf(h / 2.0f);
+    }
+
     //
     // int sz = _num_octaves * h_consts.max_extrema;
     // dobuf_shadow.i_ext_dat[0] =
@@ -72,10 +83,11 @@ Pyramid::Pyramid(const Config& config, int width, int height)
     // cudaStreamCreate(&_download_stream);
 }
 
-void Pyramid::step1(const Config& conf, popsift::Image* img)
+void Pyramid::step1(const Config& conf, popsift::Image* img, sycl::event d_gauss_write)
 {
+    // TODO: Implement the reset -- far down the line need to find extrema first
     // reset_extrema_mgmt();
-    build_pyramid(conf, img);
+    build_pyramid(conf, img, d_gauss_write);
 }
 
 // void Pyramid::reset_extrema_mgmt()
@@ -87,5 +99,18 @@ void Pyramid::step1(const Config& conf, popsift::Image* img)
 //     popcuda_memset_sync(_d_extrema_num_blocks, 0, _num_octaves *
 //     sizeof(int));
 // }
+
+void Pyramid::resetDimensions(const Config& conf, int width, int height)
+{
+    int w = width;
+    int h = height;
+
+    for(int o = 0; o < _num_octaves; o++)
+    {
+        _octaves[o].resetDimensions(conf, w, h);
+        w = ceilf(w / 2.0f);
+        h = ceilf(h / 2.0f);
+    }
+}
 
 } // namespace popsift
