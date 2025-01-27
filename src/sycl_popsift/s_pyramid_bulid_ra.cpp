@@ -90,23 +90,7 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
 
     float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
 
-    // std::cout << "Gaussion Span: " << d_gauss.dd.span[0] << std::endl;
-    // std::cout << "Gaussian Filter: " << d_gauss.dd.filter[0] << std::endl;
-
-    // float* vec_start = &d_gauss.dd.filter[0];
-    // for( int i=0; i < 128; i++){
-    //   std::cout << "Gaussian Filter[" << i << "]: " << vec_start[i] << std::endl;
-    // }
-
-    // const int    span    =  d_gauss.dd.span[0];
-    // const float* filter  = &d_gauss.dd.filter[0];
-
-    // normalizedSource::horiz<<<grid, block, 0, stream>>>(
-    //   base->getInputTexture(), oct_obj.getIntermediateSurface(), width, height, shift);
-
-    // Lambda version
-
-    std::size_t grid_x = grid_divide(width, 128);
+    std::size_t grid_x = grid_divide(width, 128); // different from CUDA
     std::cout << "grid_x: " << grid_x << "widht: " << width << "height: " << height << std::endl;
     sycl::range global{grid_x, (size_t)height}; // not sure why heiht needs to be size_t
     sycl::range local{128, 1};
@@ -120,10 +104,24 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
 
     std::cout << "H gauss" << h_gauss.required_filter_stages << std::endl;
 
+    unsigned char* intermediate; // needs to be moved to the octave so that it is releated to it and working properly
+
+    try
+    {
+        intermediate = sycl::malloc_device<unsigned char>(width * height, _device_queue);
+    }
+    catch(const sycl::exception& e)
+    {
+        std::cerr << "Memory allocation failed: " << e.what() << std::endl;
+    }
+
     _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(d_gauss_write);
-        auto gauss_ptr = _d_gauss; // needed to avoid implicitly capturing this which
-        // is not allowed
+        auto gauss_ptr = _d_gauss; // needed to avoid implicitly capturing this which is not allowed
+
+        const int span = _d_gauss->dd.span[0];
+        const float* filter = &_d_gauss->dd.filter[0];
+
         sycl::stream out(1024, 256, cgh); // for debugging
 
         cgh.parallel_for(sycl::nd_range{global, local}, [=](sycl::nd_item<2> it) {
@@ -132,6 +130,20 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
             sycl::range gr = it.get_global_range();
             sycl::range lr = it.get_local_range();
 
+            // could have two different kernels one with this and one without
+            // depending on if it is perfectly divisible by 128 but might not be worth it... Test
+            if(x >= width)
+                return;
+
+            // The code
+
+            int read_x = x + shift;
+            int read_y = y + shift;
+
+            float out = 0.0f;
+
+            // the code end
+
             if(x == 1279 && y == 851) // final work item for 1280 x 851 image
             {
                 out << "\n\n\t\tHello sycl! (" << x << ", " << y << ")" << sycl::endl;
@@ -139,24 +151,15 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
                 out << "\t\tlocal range: " << lr.get(0) << " ; " << lr.get(1) << sycl::endl;
                 // out << "\t\tGauus stufus: " << me_gauss->required_filter_stages << sycl::endl;
                 out << "\t\tGauus stufus: " << gauss_ptr->required_filter_stages << sycl::endl;
+                out << "\t\tspan: " << span << sycl::endl;
+                sycl::ext::oneapi::experimental::printf(
+                  "filter: %f %f %f %f %f %f\n", filter[6], filter[5], filter[4], filter[3], filter[2], filter[1]);
+
                 out << "\n\n\n";
             }
-
-            // if(i == 0 && j == 0)
-            // {
-            // printf("_d_gauss filter_stages %d", gauss_ptr->required_filter_stages);
-            // just used for debugging
-
-            // sycl::ext::oneapi::experimental::printf("_d_gauss filter_stages %d\n",
-            //                                         gauss_ptr->required_filter_stages);
-
-            // printf("span: %d\n", span);
-            // printf("filter: %f %f %f %f %f %f\n", filter[6], filter[5], filter[4], filter[3], filter[2],
-            // filter[1]);
-            // }
         });
     });
-    _device_queue.wait(); // temporary waiting here
+    _device_queue.wait(); // temporary waiting here remove in future
 
     // _device_queue.parallel_for(sycl::nd_range{global, local}, [=](sycl::nd_item<2> it) {
     //     int j = it.get_global_id(0);
