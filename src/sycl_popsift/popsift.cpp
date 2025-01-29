@@ -146,15 +146,26 @@ void PopSift::private_apply_scale_factor(int* w, int* h)
     *h = ceilf(*h * scaleFactor);
 }
 
+// not connected to the class just namespace!
+void get_scale_factor(int* w, int* h, const float& upscaleFactor)
+{
+    // float upscaleFactor = _config.getUpscaleFactor();
+    float scaleFactor = 1.0f / powf(2.0f, -upscaleFactor);
+
+    *w = ceilf(*w * scaleFactor);
+    *h = ceilf(*h * scaleFactor);
+}
+
 bool PopSift::private_init(int w, int h)
 {
     Pipe& p = _pipe;
 
-    cout << "\n\n\t\tPopSift::private_init(" << w << "," << h << ")" << endl;
+    // cout << "\n\n\t\tPopSift::private_init(" << w << "," << h << ")" << endl;
 
+    // WARNING: Already done to the job _w and _h if reverted uncomment!
     private_apply_scale_factor(&w, &h);
 
-    cout << "\n\n\t\tPopSift::after_scale_factor(" << w << "," << h << ")" << endl;
+    // cout << "\n\n\t\tPopSift::after_scale_factor(" << w << "," << h << ")" << endl;
 
     // TODO(jorgejen): Implement pyramid
 
@@ -216,8 +227,14 @@ void PopSift::uploadImages()
     {
         popsift::Image* img = _pipe._unused.pull(); // getting a unused Image (reusing it)
 
+        // WARNING: CHANGING WIDTH AND HEIGHT IN JOB BASED ON PRIVATE APPLY
+        // COULD BE PROBLEMATIC DOWN THE LINE -- BE AWARE YOU ARE HERBY WARNED!
+        // USING firend class so breaking encapsulateion... (should change this)
+        // private_apply_scale_factor(&job->_w, &job->_h);
+
+        // cout << "Updated w=" << job->_w << " and h=" << job->_h << endl;
         // copy image to device
-        job->setImg(img, _device_queue);
+        job->setImg(img, _device_queue, _config.getUpscaleFactor());
         // WARNING: the copy is asynchronous so could result in issues as the
         // job could start before it is done but I think as the following tasks
         // are also in the same sycl queue it should be fine due to it making
@@ -266,7 +283,11 @@ void PopSift::extractDownloadLoop()
 
         // FUFULL THE PROMISE
 
+        _device_queue.wait();
         job->jobDone(5);
+
+        cout << "Jobby: -- " << endl;
+        job->printJob();
 
         // uploaded input image no longer needed, release for reuse
         p._unused.push(img);
@@ -312,10 +333,15 @@ void SiftJob::printJob() { std::printf("Width: %d -- height: %d\n", _w, _h); }
 
 int SiftJob::getHost() { return _f.get(); }
 
-void SiftJob::setImg(popsift::Image* img, sycl::queue q)
+void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFactor)
 {
-    img->resetDimensions(_w, _h);
-    img->load(_imageData);
+    int scaled_w = _w;
+    int scaled_h = _h;
+    get_scale_factor(&scaled_w, &scaled_h, upscaleFactor);
+    img->resetDimensions(_w, _h, scaled_w, scaled_h);
+    // img->load(_imageData);
+    // img->load_divide(_imageData);
+    img->load_divide_point(_imageData, scaled_w);
     _img = img;
 }
 

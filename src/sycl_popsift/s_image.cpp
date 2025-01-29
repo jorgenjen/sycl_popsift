@@ -23,7 +23,8 @@ Image::Image(int w, int h, sycl::queue& q)
 {
     // allocate( w, h );
     // need to allocate malloc_device
-    _device_img = sycl::malloc_device<unsigned char>(w * h, q);
+    // _device_img = sycl::malloc_device<unsigned char>(w * h, q);
+    _device_img = sycl::malloc_device<float>(w * h, q);
     if(_device_img == nullptr)
         std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
                   << std::endl;
@@ -40,7 +41,8 @@ Image::~Image()
     // _input_image_h.freeHost( popsift::CudaAllocated );
 }
 
-void Image::resetDimensions(int w, int h)
+// Modified using sclaed and not scaled a bit confusing and ugly so should  refator if this is part of final
+void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
 {
     if(_max_w == 0 && _max_h == 0)
     {
@@ -48,7 +50,7 @@ void Image::resetDimensions(int w, int h)
         _max_w = _w = w;
         _max_h = _h = h;
         // allocate( w, h );
-        _device_img = sycl::malloc_device<unsigned char>(w * h, _device_queue);
+        _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _device_queue);
         if(_device_img == nullptr)
             std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
                       << std::endl;
@@ -75,13 +77,56 @@ void Image::resetDimensions(int w, int h)
 
     _max_w = _w = w;
     _max_h = _h = h;
-    _device_img = sycl::malloc_device<unsigned char>(w * h, _device_queue);
+    _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _device_queue);
     if(_device_img == nullptr)
         std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
                   << std::endl;
 }
 
 sycl::event Image::load(void* input) { return _device_queue.memcpy(_device_img, input, _w * _h); }
+
+// directly making it normalized
+sycl::event Image::load_divide(unsigned char* input)
+{
+    return _device_queue.submit([&](sycl::handler& cgh) {
+        auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
+        std::cout << "widht and height in load_divide" << _w << " - " << _h << std::endl;
+        cgh.parallel_for(sycl::range<1>(_w * _h), [=](sycl::id<1> idx) {
+            // To simulate normalized reads in PopSift -- think I would rather change the kernel in the future to avoid
+            // this as I think that should be equivalent
+            img[idx] = static_cast<float>(input[idx]) / 255.0f;
+            // img[idx] = static_cast<float>(input[idx]);
+        });
+    });
+}
+
+// probably quite slow as it probably needs to copy over the input to device then
+// do the manipulation and write to the disignated cuda_malloced area.
+// but not sure if there is a better way (besides sampled_image and bindless_image)
+sycl::event Image::load_divide_point(unsigned char* input, const int& scaled_w)
+{
+    return _device_queue.submit([&](sycl::handler& cgh) {
+        auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
+        auto width = _w;
+        int step = scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
+        cgh.parallel_for(sycl::range<2>(_w, _h), [=](sycl::id<2> idx) {
+            float pixel = static_cast<float>(input[idx[0] + idx[1] * width]) / 255.0;
+
+            auto pos = idx[0] * step + idx[1] * step * scaled_w; // position in potentially upscaled image
+
+            if(idx[0] == 5 && idx[1] == 5)
+                sycl::ext::oneapi::experimental::printf("\n\n\t\t\tPos: %d -- step: %d", pos, step);
+
+            // assumes contigious non padded memory -- which I believe is always the case
+            // copy pixel to location and right and below and below to the right
+            // just like a piint access from a texture would do.
+            img[pos] = pixel;
+            img[pos + 1] = pixel;
+            img[pos + scaled_w] = pixel;
+            img[pos + scaled_w + 1] = pixel;
+        });
+    });
+}
 
 // only for printing and debugging
 sycl::event Image::host_move(void* output) { return _device_queue.memcpy(output, _device_img, _w * _h); };

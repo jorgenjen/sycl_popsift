@@ -28,11 +28,14 @@ class SiftJob
 
     int _w;
     int _h;
+
     unsigned char* _imageData; // Copies image to this from caller (I guess due to not
                                // trusting calleer and host performance is a non issue)
 
     popsift::Image* _img;
     std::exception_ptr _err;
+
+    friend class PopSift;
 
   public:
     /**
@@ -58,7 +61,7 @@ class SiftJob
     int getHost(); // currently using int to have same pattern of
                    // initialization and such
 
-    void setImg(popsift::Image* img, sycl::queue q);
+    void setImg(popsift::Image* img, sycl::queue q, const float& upscaleFactor);
 
     popsift::Image* getImg();
 

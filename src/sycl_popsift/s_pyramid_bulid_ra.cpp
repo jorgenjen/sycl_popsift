@@ -1,3 +1,4 @@
+#include "sycl/ext/oneapi/experimental/builtins.hpp"
 #include "sycl/ext/oneapi/experimental/graph.hpp"
 #include "sycl/usm.hpp"
 #include "sycl_popsift/common/assist.h"
@@ -118,11 +119,12 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
     _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(d_gauss_write);
         auto gauss_ptr = _d_gauss; // needed to avoid implicitly capturing this which is not allowed
+        auto input = base->getInput();
 
         const int span = _d_gauss->dd.span[0];
         const float* filter = &_d_gauss->dd.filter[0];
 
-        sycl::stream out(1024, 256, cgh); // for debugging
+        sycl::stream stream_out(1024, 256, cgh); // for debugging
 
         cgh.parallel_for(sycl::nd_range{global, local}, [=](sycl::nd_item<2> it) {
             int x = it.get_global_id(0);
@@ -144,19 +146,33 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
 
             // the code end
 
-            if(x == 1279 && y == 851) // final work item for 1280 x 851 image
+            // if(x == 1279 && y == 851) // final work item for 1280 x 851 image
+            if(x == 0 && y == 0)
             {
-                out << "\n\n\t\tHello sycl! (" << x << ", " << y << ")" << sycl::endl;
-                out << "\t\tglobal range: " << gr.get(0) << " ; " << gr.get(1) << sycl::endl;
-                out << "\t\tlocal range: " << lr.get(0) << " ; " << lr.get(1) << sycl::endl;
-                // out << "\t\tGauus stufus: " << me_gauss->required_filter_stages << sycl::endl;
-                out << "\t\tGauus stufus: " << gauss_ptr->required_filter_stages << sycl::endl;
-                out << "\t\tspan: " << span << sycl::endl;
+                // stream_out << "\n\n\t\tHello sycl! (" << x << ", " << y << ")" << sycl::endl;
+                stream_out << "\t\tglobal range: " << gr.get(0) << " ; " << gr.get(1) << sycl::endl;
+                stream_out << "\t\tlocal range: " << lr.get(0) << " ; " << lr.get(1) << sycl::endl;
+                // // stream_out << "\t\tGauus stufus: " << me_gauss->required_filter_stages << sycl::endl;
+                // stream_out << "\t\tGauus stufus: " << gauss_ptr->required_filter_stages << sycl::endl;
+                // stream_out << "\t\tspan: " << span << sycl::endl;
                 sycl::ext::oneapi::experimental::printf(
-                  "filter: %f %f %f %f %f %f\n", filter[6], filter[5], filter[4], filter[3], filter[2], filter[1]);
+                  "\t\tfilter: %f %f %f %f %f %f\n", filter[6], filter[5], filter[4], filter[3], filter[2], filter[1]);
 
-                out << "\n\n\n";
+                stream_out << "\n\n\n";
+                sycl::ext::oneapi::experimental::printf("\n\n");
+                for(int y = 0; y < 10; ++y)
+                {
+                    for(int x = 0; x < 10; ++x)
+                    {
+                        // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
+                        sycl::ext::oneapi::experimental::printf("%06.2f ", input[x + y * (width)] * 255.0f);
+                    }
+                    sycl::ext::oneapi::experimental::printf("\n");
+                }
+                sycl::ext::oneapi::experimental::printf("\n\n");
             }
+            // if(x < 5 && y < 5)
+            //     sycl::ext::oneapi::experimental::printf("\t\tPixel val(%d, %d): %f\n", x, y, input[x + y * width]);
         });
     });
     _device_queue.wait(); // temporary waiting here remove in future
