@@ -105,11 +105,11 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
 
     std::cout << "H gauss" << h_gauss.required_filter_stages << std::endl;
 
-    unsigned char* intermediate; // needs to be moved to the octave so that it is releated to it and working properly
+    float* intermediate; // needs to be moved to the octave so that it is releated to it and working properly
 
     try
     {
-        intermediate = sycl::malloc_device<unsigned char>(width * height, _device_queue);
+        intermediate = sycl::malloc_device<float>(width * height, _device_queue);
     }
     catch(const sycl::exception& e)
     {
@@ -124,8 +124,6 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
         const int span = _d_gauss->dd.span[0];
         const float* filter = &_d_gauss->dd.filter[0];
 
-        sycl::stream stream_out(1024, 256, cgh); // for debugging
-
         cgh.parallel_for(sycl::nd_range{global, local}, [=](sycl::nd_item<2> it) {
             int x = it.get_global_id(0);
             int y = it.get_global_id(1);
@@ -139,30 +137,54 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
 
             // The code
 
-            int read_x = x + shift;
-            int read_y = y + shift;
+            // shift would make this odd but could be detrimendal for future kernels that needs it ... so might have to
+            // modify the original shift to be 0 as this is dealt with in the creating of the input image
+            // int read_x = x
+            // + shift; int read_y = y + shift;
 
             float out = 0.0f;
+
+#pragma unroll
+            for(int offset = span; offset > 0; offset--)
+            {
+                const float& g = filter[offset];
+                // const float offrel = float(offset) / width;
+                // const float v1 = tex2D<float>(src_linear_tex, read_x - offrel, read_y);
+                // const float v2 = tex2D<float>(src_linear_tex, read_x + offrel, read_y);
+                const auto v1_pos = x - offset;
+                const auto v2_pos = x + offset;
+
+                // clamp to left for - and clamp to right for + // does the smae as cudaAddressModeClamp for textures in
+                // cuda used in popsift
+                const float v1 = v1_pos < 0 ? input[y * width] : input[v1_pos + y * width];
+                const float v2 = v2_pos >= width ? input[width - 1 + y * width] : input[v2_pos + y * width];
+                // const float v2 = v2_pos >= width ? [width - 1 + y * width] : input[v1_pos + y * width];
+
+                // const float v1 = tex2D<float>(src_linear_tex, read_x - offrel, read_y);
+                // const float v2 = tex2D<float>(src_linear_tex, read_x + offrel, read_y);
+                if(x == 0 && y == 0)
+                {
+                    sycl::ext::oneapi::experimental::printf("offset: %d v1=%f v2=%f\n ", offset, v1, v2);
+                }
+                out += ((v1 + v2) * g);
+            }
+            const float& g = filter[0];
+            const float v3 = input[x + y * width];
+            out += (v3 * g);
+
+            // surf2DLayeredwrite(out * 255.0f, dst_data, write_x * 4, write_y, 0, cudaBoundaryModeZero);
+
+            intermediate[x + y * width] = out * 255.0f;
 
             // the code end
 
             // if(x == 1279 && y == 851) // final work item for 1280 x 851 image
             if(x == 0 && y == 0)
             {
-                // stream_out << "\n\n\t\tHello sycl! (" << x << ", " << y << ")" << sycl::endl;
-                stream_out << "\t\tglobal range: " << gr.get(0) << " ; " << gr.get(1) << sycl::endl;
-                stream_out << "\t\tlocal range: " << lr.get(0) << " ; " << lr.get(1) << sycl::endl;
-                // // stream_out << "\t\tGauus stufus: " << me_gauss->required_filter_stages << sycl::endl;
-                // stream_out << "\t\tGauus stufus: " << gauss_ptr->required_filter_stages << sycl::endl;
-                // stream_out << "\t\tspan: " << span << sycl::endl;
-                sycl::ext::oneapi::experimental::printf(
-                  "\t\tfilter: %f %f %f %f %f %f\n", filter[6], filter[5], filter[4], filter[3], filter[2], filter[1]);
-
-                stream_out << "\n\n\n";
                 sycl::ext::oneapi::experimental::printf("\n\n");
-                for(int y = 0; y < 15; ++y)
+                for(int y = 0; y < 12; ++y)
                 {
-                    for(int x = 0; x < 15; ++x)
+                    for(int x = 0; x < 12; ++x)
                     {
                         // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
                         sycl::ext::oneapi::experimental::printf("%06.2f ", input[x + y * (width)] * 255.0f);
@@ -171,32 +193,31 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
                 }
                 sycl::ext::oneapi::experimental::printf("\n\n");
             }
-            // if(x < 5 && y < 5)
-            //     sycl::ext::oneapi::experimental::printf("\t\tPixel val(%d, %d): %f\n", x, y, input[x + y * width]);
         });
     });
     _device_queue.wait(); // temporary waiting here remove in future
 
-    // _device_queue.parallel_for(sycl::nd_range{global, local}, [=](sycl::nd_item<2> it) {
-    //     int j = it.get_global_id(0);
-    //     int i = it.get_global_id(1);
-    //     // const int span = this->_d_gauss->dd.span[0];
-    //     // const float* filter = &this->_d_gauss->dd.filter[0];
-    //
-    //     if(i == 10 && j == 10)
-    //     {
-    //         printf("_d_gauss filter_stages %d", _d_gauss->required_filter_stages);
-    //
-    //         // printf("span: %d\n", span);
-    //         // printf("filter: %f %f %f %f %f %f\n", filter[6], filter[5], filter[4], filter[3], filter[2],
-    //         filter[1]);
-    //     }
-    //
-    //     // for(int k = 0; k < N; ++k)
-    //     // {
-    //     //     c[j][i] += a[j][k] * b[k][i];
-    //     // }
-    // });
+    printf("Print intermediate \n");
+    _device_queue.submit([&](sycl::handler& cgh) {
+        cgh.single_task([=]() {
+            sycl::ext::oneapi::experimental::printf("\n\n");
+            for(int y = 0; y < 12; ++y)
+            {
+                for(int x = 0; x < 12; ++x)
+                {
+                    // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
+                    sycl::ext::oneapi::experimental::printf("%06.2f ", intermediate[x + y * (width)]);
+                }
+                sycl::ext::oneapi::experimental::printf("\n");
+            }
+            sycl::ext::oneapi::experimental::printf("\n\n");
+        });
+    });
+
+    _device_queue.wait();
+    // print out intermediate here to see that it works like it should !
+
+    sycl::free(intermediate, _device_queue);
 
     // NOTE: Is an error check after kernel that is conditionally set bu an ifdef
     // consider implementing something similar
