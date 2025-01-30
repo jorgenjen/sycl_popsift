@@ -103,6 +103,13 @@ sycl::event Image::load_divide(unsigned char* input)
 // probably quite slow as it probably needs to copy over the input to device then
 // do the manipulation and write to the disignated cuda_malloced area.
 // but not sure if there is a better way (besides sampled_image and bindless_image)
+// WARNING: CUDA's point (nearest neigbour) Seems to be a bit strange when it comes to
+// choosing if it wants to take prev or next when position is perfectly inbetween texels like in popsift
+// most of the time it takes prev like my implementation here but every now and then for a column it takes
+// next and I'm not sure why it does that. Subtracting 0.000001 makes it take left all the time hovever it seems like
+// but that makes the interpolation code wrong so can't be used in the cuda kernel.
+// Must also be 0.000001 adding one more zero before the one makes the float to small and it goes back to choosing next
+// in the odd cases
 sycl::event Image::load_divide_point(unsigned char* input, const int& scaled_w)
 {
     return _device_queue.submit([&](sycl::handler& cgh) {
@@ -124,6 +131,33 @@ sycl::event Image::load_divide_point(unsigned char* input, const int& scaled_w)
             img[pos + 1] = pixel;
             img[pos + scaled_w] = pixel;
             img[pos + scaled_w + 1] = pixel;
+        });
+    });
+}
+
+// should mby look into storing image in local memory for this  but kernel will propbably not be used in final anyways
+sycl::event Image::load_divide_linear(unsigned char* input, const int& scaled_w)
+{
+    return _device_queue.submit([&](sycl::handler& cgh) {
+        auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
+        auto width = _w;
+        int step = scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
+        cgh.parallel_for(sycl::range<2>(_w, _h), [=](sycl::id<2> idx) {
+            auto in_pos = idx[0] + idx[1] * width;
+            float pixel = static_cast<float>(input[in_pos]) / 255.0;
+            float pixel_right = static_cast<float>(input[in_pos + 1]) / 255.0;
+            float pixel_down = static_cast<float>(input[in_pos + width]) / 255.0;
+            float pixel_down_right = static_cast<float>(input[in_pos + width + 1]) / 255.0;
+
+            auto pos = idx[0] * step + idx[1] * step * scaled_w; // position in potentially upscaled image
+
+            // copy pixel to location and right and below and below to the right
+            // just like a piint access from a texture would do.
+            img[pos] = pixel;
+            // TODO: replace dividsion with shift
+            img[pos + 1] = (pixel + pixel_right) / 2;
+            img[pos + scaled_w] = (pixel + pixel_down) / 2;
+            img[pos + scaled_w + 1] = (pixel + pixel_down + pixel_right + pixel_down_right) / 4;
         });
     });
 }

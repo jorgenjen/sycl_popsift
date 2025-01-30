@@ -341,7 +341,8 @@ void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFac
     img->resetDimensions(_w, _h, scaled_w, scaled_h);
     // img->load(_imageData);
     // img->load_divide(_imageData);
-    img->load_divide_point(_imageData, scaled_w);
+    // img->load_divide_point(_imageData, scaled_w);
+    img->load_divide_linear(_imageData, scaled_w);
     _img = img;
 }
 

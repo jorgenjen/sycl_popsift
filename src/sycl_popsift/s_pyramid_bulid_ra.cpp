@@ -160,9 +160,9 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
 
                 stream_out << "\n\n\n";
                 sycl::ext::oneapi::experimental::printf("\n\n");
-                for(int y = 0; y < 10; ++y)
+                for(int y = 0; y < 15; ++y)
                 {
-                    for(int x = 0; x < 10; ++x)
+                    for(int x = 0; x < 15; ++x)
                     {
                         // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
                         sycl::ext::oneapi::experimental::printf("%06.2f ", input[x + y * (width)] * 255.0f);

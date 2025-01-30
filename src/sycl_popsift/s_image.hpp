@@ -23,6 +23,7 @@ struct Image
     sycl::event load(void* input);
     sycl::event load_divide(unsigned char* input);
     sycl::event load_divide_point(unsigned char* input, const int& scaled_w);
+    sycl::event load_divide_linear(unsigned char* input, const int& scaled_w);
 
     inline int getWidth() const { return _w; }
     inline int getHeight() const { return _h; }
