@@ -18,6 +18,76 @@ namespace normalizedSource {
 // and then the rest of the kernel should be the same just use nd_range and it should be the same as this
 // quite straight forward (I think and HOPE!)
 
+// Functor for reusability
+class Horiz
+{
+  private:
+    float* input;
+    float* intermediate;
+    const float* filter;
+    const int span;
+    const int width;
+
+  public:
+    Horiz(float* input, float* intermediate, const float* filter, const int span, const int width)
+      : input(input)
+      , intermediate(intermediate)
+      , filter(filter)
+      , span(span)
+      , width(width)
+    {}
+
+    // SYCL_INLINE void operator()(sycl::nd_item<2> it) const
+    void operator()(sycl::nd_item<2> it) const
+    {
+        // kernel code
+        int x = it.get_global_id(0);
+        int y = it.get_global_id(1);
+
+        // could have two different kernels one with this and one without
+        // depending on if it is perfectly divisible by 128 but might not be worth it... Test
+        if(x >= width)
+            return;
+
+        float out = 0.0f;
+
+#pragma unroll
+        for(int offset = span; offset > 0; offset--)
+        {
+            const float& g = filter[offset];
+            const auto v1_pos = x - offset;
+            const auto v2_pos = x + offset;
+
+            // clamp to left for - and clamp to right for + // does the smae as cudaAddressModeClamp for
+            // textures in cuda used in popsift
+            const float v1 = v1_pos < 0 ? input[y * width] : input[v1_pos + y * width];
+            const float v2 = v2_pos >= width ? input[width - 1 + y * width] : input[v2_pos + y * width];
+            out += ((v1 + v2) * g);
+        }
+        const float& g = filter[0];
+        const float v3 = input[x + y * width];
+        out += (v3 * g);
+
+        intermediate[x + y * width] = out * 255.0f;
+
+        // JUst for verification -- remove!
+        if(x == 0 && y == 0)
+        {
+            sycl::ext::oneapi::experimental::printf("\n\n");
+            for(int y = 0; y < 12; ++y)
+            {
+                for(int x = 0; x < 12; ++x)
+                {
+                    // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
+                    sycl::ext::oneapi::experimental::printf("%06.2f ", input[x + y * (width)] * 255.0f);
+                }
+                sycl::ext::oneapi::experimental::printf("\n");
+            }
+            sycl::ext::oneapi::experimental::printf("\n\n");
+        }
+    }
+};
+
 } // namespace normalizedSource
 
 void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write)
@@ -32,71 +102,16 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
     std::size_t grid_x = grid_divide(width, 128); // different from CUDA popsift
 
     sycl::range global{grid_x, (size_t)height};
-    sycl::range local{128, 1};
 
+    const float* filter = &_d_gauss->dd.filter[0];
+    const int span = _d_gauss->dd.span[0];
     _device_queue.submit([&](sycl::handler& cgh) {
-        cgh.depends_on(d_gauss_write);
-        auto gauss_ptr = _d_gauss; // needed to avoid implicitly capturing this which is not allowed
-        auto input = base->getInput();
-
-        const int span = _d_gauss->dd.span[0];
-        const float* filter = &_d_gauss->dd.filter[0];
-
-        float* intermediate = oct_obj.getIntermediateArray()[0]; // first level in octave
-
-        cgh.parallel_for(sycl::nd_range{global, local}, [=](sycl::nd_item<2> it) {
-            int x = it.get_global_id(0);
-            int y = it.get_global_id(1);
-            sycl::range gr = it.get_global_range();
-            sycl::range lr = it.get_local_range();
-
-            // could have two different kernels one with this and one without
-            // depending on if it is perfectly divisible by 128 but might not be worth it... Test
-            if(x >= width)
-                return;
-
-            float out = 0.0f;
-
-#pragma unroll
-            for(int offset = span; offset > 0; offset--)
-            {
-                const float& g = filter[offset];
-                const auto v1_pos = x - offset;
-                const auto v2_pos = x + offset;
-
-                // clamp to left for - and clamp to right for + // does the smae as cudaAddressModeClamp for
-                // textures in cuda used in popsift
-                const float v1 = v1_pos < 0 ? input[y * width] : input[v1_pos + y * width];
-                const float v2 = v2_pos >= width ? input[width - 1 + y * width] : input[v2_pos + y * width];
-                if(x == 0 && y == 0)
-                {
-                    sycl::ext::oneapi::experimental::printf("offset: %d v1=%f v2=%f\n ", offset, v1, v2);
-                }
-                out += ((v1 + v2) * g);
-            }
-            const float& g = filter[0];
-            const float v3 = input[x + y * width];
-            out += (v3 * g);
-
-            intermediate[x + y * width] = out * 255.0f;
-
-            // JUst for verification -- remove!
-            if(x == 0 && y == 0)
-            {
-                sycl::ext::oneapi::experimental::printf("\n\n");
-                for(int y = 0; y < 12; ++y)
-                {
-                    for(int x = 0; x < 12; ++x)
-                    {
-                        // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
-                        sycl::ext::oneapi::experimental::printf("%06.2f ", input[x + y * (width)] * 255.0f);
-                    }
-                    sycl::ext::oneapi::experimental::printf("\n");
-                }
-                sycl::ext::oneapi::experimental::printf("\n\n");
-            }
-        });
+        sycl::range local{128, 1};
+        cgh.parallel_for(
+          sycl::nd_range{global, local},
+          normalizedSource::Horiz(base->getInput(), oct_obj.getIntermediateArray()[0], filter, span, width));
     });
+
     _device_queue.wait(); // temporary waiting here remove in future
 
     // Just for verification -- Remove!
