@@ -61,7 +61,8 @@ class Pyramid
 {
     int _num_octaves;
     int _levels;
-    Octave* _octaves;
+    // Octave* _octaves;
+    std::vector<Octave> _octaves;
     int _gauss_group;
 
     /* initial blur variables are used for Gauss table computation,
@@ -73,7 +74,7 @@ class Pyramid
     int* _d_extrema_num_blocks;
 
     sycl::queue _device_queue;
-    popsift::GaussInfo* _d_gauss;
+    popsift::GaussInfo* _d_gauss; // copy of same pointer as PopSift's _d_gauss and it deals with freeing it
 
     /* the download of converted descriptors should be asynchronous */
     // cudaStream_t _download_stream;

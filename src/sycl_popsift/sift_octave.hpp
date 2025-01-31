@@ -9,6 +9,7 @@
 
 // don't think this is used and hence needed
 // #include "sycl_popsift/s_image.hpp"
+#include "sycl/queue.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 // #include "sift_constants.h"
 // #include "sift_extremum.h"
@@ -33,6 +34,13 @@ class Octave
     int _debug_octave_id{};
     int _levels{};
     int _gauss_group{};
+
+    sycl::queue& _device_queue; // reference to  of device queue
+
+    // Intermediate
+    float** _intm_array; // array pointing to array of float array
+                         // which each represents the different levels (blur)
+                         // in the octave
 
     // cudaArray_t _data{};
     // cudaChannelFormatDesc _data_desc{};
@@ -63,8 +71,11 @@ class Octave
     // cudaEvent_t _desc_done{};
 
   public:
-    Octave();
-    ~Octave() { this->free(); }
+    // Octave();
+    Octave() = delete;
+    Octave(sycl::queue& Q);
+    // ~Octave() { this->free(); }
+    ~Octave();
 
     void resetDimensions(const Config& conf, int w, int h);
 
@@ -79,6 +90,8 @@ class Octave
 
     inline float getWGridDivider() const { return _w_grid_divider; }
     inline float getHGridDivider() const { return _h_grid_divider; }
+
+    inline float** getIntermediateArray() const { return _intm_array; }
 
     // inline cudaStream_t getStream( ) {
     //     return _stream;
@@ -130,7 +143,7 @@ class Octave
      * @param levels
      * @param gauss_group
      */
-    void alloc(const Config& conf, int width, int height, int levels, int gauss_group);
+    void alloc(const Config& conf, int width, int height, int levels, int gauss_group, sycl::queue& Q);
     void free();
 
     /**

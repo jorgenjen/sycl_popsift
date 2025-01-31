@@ -16,7 +16,16 @@ Pyramid::Pyramid(const Config& config, int width, int height, sycl::queue& Q, po
   , _device_queue(Q)
   , _d_gauss(d_gauss)
 {
-    _octaves = new Octave[_num_octaves];
+    // _octaves = new Octave[_num_octaves];
+    // Could not find a way to use C array so using vector
+
+    _octaves.reserve(_num_octaves);
+    for(int i = 0; i < _num_octaves; ++i)
+    {
+        _octaves.emplace_back(Q);
+    }
+
+    // _octaves = &(new Octave(Q))[_num_octaves];
 
     int w = width;
     int h = height;
@@ -39,7 +48,7 @@ Pyramid::Pyramid(const Config& config, int width, int height, sycl::queue& Q, po
     for(int o = 0; o < _num_octaves; o++)
     {
         _octaves[o].debugSetOctave(o);
-        _octaves[o].alloc(config, w, h, _levels, _gauss_group);
+        _octaves[o].alloc(config, w, h, _levels, _gauss_group, Q);
         w = ceilf(w / 2.0f);
         h = ceilf(h / 2.0f);
     }
@@ -81,6 +90,11 @@ Pyramid::Pyramid(const Config& config, int width, int height, sycl::queue& Q, po
     // sizeof(DevBuffers), 0, cudaMemcpyHostToDevice);
     //
     // cudaStreamCreate(&_download_stream);
+}
+
+Pyramid::~Pyramid()
+{
+    // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
 }
 
 void Pyramid::step1(const Config& conf, popsift::Image* img, sycl::event d_gauss_write)

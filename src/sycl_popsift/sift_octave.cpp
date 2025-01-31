@@ -1,12 +1,24 @@
 #include "sycl_popsift/sift_octave.hpp"
 
+#include "sycl/usm.hpp"
+
 namespace popsift {
 
-Octave::Octave() {}
+Octave::Octave(sycl::queue& Q)
+  : _device_queue(Q)
+{}
 
-void Octave::free() {}
+Octave::~Octave()
+{
+    for(int i = 0; i < _levels; ++i)
+    {
+        sycl::free(_intm_array[i], _device_queue);
+    }
 
-void Octave::alloc(const Config& conf, int width, int height, int levels, int gauss_group)
+    sycl::free(_intm_array, _device_queue);
+}
+
+void Octave::alloc(const Config& conf, int width, int height, int levels, int gauss_group, sycl::queue& Q)
 {
     _max_w = _w = width;
     _max_h = _h = height;
@@ -17,6 +29,29 @@ void Octave::alloc(const Config& conf, int width, int height, int levels, int ga
 
     // TODO: FIGURE out Replacements for these methods
     // most of them are related to textures in CUDA
+
+    // could store them all in one malloc (single float array) but might be less readable
+    // and don't think there is much performance penalty from doing it this way...
+    try
+    {
+        _intm_array = sycl::malloc_device<float*>(levels, Q);
+    }
+    catch(const sycl::exception& e)
+    {
+        std::cerr << "Memory allocation failed: " << e.what() << std::endl;
+    }
+    try
+    {
+        // Allocate the levels in the octave
+        for(int i = 0; i < levels; ++i)
+        {
+            _intm_array[i] = sycl::malloc_device<float>(width * height, Q);
+        }
+    }
+    catch(const sycl::exception& e)
+    {
+        std::cerr << "Memory allocation failed: " << e.what() << std::endl;
+    }
 
     // alloc_data_planes();
     // alloc_data_tex();

@@ -182,6 +182,15 @@ bool PopSift::private_init(int w, int h)
     return true;
 }
 
+// Don't see a purpose of returning true here as popsift did hence making it void
+void PopSift::private_uninit()
+{
+    Pipe& p = _pipe;
+
+    delete p._pyramid;
+    p._pyramid = nullptr;
+}
+
 void PopSift::printDim() { cout << "Width: " << _w << endl; }
 
 void PopSift::printDevice()
@@ -299,6 +308,8 @@ void PopSift::extractDownloadLoop()
         // TODO(jorgejen): Do similar private init and appyl scalefactor that
         // this method calls private_init( img->getWidth(), img->getHeight() );
     }
+
+    private_uninit();
 }
 
 SiftJob::SiftJob(int w, int h, const unsigned char* imageData)

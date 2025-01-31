@@ -130,7 +130,7 @@ class PopSift
     bool applyConfiguration(bool force = false);
 
     bool private_init(int w, int h);
-    bool private_uninit();
+    void private_uninit();
     void private_apply_scale_factor(int* w, int* h);
 
     void extractDownloadLoop();
