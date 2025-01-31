@@ -37,8 +37,9 @@ class Horiz
       , width(width)
     {}
 
-    // SYCL_INLINE void operator()(sycl::nd_item<2> it) const
-    void operator()(sycl::nd_item<2> it) const
+    // Not sure if inlining makes this worse or better...
+    // might remove function calls but not sure exactly
+    inline void operator()(sycl::nd_item<2> it) const
     {
         // kernel code
         int x = it.get_global_id(0);
