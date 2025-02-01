@@ -141,13 +141,22 @@ sycl::event Image::load_divide_linear(unsigned char* input, const int& scaled_w)
     return _device_queue.submit([&](sycl::handler& cgh) {
         auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
         auto width = _w;
+        auto height = _h;
         int step = scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
         cgh.parallel_for(sycl::range<2>(_w, _h), [=](sycl::id<2> idx) {
             auto in_pos = idx[0] + idx[1] * width;
+
+            auto in_pos_right = idx[0] == width - 1 ? in_pos : in_pos + 1;
+            auto in_pos_down = idx[1] == height - 1 ? in_pos : in_pos + width;
+            auto in_pos_down_right = (idx[0] == width - 1 && idx[1] == height - 1) ? in_pos
+                                     : idx[0] == width - 1                         ? in_pos + width
+                                     : idx[1] == height - 1                        ? in_pos + 1
+                                                                                   : in_pos + width + 1; // default case
+
             float pixel = static_cast<float>(input[in_pos]) / 255.0;
-            float pixel_right = static_cast<float>(input[in_pos + 1]) / 255.0;
-            float pixel_down = static_cast<float>(input[in_pos + width]) / 255.0;
-            float pixel_down_right = static_cast<float>(input[in_pos + width + 1]) / 255.0;
+            float pixel_right = static_cast<float>(input[in_pos_right]) / 255.0;
+            float pixel_down = static_cast<float>(input[in_pos_down]) / 255.0;
+            float pixel_down_right = static_cast<float>(input[in_pos_down_right]) / 255.0;
 
             auto pos = idx[0] * step + idx[1] * step * scaled_w; // position in potentially upscaled image
 
