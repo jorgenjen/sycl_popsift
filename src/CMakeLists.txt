@@ -3,6 +3,7 @@ add_library(sycl_popsift
             sycl_popsift/s_image.cpp sycl_popsift/s_image.hpp
             sycl_popsift/sift_pyramid.cpp sycl_popsift/sift_pyramid.hpp
             sycl_popsift/s_pyramid_build.cpp sycl_popsift/s_pyramid_bulid_ra.cpp
+            sycl_popsift/s_pyramid_build_aa.cpp
             sycl_popsift/sift_constants.cpp sycl_popsift/sift_constants.cpp
             sycl_popsift/sift_octave.cpp sycl_popsift/sift_octave.hpp
             sycl_popsift/gauss_filter.cpp sycl_popsift/gauss_filter.cpp
@@ -20,6 +21,7 @@ add_sycl_to_target(TARGET sycl_popsift SOURCES
   sycl_popsift/s_image.cpp sycl_popsift/s_image.hpp
   sycl_popsift/sift_pyramid.cpp sycl_popsift/sift_pyramid.hpp
   sycl_popsift/s_pyramid_build.cpp sycl_popsift/s_pyramid_bulid_ra.cpp
+  sycl_popsift/s_pyramid_build_aa.cpp
   sycl_popsift/sift_constants.cpp sycl_popsift/sift_constants.cpp
   sycl_popsift/sift_octave.cpp sycl_popsift/sift_octave.hpp
   sycl_popsift/gauss_filter.cpp sycl_popsift/gauss_filter.cpp

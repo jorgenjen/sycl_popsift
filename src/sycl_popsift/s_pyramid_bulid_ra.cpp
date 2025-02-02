@@ -74,10 +74,10 @@ class Horiz
         // JUst for verification -- remove!
         if(x == 0 && y == 0)
         {
-            sycl::ext::oneapi::experimental::printf("\n\n");
-            for(int y = 0; y < 12; ++y)
+            sycl::ext::oneapi::experimental::printf("\n\nSCALED UP AS GIVEN TO KERNEL FUNCTOR width = %d:\n", width);
+            for(int y = 852 - 13; y < 852; ++y)
             {
-                for(int x = 0; x < 12; ++x)
+                for(int x = width - 13; x < width; ++x)
                 {
                     // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
                     sycl::ext::oneapi::experimental::printf("%06.2f ", input[x + y * (width)] * 255.0f);
@@ -121,12 +121,16 @@ void Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::even
         float* intermediate = oct_obj.getIntermediateArray()[0];
         cgh.single_task([=]() {
             sycl::ext::oneapi::experimental::printf("\n\n");
-            for(int y = 0; y < 12; ++y)
+            for(int y = height - 8; y < height; ++y)
             {
-                for(int x = 0; x < 12; ++x)
+                for(int x = width - 8; x < width; ++x)
                 {
+                    // for(int y = 0; y < 13; ++y)
+                    // {
+                    //     for(int x = 0; x < 13; ++x)
+                    //     {
                     // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
-                    sycl::ext::oneapi::experimental::printf("%06.2f ", intermediate[x + y * (width)]);
+                    sycl::ext::oneapi::experimental::printf("%10.6f ", intermediate[x + y * (width)]);
                 }
                 sycl::ext::oneapi::experimental::printf("\n");
             }

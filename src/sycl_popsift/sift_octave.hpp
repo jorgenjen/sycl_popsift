@@ -42,6 +42,8 @@ class Octave
                          // which each represents the different levels (blur)
                          // in the octave
 
+    float** _data_array;
+
     // cudaArray_t _data{};
     // cudaChannelFormatDesc _data_desc{};
     // cudaExtent _data_ext{};
@@ -92,6 +94,7 @@ class Octave
     inline float getHGridDivider() const { return _h_grid_divider; }
 
     inline float** getIntermediateArray() const { return _intm_array; }
+    inline float** getDataArray() const { return _data_array; }
 
     // inline cudaStream_t getStream( ) {
     //     return _stream;

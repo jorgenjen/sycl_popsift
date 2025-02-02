@@ -1,6 +1,7 @@
 #include "sycl_popsift/sift_octave.hpp"
 
 #include "sycl/usm.hpp"
+#include "sycl_popsift/common/debug_macros.hpp"
 
 namespace popsift {
 
@@ -13,9 +14,11 @@ Octave::~Octave()
     for(int i = 0; i < _levels; ++i)
     {
         sycl::free(_intm_array[i], _device_queue);
+        sycl::free(_data_array[i], _device_queue);
     }
 
     sycl::free(_intm_array, _device_queue);
+    sycl::free(_data_array, _device_queue);
 }
 
 void Octave::alloc(const Config& conf, int width, int height, int levels, int gauss_group, sycl::queue& Q)
@@ -35,6 +38,12 @@ void Octave::alloc(const Config& conf, int width, int height, int levels, int ga
     try
     {
         _intm_array = sycl::malloc_device<float*>(levels, Q);
+        _data_array = sycl::malloc_device<float*>(levels, Q);
+
+        if(!_intm_array || !_data_array)
+        {
+            POP_FATAL("Octave memory allocation failed");
+        }
     }
     catch(const sycl::exception& e)
     {
@@ -46,6 +55,12 @@ void Octave::alloc(const Config& conf, int width, int height, int levels, int ga
         for(int i = 0; i < levels; ++i)
         {
             _intm_array[i] = sycl::malloc_device<float>(width * height, Q);
+            _data_array[i] = sycl::malloc_device<float>(width * height, Q);
+
+            if(!_intm_array[i] || !_data_array[i])
+            {
+                POP_FATAL("Octave memory allocation failed");
+            }
         }
     }
     catch(const sycl::exception& e)
@@ -105,5 +120,4 @@ void Octave::resetDimensions(const Config& conf, int w, int h)
     // alloc_dog_array();
     // alloc_dog_tex();
 }
-
 }

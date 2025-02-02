@@ -126,10 +126,9 @@ class Pyramid
     // inline void horiz_from_prev_level(int octave, int level,
     //                                   cudaStream_t stream,
     //                                   GaussTableChoice useInterpolatedGauss);
-    // void vert_from_interm_basic(int octave, int level, cudaStream_t stream);
+    void vert_from_interm_basic(int octave, int level);
     // void vert_from_interm_pairs(int octave, int level, cudaStream_t stream);
-    // inline void vert_from_interm(int octave, int level, cudaStream_t stream,
-    //                              GaussTableChoice useInterpolatedGauss);
+    inline void vert_from_interm(int octave, int level, GaussTableChoice useInterpolatedGauss);
 
     // inline void dogs_from_blurred(int octave, int max_level,
     //                               cudaStream_t stream);

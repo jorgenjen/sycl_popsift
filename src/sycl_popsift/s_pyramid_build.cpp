@@ -1,3 +1,4 @@
+#include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/s_image.hpp"
 #include "sycl_popsift/sift_octave.hpp"
@@ -11,6 +12,25 @@ namespace popsift {
 
 // namespace gauss { // is only for one function get_by_2_pick_every_second
 // }
+
+inline void Pyramid::vert_from_interm(int octave, int level, GaussTableChoice useInterpolatedGauss)
+{
+    Octave& oct_obj = _octaves[octave];
+
+    const int width = oct_obj.getWidth();
+    const int height = oct_obj.getHeight();
+
+    switch(useInterpolatedGauss)
+    {
+        // case Interpolated_FromPrevious: vert_from_interm_pairs(octave, level, stream); break;
+        case Interpolated_FromPrevious: cout << "vert_from_interm_paris not implemented yet"; break;
+        case NotInterpolated_FromPrevious: vert_from_interm_basic(octave, level); break;
+        default: {
+            POP_FATAL("Missing case in vertical Gauss filter from intermediate buffer");
+        }
+        break;
+    }
+}
 
 void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_gauss_write)
 {
@@ -53,7 +73,7 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
                 {
                     cout << "first ocatve first level" << endl;
                     horiz_from_input_image(conf, base_img, d_gauss_write);
-                    // vert_from_interm(octave, 0, stream, gaussTableChoice);
+                    vert_from_interm(octave, 0, gaussTableChoice);
                 }
                 // else
                 // {
