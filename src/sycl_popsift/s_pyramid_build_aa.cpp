@@ -84,34 +84,114 @@ namespace absoluteSource {
 //     surf2DLayeredwrite(out, dst_data, xpos * 4, ypos, dst_level, cudaBoundaryModeZero);
 // }
 
+// think this is can be the same as Horiz in the other loation
+// class Horiz
+// {
+//   private:
+//     float* prev_level;
+//     float* intermediate;
+//     const int span;
+//     const float* span;
+//     const width;
+//
+//   public:
+//
+//     k
+// };
+
+// SHould use this one instead of Horiz in absolute source as this one makes sense to use in both
+// situations and we dont need to divide the image initially, wasting performance.
+class Horiz
+{
+  private:
+    float* src;
+    float* dst_data;
+    const float* filter;
+    const int span;
+    const int width;
+
+  public:
+    Horiz(float* src, float* dst_data, const float* filter, const int span, const int width)
+      : src(src)
+      , dst_data(dst_data)
+      , filter(filter)
+      , span(span)
+      , width(width)
+    {}
+
+    // Not sure if inlining makes this worse or better...
+    // might remove function calls but not sure exactly
+    inline void operator()(sycl::nd_item<2> it) const
+    {
+        // kernel code
+        int x = it.get_global_id(0);
+        int y = it.get_global_id(1);
+
+        // could have two different kernels one with this and one without
+        // depending on if it is perfectly divisible by 128 but might not be worth it... Test
+        if(x >= width) // might need to check that the height is also not past the boundary
+            return;
+
+        int idx;
+        float g;
+        float val;
+        float out = 0.0f;
+
+        for(int offset = span; offset > 0; offset--)
+        {
+            g = filter[offset];
+
+            idx = x - offset;
+            // val = readTex(src_point_texture, idx, ypos, src_level);
+            val = idx < 0 ? src[y * width] : src[idx + y * width];
+            // const float v1 = v1_pos < 0 ? input[y * width] : input[v1_pos + y * width];
+            // const float v2 = v2_pos >= width ? input[width - 1 + y * width] : input[v2_pos + y * width];
+
+            out += (val * g);
+
+            idx = x + offset;
+            val = idx >= width ? src[width - 1 + y * width] : src[idx + y * width];
+            // val = readTex(src_point_texture, idx, ypos, src_level);
+            out += (val * g);
+        }
+
+        g = filter[0];
+        val = src[x + y * width];
+        // val = readTex(src_point_texture, xpos, ypos, src_level);
+        out += (val * g);
+
+        dst_data[x + y * width] = out;
+        // surf2DLayeredwrite(out, dst_data, xpos * 4, ypos, dst_level, cudaBoundaryModeZero);
+    };
+};
+
 class Vert
 {
   private:
     float* intermediate; // or is it intermediate :D IDK
     float* dst_data;
-    const int span;
     const float* filter;
+    const int span;
     const int width;
     const int height;
 
   public:
-    Vert(float* intermediate, float* dst_data, const int span, const float* filter, const int width, const int height)
+    Vert(float* intermediate, float* dst_data, const float* filter, const int span, const int width, const int height)
       : intermediate(intermediate)
       , dst_data(dst_data)
-      , span(span)
       , filter(filter)
+      , span(span)
       , width(width)
       , height(height)
     {}
 
     // seems to be slightly different from cuda PopSIFT but could be due to the way GPU vs cpu handles
     // floats as the difference is noticable for the intermediate futher out in the decimal values and I gues
-    // it compunds making a bigger difference causing differences of up to almost 5? but that does seem like it is way
-    // too much.... so Need to investigate what is going on
-    // Intermediate after horiz is different some places on the 3 decimal so could be from the
-    // way the texture engine is getting the data and reading the uchars as floats and that conversion
-    // is not as accurate as the software way I've done here in sycl..
-    // Will assume it is correct for now and move on
+    // it compunds making a bigger difference causing differences of up to almost 5? but that does seem like it is
+    // way too much.... so Need to investigate what is going on Intermediate after horiz is different some places on
+    // the 3 decimal so could be from the way the texture engine is getting the data and reading the uchars as
+    // floats and that conversion is not as accurate as the software way I've done here in sycl.. Will assume it is
+    // correct for now and move on
     inline void operator()(sycl::nd_item<2> it) const
     {
         int x = it.get_global_id(0);
@@ -174,6 +254,43 @@ class Vert
 //     POP_SYNC_CHK;
 // }
 
+// Should only be called wiht a level > 0
+void Pyramid::horiz_from_prev_level_basic(int octave, int level)
+{
+    Octave& oct_obj = _octaves[octave];
+
+    const int width = oct_obj.getWidth();
+    const int height = oct_obj.getHeight();
+
+    // similar speed: dim3 block( 32,  4 ); dim3 block( 32,  3 ); dim3 block( 32,  2 );
+    // (32, 8) most stable good perf on GTX 980 TI -- need to test different for me sycl implementation
+
+    sycl::range local{32, 8}; // coult move inside of submit but probs done by compiler
+                              // and replaced .get(0) with the values inline
+    sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+    // dim3 block(32, 8);
+    // dim3 grid;
+    // grid.x = grid_divide(width, 32);
+    // grid.y = grid_divide(height, block.y);
+
+    printf("\nGlobal in horiz from vert (%zu, %zu):\n", global[0], global[1]);
+
+    // Not sure if it is better to have these varaibles inside of the submit or not
+    float* prev_level = oct_obj.getDataArray()[level - 1];   // src
+    float* cur_intm = oct_obj.getIntermediateArray()[level]; // dst_data
+    const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
+    const int span = _d_gauss->inc.span[level];
+    _device_queue.submit([&](sycl::handler& cgh) {
+        cgh.parallel_for(sycl::nd_range{global, local},
+                         absoluteSource::Horiz(prev_level, cur_intm, filter, span, width));
+    });
+
+    _device_queue.wait();
+    // absoluteSource::horiz<<<grid, block, 0, stream>>>(
+    //   oct_obj.getDataTexPoint(), oct_obj.getIntermediateSurface(), level);
+    // POP_SYNC_CHK;
+}
+
 void Pyramid::vert_from_interm_basic(int octave, int level)
 {
     Octave& oct_obj = _octaves[octave];
@@ -194,7 +311,7 @@ void Pyramid::vert_from_interm_basic(int octave, int level)
 
     _device_queue.submit([&](sycl::handler& cgh) {
         cgh.parallel_for(sycl::nd_range(global, local),
-                         absoluteSource::Vert(intermediate, dst_data, span, filter, width, height));
+                         absoluteSource::Vert(intermediate, dst_data, filter, span, width, height));
     });
 
     _device_queue.wait();

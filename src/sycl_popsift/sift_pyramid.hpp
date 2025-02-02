@@ -119,13 +119,9 @@ class Pyramid
 
     // inline void downscale_from_prev_octave(int octave, cudaStream_t stream);
 
-    // void horiz_from_prev_level_basic(int octave, int level,
-    //                                  cudaStream_t stream);
-    // void horiz_from_prev_level_pairs(int octave, int level,
-    //                                  cudaStream_t stream);
-    // inline void horiz_from_prev_level(int octave, int level,
-    //                                   cudaStream_t stream,
-    //                                   GaussTableChoice useInterpolatedGauss);
+    void horiz_from_prev_level_basic(int octave, int level);
+    void horiz_from_prev_level_pairs(int octave, int level); // Not implemented as of now
+    inline void horiz_from_prev_level(int octave, int level, GaussTableChoice useInterpolatedGauss);
     void vert_from_interm_basic(int octave, int level);
     // void vert_from_interm_pairs(int octave, int level, cudaStream_t stream);
     inline void vert_from_interm(int octave, int level, GaussTableChoice useInterpolatedGauss);

@@ -13,6 +13,17 @@ namespace popsift {
 // namespace gauss { // is only for one function get_by_2_pick_every_second
 // }
 
+inline void Pyramid::horiz_from_prev_level(int octave, int level, GaussTableChoice useInterpolatedGauss)
+{
+    switch(useInterpolatedGauss)
+    {
+        // case Interpolated_FromPrevious: horiz_from_prev_level_pairs(octave, level, stream); break;
+        case Interpolated_FromPrevious: cout << "horiz_from_prev_level_pairs not implemented yet"; break;
+        case NotInterpolated_FromPrevious: horiz_from_prev_level_basic(octave, level); break;
+        default: POP_FATAL("Missing case in horizontal Gauss filter from previous level"); break;
+    }
+}
+
 inline void Pyramid::vert_from_interm(int octave, int level, GaussTableChoice useInterpolatedGauss)
 {
     Octave& oct_obj = _octaves[octave];
@@ -82,15 +93,18 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
                 //     downscale_from_prev_octave(octave, stream);
                 // }
             }
-            // else
-            // {
-            //     horiz_from_prev_level(octave, level, stream, gaussTableChoice);
-            //     vert_from_interm(octave, level, stream, gaussTableChoice);
-            //     if(level == _levels - PREV_LEVEL)
-            //     {
-            //         cuda::event_record(oct_obj.getEventScaleDone(), stream, __FILE__, __LINE__);
-            //     }
-            // }
+            else
+            {
+                if(octave == 0 && level == 1) // TMP: for now only allow octave 0 as I develop the rest
+                {
+                    horiz_from_prev_level(octave, level, gaussTableChoice);
+                }
+                // vert_from_interm(octave, level, stream, gaussTableChoice);
+                // if(level == _levels - PREV_LEVEL)
+                // {
+                //     cuda::event_record(oct_obj.getEventScaleDone(), stream, __FILE__, __LINE__);
+                // }
+            }
         }
     }
 
