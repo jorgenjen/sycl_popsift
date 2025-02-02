@@ -115,16 +115,22 @@ class Pyramid
     inline Octave& getOctave(const int o) { return _octaves[o]; }
 
   private:
-    void horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
+    sycl::event horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
 
     // inline void downscale_from_prev_octave(int octave, cudaStream_t stream);
 
-    void horiz_from_prev_level_basic(int octave, int level);
+    sycl::event horiz_from_prev_level_basic(int octave, int level, sycl::event prev_level_write);
     void horiz_from_prev_level_pairs(int octave, int level); // Not implemented as of now
-    inline void horiz_from_prev_level(int octave, int level, GaussTableChoice useInterpolatedGauss);
-    void vert_from_interm_basic(int octave, int level);
+    inline sycl::event horiz_from_prev_level(int octave,
+                                             int level,
+                                             GaussTableChoice useInterpolatedGauss,
+                                             sycl::event prev_level_write);
+    sycl::event vert_from_interm_basic(int octave, int level, sycl::event intm_write);
     // void vert_from_interm_pairs(int octave, int level, cudaStream_t stream);
-    inline void vert_from_interm(int octave, int level, GaussTableChoice useInterpolatedGauss);
+    inline sycl::event vert_from_interm(int octave,
+                                        int level,
+                                        GaussTableChoice useInterpolatedGauss,
+                                        sycl::event intm_write);
 
     // inline void dogs_from_blurred(int octave, int max_level,
     //                               cudaStream_t stream);

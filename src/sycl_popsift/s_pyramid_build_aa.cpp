@@ -255,7 +255,7 @@ class Vert
 // }
 
 // Should only be called wiht a level > 0
-void Pyramid::horiz_from_prev_level_basic(int octave, int level)
+sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::event prev_level_wirte)
 {
     Octave& oct_obj = _octaves[octave];
 
@@ -268,10 +268,6 @@ void Pyramid::horiz_from_prev_level_basic(int octave, int level)
     sycl::range local{32, 8}; // coult move inside of submit but probs done by compiler
                               // and replaced .get(0) with the values inline
     sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
-    // dim3 block(32, 8);
-    // dim3 grid;
-    // grid.x = grid_divide(width, 32);
-    // grid.y = grid_divide(height, block.y);
 
     printf("\nGlobal in horiz from vert (%zu, %zu):\n", global[0], global[1]);
 
@@ -280,18 +276,18 @@ void Pyramid::horiz_from_prev_level_basic(int octave, int level)
     float* cur_intm = oct_obj.getIntermediateArray()[level]; // dst_data
     const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
     const int span = _d_gauss->inc.span[level];
-    _device_queue.submit([&](sycl::handler& cgh) {
+    return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.parallel_for(sycl::nd_range{global, local},
                          absoluteSource::Horiz(prev_level, cur_intm, filter, span, width));
     });
 
-    _device_queue.wait();
+    // _device_queue.wait();
     // absoluteSource::horiz<<<grid, block, 0, stream>>>(
     //   oct_obj.getDataTexPoint(), oct_obj.getIntermediateSurface(), level);
     // POP_SYNC_CHK;
 }
 
-void Pyramid::vert_from_interm_basic(int octave, int level)
+sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event intm_write)
 {
     Octave& oct_obj = _octaves[octave];
 
@@ -309,28 +305,30 @@ void Pyramid::vert_from_interm_basic(int octave, int level)
     const int span = _d_gauss->inc.span[level];
     const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
 
-    _device_queue.submit([&](sycl::handler& cgh) {
+    return _device_queue.submit([&](sycl::handler& cgh) {
+        cgh.depends_on(intm_write); // Set horiz write to intermediate as dependency --
+                                    // Sycl not in order queue by default hence needed
         cgh.parallel_for(sycl::nd_range(global, local),
                          absoluteSource::Vert(intermediate, dst_data, filter, span, width, height));
     });
 
-    _device_queue.wait();
+    // _device_queue.wait();
 
-    _device_queue.submit([&](sycl::handler& cgh) {
-        cgh.single_task([=]() {
-            sycl::ext::oneapi::experimental::printf(
-              "\n\nAfter Vert: y(%d, %d) x(%d, %d)\n", height - 13, height, width - 13, width);
-            for(int y = height - 13; y < height; ++y)
-            {
-                for(int x = width - 13; x < width; ++x)
-                {
-                    sycl::ext::oneapi::experimental::printf("%06.2f ", dst_data[x + y * (width)]);
-                }
-                sycl::ext::oneapi::experimental::printf("\n");
-            }
-            sycl::ext::oneapi::experimental::printf("\n\n");
-        });
-    });
+    // _device_queue.submit([&](sycl::handler& cgh) {
+    //     cgh.single_task([=]() {
+    //         sycl::ext::oneapi::experimental::printf(
+    //           "\n\nAfter Vert: y(%d, %d) x(%d, %d)\n", height - 13, height, width - 13, width);
+    //         for(int y = height - 13; y < height; ++y)
+    //         {
+    //             for(int x = width - 13; x < width; ++x)
+    //             {
+    //                 sycl::ext::oneapi::experimental::printf("%06.2f ", dst_data[x + y * (width)]);
+    //             }
+    //             sycl::ext::oneapi::experimental::printf("\n");
+    //         }
+    //         sycl::ext::oneapi::experimental::printf("\n\n");
+    //     });
+    // });
     // absoluteSource::vert<<<grid, block, 0, stream>>>(oct_obj.getIntermDataTexPoint(), oct_obj.getDataSurface(),
     // level); POP_SYNC_CHK;
 }
