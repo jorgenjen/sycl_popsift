@@ -97,7 +97,10 @@ Pyramid::~Pyramid()
     // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
 }
 
-void Pyramid::step1(const Config& conf, popsift::Image* img, sycl::event d_gauss_write, sycl::event img_transfer)
+void Pyramid::step1(const Config& conf,
+                    popsift::Image* img,
+                    const sycl::event& d_gauss_write,
+                    const sycl::event& img_transfer)
 {
     // TODO: Implement the reset -- far down the line need to find extrema first
     // reset_extrema_mgmt();

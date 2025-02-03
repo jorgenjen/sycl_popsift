@@ -28,7 +28,8 @@ using namespace std;
 
 // should probably use a similar options struct as popsift in the future
 // revisions just for initial layout
-static void parseargs(int argc, char **argv, std::string &inputFile) {
+static void parseargs(int argc, char** argv, std::string& inputFile)
+{
     // using namespace boost::program_options;
     using boost::program_options::options_description;
     using boost::program_options::parse_command_line;
@@ -38,15 +39,14 @@ static void parseargs(int argc, char **argv, std::string &inputFile) {
     options_description options("Options");
     {
         options.add_options()("help,h", "Print usage")
-            /* ("verbose,v", bool_switch()->notifier([&](bool i) {if(i)
-               config.setVerbose(); }), "") */
-            /* ("log,l", bool_switch()->notifier([&](bool i) {if(i)
-               config.setLogMode(popsift::Config::All); }), "Write debugging
-               files")
-             */
+          /* ("verbose,v", bool_switch()->notifier([&](bool i) {if(i)
+             config.setVerbose(); }), "") */
+          /* ("log,l", bool_switch()->notifier([&](bool i) {if(i)
+             config.setLogMode(popsift::Config::All); }), "Write debugging
+             files")
+           */
 
-            ("input-file,i", value<std::string>(&inputFile)->required(),
-             "Input file");
+          ("input-file,i", value<std::string>(&inputFile)->required(), "Input file");
     }
     options_description all("Allowed options");
 
@@ -55,32 +55,41 @@ static void parseargs(int argc, char **argv, std::string &inputFile) {
     all.add(options);
     variables_map vm;
 
-    try {
+    try
+    {
         store(parse_command_line(argc, argv, all), vm);
 
-        if (vm.count("help")) {
+        if(vm.count("help"))
+        {
             std::cout << all << '\n';
             exit(EXIT_SUCCESS);
         }
 
-        notify(vm);  // Notify does processing (e.g., raise exceptions if
-                     // required args are missing)
-    } catch (boost::program_options::error &e) {
+        notify(vm); // Notify does processing (e.g., raise exceptions if
+                    // required args are missing)
+    }
+    catch(boost::program_options::error& e)
+    {
         std::cerr << "Error: " << e.what() << std::endl << std::endl;
         std::cerr << "Usage:\n\n" << all << std::endl;
         exit(EXIT_FAILURE);
     }
 }
 
-static void collectFilenames(list<string> *inputFiles,
-                             const boost::filesystem::path &inputFile) {
+static void collectFilenames(list<string>* inputFiles, const boost::filesystem::path& inputFile)
+{
     std::vector<boost::filesystem::path> vec;
     std::copy(boost::filesystem::directory_iterator(inputFile),
-              boost::filesystem::directory_iterator(), std::back_inserter(vec));
-    for (const auto &currPath : vec) {
-        if (boost::filesystem::is_regular_file(currPath)) {
+              boost::filesystem::directory_iterator(),
+              std::back_inserter(vec));
+    for(const auto& currPath : vec)
+    {
+        if(boost::filesystem::is_regular_file(currPath))
+        {
             inputFiles->push_back(currPath.string());
-        } else if (boost::filesystem::is_directory(currPath)) {
+        }
+        else if(boost::filesystem::is_directory(currPath))
+        {
             collectFilenames(inputFiles, currPath);
         }
     }
@@ -88,9 +97,10 @@ static void collectFilenames(list<string> *inputFiles,
 
 // image_data is a reference to a pointer so that we can update the nullptr to
 // the image data from devIL
-SiftJob *process_image(const std::string &inputFile, PopSift &PopSift) {
-    SiftJob *job;
-    unsigned char *image_data;
+SiftJob* process_image(const std::string& inputFile, PopSift& PopSift)
+{
+    SiftJob* job;
+    unsigned char* image_data;
     int w, h;
     // unsigned char* image_data; // should move image_data to local varaible
 
@@ -104,18 +114,19 @@ SiftJob *process_image(const std::string &inputFile, PopSift &PopSift) {
     ilBindImage(image);
 
     // Load the image
-    if (!ilLoadImage(inputFile.c_str())) {
+    if(!ilLoadImage(inputFile.c_str()))
+    {
         cerr << "Could not load image " << inputFile << endl;
-        ilDeleteImages(1, &image);  // Clean up
+        ilDeleteImages(1, &image); // Clean up
         return nullptr;
     }
 
     // Convert to grayscale
-    if (!ilConvertImage(IL_LUMINANCE, IL_UNSIGNED_BYTE)) {
-        cerr << "Failed converting image " << inputFile
-             << " to unsigned greyscale image" << endl;
-        ilDeleteImages(1, &image);  // Clean up
-                                    // return -1;
+    if(!ilConvertImage(IL_LUMINANCE, IL_UNSIGNED_BYTE))
+    {
+        cerr << "Failed converting image " << inputFile << " to unsigned greyscale image" << endl;
+        ilDeleteImages(1, &image); // Clean up
+                                   // return -1;
     }
 
     w = ilGetInteger(IL_IMAGE_WIDTH);
@@ -136,70 +147,84 @@ SiftJob *process_image(const std::string &inputFile, PopSift &PopSift) {
     return job;
 
 #else
-    cout << "Devil not enabled, cannot load image backup not implemented yet :D"
-         << endl;
+    cout << "Devil not enabled, cannot load image backup not implemented yet :D" << endl;
 #endif
 }
 
-int main(int argc, char **argv) {
-    popsift::Config config;  // Init with default parameters
+int main(int argc, char** argv)
+{
+    popsift::Config config; // Init with default parameters
     list<string> inputFiles;
     string inputFile{};
 
-    cout << "Le upscalefactor: " << config.getUpscaleFactor() << endl;
-    cout << "Config gauus mode: " << config.getGaussMode()
-         << "is same as: " << popsift::Config::VLFeat_Relative << endl;
+    // cout << "Le upscalefactor: " << config.getUpscaleFactor() << endl;
+    // cout << "Config gauus mode: " << config.getGaussMode()
+    //      << "is same as: " << popsift::Config::VLFeat_Relative << endl;
 
-    try {
-        parseargs(argc, argv,
-                  inputFile);  // Parse command line -- should add config
-                               // as parameter so it can be modified
+    try
+    {
+        parseargs(argc,
+                  argv,
+                  inputFile); // Parse command line -- should add config
+                              // as parameter so it can be modified
         std::cout << inputFile << std::endl;
-    } catch (std::exception &e) {
+    }
+    catch(std::exception& e)
+    {
         std::cout << e.what() << std::endl;
         return EXIT_FAILURE;
     }
 
     // check the image
-    if (boost::filesystem::exists(inputFile)) {
-        if (boost::filesystem::is_directory(inputFile)) {
+    if(boost::filesystem::exists(inputFile))
+    {
+        if(boost::filesystem::is_directory(inputFile))
+        {
             collectFilenames(&inputFiles, inputFile);
-            if (inputFiles.empty()) {
+            if(inputFiles.empty())
+            {
                 cerr << "No files in directory, nothing to do" << endl;
                 return EXIT_SUCCESS;
             }
-        } else if (boost::filesystem::is_regular_file(inputFile)) {
+        }
+        else if(boost::filesystem::is_regular_file(inputFile))
+        {
             std::cout << "Regurlar file will be processed" << std::endl;
             inputFiles.push_back(inputFile);
-        } else {
+        }
+        else
+        {
             std::cout << "Input file is neither regular file nor directory, "
                          "nothing to do"
                       << std::endl
                       << "Exiting..." << std::endl;
             return EXIT_FAILURE;
         }
-    } else {
-        std::cout << "Input file does not exist, nothing to do" << std::endl
-                  << "Exiting..." << std::endl;
+    }
+    else
+    {
+        std::cout << "Input file does not exist, nothing to do" << std::endl << "Exiting..." << std::endl;
         return EXIT_FAILURE;
     }
 
     PopSift PopSift(config);
 
-    std::queue<SiftJob *> jobs;
-    for (const auto &currFile : inputFiles) {
+    std::queue<SiftJob*> jobs;
+    for(const auto& currFile : inputFiles)
+    {
         cout << "current file: " << currFile << endl;
-        SiftJob *job = process_image(currFile, PopSift);
+        SiftJob* job = process_image(currFile, PopSift);
         jobs.push(job);
     }
 
-    while (!jobs.empty()) {
-        SiftJob *job = jobs.front();
+    while(!jobs.empty())
+    {
+        SiftJob* job = jobs.front();
         jobs.pop();
-        if (job) {
+        if(job)
+        {
             int val = job->getHost();
-            std::cout << "The value resturned from future/promise: " << val
-                      << std::endl;
+            std::cout << "The value resturned from future/promise: " << val << std::endl;
 
             delete job;
         }

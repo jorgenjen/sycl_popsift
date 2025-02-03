@@ -32,7 +32,7 @@ PopSift::PopSift(const popsift::Config& config)
     // sycl::buffer<unsigned char, 2> _imageData(imageData, sycl::range<2>(_w,
     // _h));
 
-    cout << "PopSift constructor" << endl;
+    // cout << "PopSift constructor" << endl;
 
     // Push two images as we use two one to load in data and other to compute
     // and they alter using the queue
@@ -67,9 +67,9 @@ bool PopSift::configure(const popsift::Config& config, bool /*force*/)
         return false;
     }
 
-    std::cout << "Before config" << std::endl;
+    // std::cout << "Before config" << std::endl;
     _config = config;
-    std::cout << "AFTER config" << std::endl;
+    // std::cout << "AFTER config" << std::endl;
     _config.levels = max(2, config.levels);
 
     return true;
@@ -107,11 +107,11 @@ bool PopSift::applyConfiguration(bool force)
     // so something seems to be wrong here. Once figured out revert the equal function back to the commented out one
     if(force || (_config != _shadow_config))
     {
-        cout << "\n\n\t\tApplying configuration nuuuuuu!!\n\n" << endl;
+        // cout << "\n\n\t\tApplying configuration nuuuuuu!!\n\n" << endl;
         // for re ren we need to free and re malloc or change the size or not malloc again if it is already malloced
         _d_gauss_write = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue, &_d_gauss);
-
-        // for now!
+        _d_gauss_write.wait(); // tmp
+                               // for now!
         _d_consts_write = popsift::init_constants(_config.sigma,
                                                   _config.levels,
                                                   _config.getPeakThreshold(),
@@ -119,6 +119,8 @@ bool PopSift::applyConfiguration(bool force)
                                                   _config.getMaxExtrema(),
                                                   _config.getNormalizationMultiplier(),
                                                   _device_queue);
+
+        _d_consts_write.wait();
     }
     _shadow_config = _config;
     return true;
@@ -262,11 +264,11 @@ void PopSift::uploadImages()
 void PopSift::extractDownloadLoop()
 {
     // cudaSetDevice(_device);
-    std::cout << "Befoe apply conf conf dong" << std::endl;
+    // std::cout << "Befoe apply conf conf dong" << std::endl;
     applyConfiguration(true); // Applies configuration is only run once as
     // the thread is started
 
-    std::cout << "Starting download loop thread" << std::endl;
+    // std::cout << "Starting download loop thread" << std::endl;
     Pipe& p = _pipe;
 
     SiftJob* job;
@@ -274,13 +276,13 @@ void PopSift::extractDownloadLoop()
     {
         // will do nothing if configuraiton has not changed
 
-        std::cout << "\t\tApply conf inner to force!" << std::endl;
+        // std::cout << "\t\tApply conf inner to force!" << std::endl;
         applyConfiguration();
 
         // get the next job in queue or wait until a new job arrives
 
         popsift::Image* img = job->getImg();
-        std::cout << "the job is --> ";
+        // std::cout << "the job is --> ";
         job->printJob();
 
         private_init(img->getWidth(), img->getHeight());
@@ -288,6 +290,9 @@ void PopSift::extractDownloadLoop()
         // img->print_region(4, 4, 20, 20);
 
         // DO THE JOB!!!
+
+        _d_gauss_write.wait();  // not needed
+        _d_consts_write.wait(); // not needed
         p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
         // FUFULL THE PROMISE

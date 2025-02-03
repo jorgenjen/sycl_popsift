@@ -34,7 +34,7 @@ class SiftJob
 
     popsift::Image* _img;
     std::exception_ptr _err;
-    sycl::event _img_transfer_event;
+    sycl::event _img_transfer_event; // pointer to event that we update
 
     friend class PopSift;
 

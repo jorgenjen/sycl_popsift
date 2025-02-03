@@ -107,6 +107,8 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
     const float* filter = &_d_gauss->dd.filter[0];
     const int span = _d_gauss->dd.span[0];
 
+    std::cout << "INPUT IMAGE -- LEVEL 0" << std::endl;
+
     return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(dependencies);
         sycl::range local{128, 1};

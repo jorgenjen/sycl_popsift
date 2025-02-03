@@ -19,7 +19,7 @@ namespace popsift {
 inline sycl::event Pyramid::horiz_from_prev_level(int octave,
                                                   int level,
                                                   GaussTableChoice useInterpolatedGauss,
-                                                  sycl::event prev_level_write)
+                                                  const sycl::event& prev_level_write)
 {
     switch(useInterpolatedGauss)
     {
@@ -34,7 +34,7 @@ inline sycl::event Pyramid::horiz_from_prev_level(int octave,
 inline sycl::event Pyramid::vert_from_interm(int octave,
                                              int level,
                                              GaussTableChoice useInterpolatedGauss,
-                                             sycl::event intm_write)
+                                             const sycl::event& intm_write)
 {
     Octave& oct_obj = _octaves[octave];
 
@@ -54,7 +54,10 @@ inline sycl::event Pyramid::vert_from_interm(int octave,
     return sycl::event(); // just to return for now to avoid warning for compiler
 }
 
-void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_gauss_write, sycl::event img_transfer)
+void Pyramid::build_pyramid(const Config& conf,
+                            Image* base_img,
+                            const sycl::event& d_gauss_write,
+                            const sycl::event& img_transfer)
 {
     // #if (PYRAMID_PRINT_DEBUG==1)
     //     cerr << "Entering " << __FUNCTION__ << " with base image "  << endl
@@ -85,12 +88,6 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
     for(uint32_t octave = 0; octave < _num_octaves; octave++)
     {
         Octave& oct_obj = _octaves[octave];
-        // cudaStream_t stream = oct_obj.getStream();
-        //
-        // sycl::event* prev_level_write[_levels - 1]; // clange extension this is?
-
-        // std::vector<sycl::event> prev_level_write;
-        // prev_level_write.reserve(_levels - 1);
 
         for(int level = 0; level < _levels; level++)
         {
@@ -98,9 +95,11 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
             {
                 if(octave == 0)
                 {
-                    cout << "first ocatve first level" << endl;
+                    // cout << "first ocatve first level" << endl;
                     sycl::event horiz = horiz_from_input_image(conf, base_img, {d_gauss_write, img_transfer});
+                    // horiz.wait();
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                    // oct_obj._level_complete_events[0].wait();
                 }
                 else
                 {
@@ -112,26 +111,29 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
 
                     // NOT READY FOR THIS YET...
 
-                    // Octave& prev_oct_obj = _octaves[octave - 1];
-                    // prev_oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
+                    // if(octave == 1)
+                    // {
+                    //     Octave& prev_oct_obj = _octaves[octave - 1];
+                    //     prev_oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
+                    //     cout << "Can start on second Octave now!" << endl;
+                    // }
                 }
             }
             else
             {
-                // if(octave == 0 && level == 1) // TMP: for now only allow octave 0 as I develop the rest
+                // if(octave == 0 && level <= 3) // TMP: for now only allow octave 0 as I develop the rest
                 if(octave == 0) // TMP: for now only allow octave 0 as I develop the rest
                 {
                     sycl::event horiz =
                       horiz_from_prev_level(octave, level, gaussTableChoice, oct_obj._level_complete_events[level - 1]);
+                    // horiz.wait();
 
                     // Hope horiz is fine to use even though it goes out of scope after the line but should have been
                     // copied by then I think
                     oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
+                    // oct_obj._level_complete_events[level].wait();
+                    // _device_queue.wait();
                 }
-                // if(level == _levels - PREV_LEVEL)
-                // {
-                //     cuda::event_record(oct_obj.getEventScaleDone(), stream, __FILE__, __LINE__);
-                // }
             }
         }
     }

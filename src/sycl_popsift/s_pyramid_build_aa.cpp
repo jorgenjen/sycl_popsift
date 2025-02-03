@@ -109,14 +109,16 @@ class Horiz
     const float* filter;
     const int span;
     const int width;
+    const int height;
 
   public:
-    Horiz(float* src, float* dst_data, const float* filter, const int span, const int width)
+    Horiz(float* src, float* dst_data, const float* filter, const int span, const int width, const int height)
       : src(src)
       , dst_data(dst_data)
       , filter(filter)
       , span(span)
       , width(width)
+      , height(height)
     {}
 
     // Not sure if inlining makes this worse or better...
@@ -129,7 +131,7 @@ class Horiz
 
         // could have two different kernels one with this and one without
         // depending on if it is perfectly divisible by 128 but might not be worth it... Test
-        if(x >= width) // might need to check that the height is also not past the boundary
+        if(x >= width || y >= height)
             return;
 
         int idx;
@@ -174,15 +176,23 @@ class Vert
     const int span;
     const int width;
     const int height;
+    const int level;
 
   public:
-    Vert(float* intermediate, float* dst_data, const float* filter, const int span, const int width, const int height)
+    Vert(float* intermediate,
+         float* dst_data,
+         const float* filter,
+         const int span,
+         const int width,
+         const int height,
+         const int level)
       : intermediate(intermediate)
       , dst_data(dst_data)
       , filter(filter)
       , span(span)
       , width(width)
       , height(height)
+      , level(level)
     {}
 
     // seems to be slightly different from cuda PopSIFT but could be due to the way GPU vs cpu handles
@@ -198,7 +208,7 @@ class Vert
         int y = it.get_global_id(1);
 
         // This need to be here  I think. Was not in cuda PopSift probs due to textures making it a non issue
-        if(x >= width)
+        if(x >= width || y >= height)
             return;
 
         int idy;
@@ -214,10 +224,11 @@ class Vert
             // val = readTex(src_point_texture, xpos, idy, dst_level);
             val = idy < 0 ? intermediate[x] : intermediate[x + idy * width]; // clamp edge
             out += (val * g);
-            if(x == 1267 && y == 839)
-            {
-                sycl::ext::oneapi::experimental::printf("\nidy = %d -- val=%f -- out %f -- g =%f\n", idy, val, out, g);
-            }
+            // if(x == 1267 && y == 839)
+            // {
+            //     sycl::ext::oneapi::experimental::printf("\nidy = %d -- val=%f -- out %f -- g =%f\n", idy, val,
+            //     out, g);
+            // }
 
             idy = y + offset;
             // val = readTex(src_point_texture, xpos, idy, dst_level);
@@ -231,6 +242,17 @@ class Vert
         out += (val * g);
 
         dst_data[x + y * width] = out;
+
+        if(x == 0 && y == 0)
+        {
+            sycl::ext::oneapi::experimental::printf(
+              "\n\t\tFIRST PIXEL in ver w = %d h = %d  level = %d\n", width, height, level);
+        }
+        if(x == 1279 && y == 851)
+        {
+            sycl::ext::oneapi::experimental::printf(
+              "\n\t\tLast PIXEL in ver  w = %d   h = %d level = %d\n", width, height, level);
+        }
     }
 };
 
@@ -255,7 +277,7 @@ class Vert
 // }
 
 // Should only be called wiht a level > 0
-sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::event prev_level_wirte)
+sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, const sycl::event& prev_level_write)
 {
     Octave& oct_obj = _octaves[octave];
 
@@ -269,18 +291,30 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
                               // and replaced .get(0) with the values inline
     sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
 
-    printf("\nGlobal in horiz from vert (%zu, %zu):\n", global[0], global[1]);
+    _device_queue.wait();
+    printf("\nGlobal in horiz from prev level wop wop(%zu, %zu), level=%d:\n", global[0], global[1], level);
 
     // Not sure if it is better to have these varaibles inside of the submit or not
-    float* prev_level = oct_obj.getDataArray()[level - 1];   // src
+    float* prev_level = oct_obj.getDataArray()[level - 1]; // src
+    fprintf(stderr, "\nThis is fine!!!\n");
     float* cur_intm = oct_obj.getIntermediateArray()[level]; // dst_data
+    fprintf(stderr, "\nThis is fine!!!\n");
     const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
+    fprintf(stderr, "\nThis is fine!!!\n");
     const int span = _d_gauss->inc.span[level];
-    return _device_queue.submit([&](sycl::handler& cgh) {
-        cgh.depends_on(prev_level_wirte);
+    fprintf(stderr, "\nThis is fine!!!\n");
+
+    sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
+        cgh.depends_on(prev_level_write);
         cgh.parallel_for(sycl::nd_range{global, local},
-                         absoluteSource::Horiz(prev_level, cur_intm, filter, span, width));
+                         absoluteSource::Horiz(prev_level, cur_intm, filter, span, width, height));
     });
+
+    fprintf(stderr, "\nAFTER BEFORE WAIT!!!\n");
+    e.wait();
+    fprintf(stderr, "\nAFTER WAIT!!! before return LEVEL = %d \n", level);
+    // printf("AFTER HORIZ IN 'From prev' -- LEVEL = %d", level);
+    return e;
 
     // _device_queue.wait();
     // absoluteSource::horiz<<<grid, block, 0, stream>>>(
@@ -288,7 +322,7 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     // POP_SYNC_CHK;
 }
 
-sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event intm_write)
+sycl::event Pyramid::vert_from_interm_basic(int octave, int level, const sycl::event& intm_write)
 {
     Octave& oct_obj = _octaves[octave];
 
@@ -298,7 +332,7 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     sycl::range local{64, 2};
     sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
 
-    printf("\n\n\tGlobal_range_basic (%zu, %zu)\n", global[0], global[1]);
+    printf("\n\n\tvert_from_interm_basic GLOBAL(%zu, %zu), LEVEL=%d\n", global[0], global[1], level);
     printf("\n\tSpan=%d \n", _d_gauss->inc.span[level]);
 
     float* intermediate = oct_obj.getIntermediateArray()[level];
@@ -306,13 +340,17 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     const int span = _d_gauss->inc.span[level];
     const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
 
-    return _device_queue.submit([&](sycl::handler& cgh) {
+    sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(intm_write); // Set horiz write to intermediate as dependency --
-                                    // Sycl not in order queue by default hence needed
-        std::cout << "Past intm dependency I think" << std::endl;
+        // Sycl not in order queue by default hence needed
+        // std::cout << "Past intm dependency I think" << std::endl;
         cgh.parallel_for(sycl::nd_range(global, local),
-                         absoluteSource::Vert(intermediate, dst_data, filter, span, width, height));
+                         absoluteSource::Vert(intermediate, dst_data, filter, span, width, height, level));
     });
+
+    e.wait();
+    printf("\n\t AFTER VERT SUBMIT CALL BEFORE RETURN level = %d\n", level);
+    return e;
 
     // _device_queue.wait();
 
