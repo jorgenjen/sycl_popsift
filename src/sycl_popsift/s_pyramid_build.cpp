@@ -143,62 +143,25 @@ void Pyramid::build_pyramid(const Config& conf,
             {
                 if(octave == 0)
                 {
-                    // cout << "first ocatve first level" << endl;
                     sycl::event horiz = horiz_from_input_image(conf, base_img, {d_gauss_write, img_transfer});
-                    // horiz.wait();
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
-                    // oct_obj._level_complete_events[0].wait();
                 }
                 else
                 {
-                    // Octave& prev_oct_obj = _octaves[octave - 1];
-                    // cuda::event_wait(prev_oct_obj.getEventScaleDone(), stream, __FILE__, __LINE__);
-                    // prev_oct_obj.getEventScaleDone().wait();
-                    // cout << "Sclae done ready for next dude to start yay" << endl;
-                    // downscale_from_prev_octave(octave, stream);
+                    Octave& prev_oct_obj = _octaves[octave - 1];
 
-                    // NOT READY FOR THIS YET...
-
-                    if(octave == 1)
-                    {
-                        //
-
-                        int value = 25;
-                        int minVal = 10;
-                        int maxVal = 20;
-
-                        int clampedValue = sycl::clamp(value, minVal, maxVal);
-
-                        std::cout << "Clamped value: " << clampedValue << std::endl;
-
-                        fflush(stdout);
-
-                        Octave& prev_oct_obj = _octaves[octave - 1];
-
-                        downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL])
-                          .wait();
-
-                        // prev_oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
-                        // cout << "Can start on second Octave now! waited for " << _levels - PREV_LEVEL
-                        //      << " level to be done" << endl;
-                    }
+                    oct_obj._level_complete_events[0] =
+                      downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
                 }
             }
             else
             {
-                // if(octave == 0 && level <= 3) // TMP: for now only allow octave 0 as I develop the rest
-                if(octave == 0) // TMP: for now only allow octave 0 as I develop the rest
-                {
-                    sycl::event horiz =
-                      horiz_from_prev_level(octave, level, gaussTableChoice, oct_obj._level_complete_events[level - 1]);
-                    // horiz.wait();
+                sycl::event horiz =
+                  horiz_from_prev_level(octave, level, gaussTableChoice, oct_obj._level_complete_events[level - 1]);
 
-                    // Hope horiz is fine to use even though it goes out of scope after the line but should have been
-                    // copied by then I think
-                    oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
-                    // oct_obj._level_complete_events[level].wait();
-                    // _device_queue.wait();
-                }
+                // Hope horiz is fine to use even though it goes out of scope after the line but should have been
+                // copied by then I think eventough vert_from_interm takes it as reference...
+                oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
             }
         }
     }
