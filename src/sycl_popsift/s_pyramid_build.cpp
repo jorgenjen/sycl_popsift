@@ -1,3 +1,4 @@
+#include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/s_image.hpp"
@@ -14,7 +15,54 @@ using std::endl;
 namespace popsift {
 
 // namespace gauss { // is only for one function get_by_2_pick_every_second
+//                   // only used once so I just use a lambda instead of a functor in namespace
+//
 // }
+
+// not sure if we want the se to be inline they were in CUDA popsift
+inline sycl::event Pyramid::downscale_from_prev_octave(int octave, const sycl::event& prev_octave_done)
+{
+    Octave& oct_obj = _octaves[octave];
+    Octave& prev_oct_obj = _octaves[octave - 1];
+
+    // downscaled with and height (current for this octave)
+    const int dst_width = oct_obj.getWidth();
+    const int dst_height = oct_obj.getHeight();
+
+    const int src_width = prev_oct_obj.getWidth();
+    const int src_height = prev_oct_obj.getHeight();
+
+    float* src_data = prev_oct_obj.getDataArray()[_levels - PREV_LEVEL];
+    float* dst_data = oct_obj.getDataArray()[0]; // Level 0 is the subsampled result
+
+    sycl::range local{64, 2};
+    sycl::range global{(size_t)grid_divide(dst_width, local.get(0)), (size_t)grid_divide(dst_height, local.get(1))};
+
+    printf("\n\n\tIN downscale_from_prev_octave GLOBAL(%zu, %zu), OCTAVE=%d\n", global[0], global[1], octave);
+
+    return _device_queue.submit([&](sycl::handler& cgh) {
+        cgh.depends_on(prev_octave_done);
+        cgh.parallel_for(sycl::nd_range(global, local), [=](sycl::nd_item<2> it) {
+            int x = it.get_global_id(0);
+            int y = it.get_global_id(1);
+
+            // better to have in one or two? -- Probs don't matter
+            if(x >= dst_width)
+                return;
+            if(y >= dst_height)
+                return;
+
+            const int read_x = sycl::clamp(x << 1, 0, src_width);
+            const int read_y = sycl::clamp(y << 1, 0, src_height);
+
+            // calamp ensures src access is always safe
+            dst_data[x + y * dst_width] = src_data[read_x + read_y * src_width];
+        });
+    });
+    // _device_queue.wait(); // just for now
+
+    // POP_SYNC_CHK;
+}
 
 inline sycl::event Pyramid::horiz_from_prev_level(int octave,
                                                   int level,
@@ -111,12 +159,29 @@ void Pyramid::build_pyramid(const Config& conf,
 
                     // NOT READY FOR THIS YET...
 
-                    // if(octave == 1)
-                    // {
-                    //     Octave& prev_oct_obj = _octaves[octave - 1];
-                    //     prev_oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
-                    //     cout << "Can start on second Octave now!" << endl;
-                    // }
+                    if(octave == 1)
+                    {
+                        //
+
+                        int value = 25;
+                        int minVal = 10;
+                        int maxVal = 20;
+
+                        int clampedValue = sycl::clamp(value, minVal, maxVal);
+
+                        std::cout << "Clamped value: " << clampedValue << std::endl;
+
+                        fflush(stdout);
+
+                        Octave& prev_oct_obj = _octaves[octave - 1];
+
+                        downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL])
+                          .wait();
+
+                        // prev_oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
+                        // cout << "Can start on second Octave now! waited for " << _levels - PREV_LEVEL
+                        //      << " level to be done" << endl;
+                    }
                 }
             }
             else

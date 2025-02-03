@@ -38,6 +38,8 @@ class Octave
     sycl::queue& _device_queue; // reference to  of device queue
 
     // Intermediate
+    // TODO: change to only use a float* _intm_data (or whatever) as we only need one!!!
+    // might just need one float _intm_array as next scale depends on prev hence only one is written to at once
     float** _intm_array; // array pointing to array of float array
                          // which each represents the different levels (blur)
                          // in the octave

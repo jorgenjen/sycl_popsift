@@ -2,15 +2,16 @@ add_library(sycl_popsift
             sycl_popsift/popsift.cpp sycl_popsift/popsift.hpp
             sycl_popsift/s_image.cpp sycl_popsift/s_image.hpp
             sycl_popsift/sift_pyramid.cpp sycl_popsift/sift_pyramid.hpp
-            sycl_popsift/s_pyramid_build.cpp sycl_popsift/s_pyramid_build_ra.cpp
+            sycl_popsift/s_pyramid_build.cpp
+            sycl_popsift/s_pyramid_build_ra.cpp
             sycl_popsift/s_pyramid_build_aa.cpp
-            sycl_popsift/sift_constants.cpp sycl_popsift/sift_constants.cpp
+            sycl_popsift/sift_constants.cpp sycl_popsift/sift_constants.hpp
             sycl_popsift/sift_octave.cpp sycl_popsift/sift_octave.hpp
             sycl_popsift/gauss_filter.cpp sycl_popsift/gauss_filter.cpp
             sycl_popsift/non_sycl/sift_conf.cpp sycl_popsift/non_sycl/sift_conf.hpp
             sycl_popsift/common/debug_macros.cpp sycl_popsift/common/debug_macros.hpp
             sycl_popsift/common/sync_queue.h
-            sycl_popsift/common/assist.h
+            sycl_popsift/common/assist.h 
       )
 
 # TODO: Figure out if it should be STATIC, SHARED or not set like in popsift (aka using BUILD_SHARED_LIBS to do
@@ -22,7 +23,7 @@ add_sycl_to_target(TARGET sycl_popsift SOURCES
   sycl_popsift/sift_pyramid.cpp sycl_popsift/sift_pyramid.hpp
   sycl_popsift/s_pyramid_build.cpp sycl_popsift/s_pyramid_build_ra.cpp
   sycl_popsift/s_pyramid_build_aa.cpp
-  sycl_popsift/sift_constants.cpp sycl_popsift/sift_constants.cpp
+  sycl_popsift/sift_constants.cpp sycl_popsift/sift_constants.hpp
   sycl_popsift/sift_octave.cpp sycl_popsift/sift_octave.hpp
   sycl_popsift/gauss_filter.cpp sycl_popsift/gauss_filter.cpp
 )

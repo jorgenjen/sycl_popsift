@@ -177,7 +177,6 @@ bool PopSift::private_init(int w, int h)
         p._pyramid->resetDimensions(_config, w, h);
         return true;
     }
-    cout << "\t null null null you fucking goodb boy" << endl;
 
     p._pyramid = new popsift::Pyramid(_config, w, h, _device_queue, _d_gauss);
 
@@ -276,7 +275,6 @@ void PopSift::extractDownloadLoop()
     {
         // will do nothing if configuraiton has not changed
 
-        // std::cout << "\t\tApply conf inner to force!" << std::endl;
         applyConfiguration();
 
         // get the next job in queue or wait until a new job arrives
@@ -291,8 +289,6 @@ void PopSift::extractDownloadLoop()
 
         // DO THE JOB!!!
 
-        _d_gauss_write.wait();  // not needed
-        _d_consts_write.wait(); // not needed
         p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
         // FUFULL THE PROMISE

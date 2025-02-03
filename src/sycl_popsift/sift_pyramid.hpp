@@ -118,7 +118,7 @@ class Pyramid
     // sycl::event horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
     sycl::event horiz_from_input_image(const Config& conf, Image* base, std::vector<sycl::event> dependencies);
 
-    // inline void downscale_from_prev_octave(int octave, cudaStream_t stream);
+    inline sycl::event downscale_from_prev_octave(int octave, const sycl::event& prev_octave_done);
 
     sycl::event horiz_from_prev_level_basic(int octave, int level, const sycl::event& prev_level_write);
     void horiz_from_prev_level_pairs(int octave, int level); // Not implemented as of now

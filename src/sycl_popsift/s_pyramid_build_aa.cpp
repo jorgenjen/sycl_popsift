@@ -15,90 +15,6 @@
 namespace popsift {
 namespace absoluteSource {
 
-// __global__ static void horiz(cudaTextureObject_t src_point_texture, cudaSurfaceObject_t dst_data, int dst_level)
-// {
-//     const int src_level = dst_level - 1;
-//     const int span = d_gauss.inc.span[dst_level];
-//     const float* filter = &d_gauss.inc.filter[dst_level * GAUSS_ALIGN];
-//     const int block_x = blockIdx.x * blockDim.x;
-//     const int block_y = blockIdx.y * blockDim.y;
-//     const int xpos = block_x + threadIdx.x;
-//     const int ypos = block_y + threadIdx.y;
-//
-//     int idx;
-//     float g;
-//     float val;
-//     float out = 0.0f;
-//
-//     for(int offset = span; offset > 0; offset--)
-//     {
-//         g = filter[offset];
-//
-//         idx = xpos - offset;
-//         val = readTex(src_point_texture, idx, ypos, src_level);
-//         out += (val * g);
-//
-//         idx = xpos + offset;
-//         val = readTex(src_point_texture, idx, ypos, src_level);
-//         out += (val * g);
-//     }
-//
-//     g = filter[0];
-//     val = readTex(src_point_texture, xpos, ypos, src_level);
-//     out += (val * g);
-//
-//     surf2DLayeredwrite(out, dst_data, xpos * 4, ypos, dst_level, cudaBoundaryModeZero);
-// }
-
-// __global__ static void vert(cudaTextureObject_t src_point_texture, cudaSurfaceObject_t dst_data, int dst_level)
-// {
-// const int span = d_gauss.inc.span[dst_level];
-// const float* filter = &d_gauss.inc.filter[dst_level * GAUSS_ALIGN];
-//     const int block_x = blockIdx.x * blockDim.x;
-//     const int block_y = blockIdx.y * blockDim.y;
-//     const int xpos = block_x + threadIdx.x;
-//     const int ypos = block_y + threadIdx.y;
-//
-//     int idy;
-//     float g;
-//     float val;
-//     float out = 0.0f;
-//
-//     for(int offset = span; offset > 0; offset--)
-//     {
-//         g = filter[offset];
-//
-//         idy = ypos - offset;
-//         val = readTex(src_point_texture, xpos, idy, dst_level);
-//         out += (val * g);
-//
-//         idy = ypos + offset;
-//         val = readTex(src_point_texture, xpos, idy, dst_level);
-//         out += (val * g);
-//     }
-//
-//     g = filter[0];
-//     val = readTex(src_point_texture, xpos, ypos, dst_level);
-//     out += (val * g);
-//
-//     surf2DLayeredwrite(out, dst_data, xpos * 4, ypos, dst_level, cudaBoundaryModeZero);
-// }
-
-// think this is can be the same as Horiz in the other loation
-// class Horiz
-// {
-//   private:
-//     float* prev_level;
-//     float* intermediate;
-//     const int span;
-//     const float* span;
-//     const width;
-//
-//   public:
-//
-//     k
-// };
-
 // SHould use this one instead of Horiz in absolute source as this one makes sense to use in both
 // situations and we dont need to divide the image initially, wasting performance.
 class Horiz
@@ -125,7 +41,6 @@ class Horiz
     // might remove function calls but not sure exactly
     inline void operator()(sycl::nd_item<2> it) const
     {
-        // kernel code
         int x = it.get_global_id(0);
         int y = it.get_global_id(1);
 
@@ -144,26 +59,20 @@ class Horiz
             g = filter[offset];
 
             idx = x - offset;
-            // val = readTex(src_point_texture, idx, ypos, src_level);
             val = idx < 0 ? src[y * width] : src[idx + y * width];
-            // const float v1 = v1_pos < 0 ? input[y * width] : input[v1_pos + y * width];
-            // const float v2 = v2_pos >= width ? input[width - 1 + y * width] : input[v2_pos + y * width];
 
             out += (val * g);
 
             idx = x + offset;
             val = idx >= width ? src[width - 1 + y * width] : src[idx + y * width];
-            // val = readTex(src_point_texture, idx, ypos, src_level);
             out += (val * g);
         }
 
         g = filter[0];
         val = src[x + y * width];
-        // val = readTex(src_point_texture, xpos, ypos, src_level);
         out += (val * g);
 
         dst_data[x + y * width] = out;
-        // surf2DLayeredwrite(out, dst_data, xpos * 4, ypos, dst_level, cudaBoundaryModeZero);
     };
 };
 
@@ -221,60 +130,23 @@ class Vert
             g = filter[offset];
 
             idy = y - offset;
-            // val = readTex(src_point_texture, xpos, idy, dst_level);
             val = idy < 0 ? intermediate[x] : intermediate[x + idy * width]; // clamp edge
             out += (val * g);
-            // if(x == 1267 && y == 839)
-            // {
-            //     sycl::ext::oneapi::experimental::printf("\nidy = %d -- val=%f -- out %f -- g =%f\n", idy, val,
-            //     out, g);
-            // }
 
             idy = y + offset;
-            // val = readTex(src_point_texture, xpos, idy, dst_level);
             val = idy >= height ? intermediate[x + (height - 1) * width] : intermediate[x + y * width]; // clamp edge
             out += (val * g);
         }
 
         g = filter[0];
-        // val = readTex(src_point_texture, xpos, ypos, dst_level);
         val = intermediate[x + y * width];
         out += (val * g);
 
         dst_data[x + y * width] = out;
-
-        if(x == 0 && y == 0)
-        {
-            sycl::ext::oneapi::experimental::printf(
-              "\n\t\tFIRST PIXEL in ver w = %d h = %d  level = %d\n", width, height, level);
-        }
-        if(x == 1279 && y == 851)
-        {
-            sycl::ext::oneapi::experimental::printf(
-              "\n\t\tLast PIXEL in ver  w = %d   h = %d level = %d\n", width, height, level);
-        }
     }
 };
 
 } // namespace absoluteSource
-
-// __host__ void Pyramid::horiz_from_prev_level_basic(int octave, int level, cudaStream_t stream)
-// {
-//     Octave& oct_obj = _octaves[octave];
-//
-//     const int width = oct_obj.getWidth();
-//     const int height = oct_obj.getHeight();
-//
-//     // similar speed: dim3 block( 32,  4 ); dim3 block( 32,  3 ); dim3 block( 32,  2 );
-//     dim3 block(32, 8); // most stable good perf on GTX 980 TI
-//     dim3 grid;
-//     grid.x = grid_divide(width, 32);
-//     grid.y = grid_divide(height, block.y);
-//
-//     absoluteSource::horiz<<<grid, block, 0, stream>>>(
-//       oct_obj.getDataTexPoint(), oct_obj.getIntermediateSurface(), level);
-//     POP_SYNC_CHK;
-// }
 
 // Should only be called wiht a level > 0
 sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, const sycl::event& prev_level_write)
@@ -291,18 +163,18 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, const sy
                               // and replaced .get(0) with the values inline
     sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
 
-    _device_queue.wait();
+    // _device_queue.wait();
     printf("\nGlobal in horiz from prev level wop wop(%zu, %zu), level=%d:\n", global[0], global[1], level);
 
     // Not sure if it is better to have these varaibles inside of the submit or not
     float* prev_level = oct_obj.getDataArray()[level - 1]; // src
-    fprintf(stderr, "\nThis is fine!!!\n");
+    // fprintf(stderr, "\nThis is fine!!!\n");
     float* cur_intm = oct_obj.getIntermediateArray()[level]; // dst_data
-    fprintf(stderr, "\nThis is fine!!!\n");
+    // fprintf(stderr, "\nThis is fine!!!\n");
     const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
-    fprintf(stderr, "\nThis is fine!!!\n");
+    // fprintf(stderr, "\nThis is fine!!!\n");
     const int span = _d_gauss->inc.span[level];
-    fprintf(stderr, "\nThis is fine!!!\n");
+    // fprintf(stderr, "\nThis is fine!!!\n");
 
     sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(prev_level_write);
@@ -310,9 +182,9 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, const sy
                          absoluteSource::Horiz(prev_level, cur_intm, filter, span, width, height));
     });
 
-    fprintf(stderr, "\nAFTER BEFORE WAIT!!!\n");
-    e.wait();
-    fprintf(stderr, "\nAFTER WAIT!!! before return LEVEL = %d \n", level);
+    // fprintf(stderr, "\nAFTER BEFORE WAIT!!!\n");
+    // e.wait();
+    // fprintf(stderr, "\nAFTER WAIT!!! before return LEVEL = %d \n", level);
     // printf("AFTER HORIZ IN 'From prev' -- LEVEL = %d", level);
     return e;
 
@@ -348,8 +220,9 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, const sycl::e
                          absoluteSource::Vert(intermediate, dst_data, filter, span, width, height, level));
     });
 
-    e.wait();
-    printf("\n\t AFTER VERT SUBMIT CALL BEFORE RETURN level = %d\n", level);
+    fprintf(stderr, "After Vert_aa was submited\n");
+    // e.wait();
+    // printf("\n\t AFTER VERT SUBMIT CALL BEFORE RETURN level = %d\n", level);
     return e;
 
     // _device_queue.wait();
