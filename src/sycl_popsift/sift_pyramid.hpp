@@ -93,7 +93,7 @@ class Pyramid
     void resetDimensions(const Config& conf, int width, int height);
 
     /** step 1: load image and build pyramid */
-    void step1(const Config& conf, Image* img, sycl::event d_gauss_wirte);
+    void step1(const Config& conf, Image* img, sycl::event d_gauss_wirte, sycl::event img_transfer);
 
     /** step 2: find extrema, orientations and descriptor */
     void step2(const Config& conf);
@@ -115,7 +115,8 @@ class Pyramid
     inline Octave& getOctave(const int o) { return _octaves[o]; }
 
   private:
-    sycl::event horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
+    // sycl::event horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
+    sycl::event horiz_from_input_image(const Config& conf, Image* base, std::vector<sycl::event> dependencies);
 
     // inline void downscale_from_prev_octave(int octave, cudaStream_t stream);
 
@@ -136,7 +137,7 @@ class Pyramid
     //                               cudaStream_t stream);
 
     void reset_extrema_mgmt();
-    void build_pyramid(const Config& conf, Image* base, sycl::event d_gauss_write);
+    void build_pyramid(const Config& conf, Image* base, sycl::event d_gauss_write, sycl::event img_transfer);
     void find_extrema(const Config& conf);
     void reallocExtrema(int numExtrema);
 

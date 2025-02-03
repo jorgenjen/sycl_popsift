@@ -71,10 +71,9 @@ class Octave
     // cudaEvent_t _extrema_done{};
     // cudaEvent_t _ori_done{};
     // cudaEvent_t _desc_done{};
-    sycl::event _scale_done; // will be set before it is waited on
-                             // due to whole pyarmid building on host being done in one threhad
 
   public:
+    std::vector<sycl::event> _level_complete_events;
     // Octave();
     Octave() = delete;
     Octave(sycl::queue& Q);
@@ -97,9 +96,6 @@ class Octave
 
     inline float** getIntermediateArray() const { return _intm_array; }
     inline float** getDataArray() const { return _data_array; }
-
-    inline void setEventScaleDone(sycl::event event) { _scale_done = event; }
-    inline sycl::event getEventScaleDone() { return _scale_done; }
 
     // inline cudaStream_t getStream( ) {
     //     return _stream;

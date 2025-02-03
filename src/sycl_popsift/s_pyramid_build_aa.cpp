@@ -277,6 +277,7 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
     const int span = _d_gauss->inc.span[level];
     return _device_queue.submit([&](sycl::handler& cgh) {
+        cgh.depends_on(prev_level_wirte);
         cgh.parallel_for(sycl::nd_range{global, local},
                          absoluteSource::Horiz(prev_level, cur_intm, filter, span, width));
     });
@@ -308,6 +309,7 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(intm_write); // Set horiz write to intermediate as dependency --
                                     // Sycl not in order queue by default hence needed
+        std::cout << "Past intm dependency I think" << std::endl;
         cgh.parallel_for(sycl::nd_range(global, local),
                          absoluteSource::Vert(intermediate, dst_data, filter, span, width, height));
     });

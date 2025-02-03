@@ -34,6 +34,7 @@ class SiftJob
 
     popsift::Image* _img;
     std::exception_ptr _err;
+    sycl::event _img_transfer_event;
 
     friend class PopSift;
 
@@ -64,6 +65,8 @@ class SiftJob
     void setImg(popsift::Image* img, sycl::queue q, const float& upscaleFactor);
 
     popsift::Image* getImg();
+
+    inline sycl::event getImgTransferEvent() { return _img_transfer_event; }
 
     // NOTE: Temporary to fufill the promise see popsift later on for proper
     // implmentation and do that

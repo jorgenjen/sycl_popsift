@@ -91,7 +91,7 @@ class Horiz
 
 } // namespace normalizedSource
 
-sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write)
+sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std::vector<sycl::event> dependencies)
 {
     Octave& oct_obj = _octaves[0];
 
@@ -108,6 +108,7 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, syc
     const int span = _d_gauss->dd.span[0];
 
     return _device_queue.submit([&](sycl::handler& cgh) {
+        cgh.depends_on(dependencies);
         sycl::range local{128, 1};
         cgh.parallel_for(
           sycl::nd_range{global, local},

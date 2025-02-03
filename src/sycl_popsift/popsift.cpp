@@ -288,7 +288,7 @@ void PopSift::extractDownloadLoop()
         // img->print_region(4, 4, 20, 20);
 
         // DO THE JOB!!!
-        p._pyramid->step1(_config, img, _d_gauss_write);
+        p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
         // FUFULL THE PROMISE
 
@@ -353,7 +353,7 @@ void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFac
     // img->load(_imageData);
     // img->load_divide(_imageData);
     // img->load_divide_point(_imageData, scaled_w);
-    img->load_divide_linear(_imageData, scaled_w);
+    _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
     _img = img;
 }
 
