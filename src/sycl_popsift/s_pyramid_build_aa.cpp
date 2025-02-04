@@ -223,8 +223,8 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, const sycl::e
     });
 
     fprintf(stderr, "After Vert_aa was submited\n");
-    // e.wait();
-    // printf("\n\t AFTER VERT SUBMIT CALL BEFORE RETURN level = %d\n", level);
+    e.wait();
+    printf("\n\t AFTER VERT SUBMIT CALL BEFORE RETURN level = %d\n", level);
     return e;
 
     // _device_queue.wait();

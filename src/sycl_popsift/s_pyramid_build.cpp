@@ -150,8 +150,12 @@ void Pyramid::build_pyramid(const Config& conf,
                 {
                     Octave& prev_oct_obj = _octaves[octave - 1];
 
+                    fprintf(stderr, "Before downscale to Octave %d", octave);
                     oct_obj._level_complete_events[0] =
                       downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
+
+                    oct_obj._level_complete_events[0].wait();
+                    fprintf(stderr, "AFTER downscale to Octave %d", octave);
                 }
             }
             else
