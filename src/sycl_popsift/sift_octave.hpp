@@ -44,6 +44,8 @@ class Octave
                          // which each represents the different levels (blur)
                          // in the octave
 
+    float* _intermediate; // should not need an array
+
     float** _data_array;
 
     // cudaArray_t _data{};
@@ -96,6 +98,7 @@ class Octave
     inline float getWGridDivider() const { return _w_grid_divider; }
     inline float getHGridDivider() const { return _h_grid_divider; }
 
+    inline float* getIntermediate() const { return _intermediate; }
     inline float** getIntermediateArray() const { return _intm_array; }
     inline float** getDataArray() const { return _data_array; }
 

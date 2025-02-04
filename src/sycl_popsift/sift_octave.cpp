@@ -13,12 +13,13 @@ Octave::~Octave()
 {
     for(int i = 0; i < _levels; ++i)
     {
-        sycl::free(_intm_array[i], _device_queue);
+        // sycl::free(_intm_array[i], _device_queue);
         sycl::free(_data_array[i], _device_queue);
     }
 
-    sycl::free(_intm_array, _device_queue);
+    // sycl::free(_intm_array, _device_queue);
     sycl::free(_data_array, _device_queue);
+    sycl::free(_intermediate, _device_queue);
 }
 
 void Octave::alloc(const Config& conf, int width, int height, int levels, int gauss_group, sycl::queue& Q)
@@ -39,10 +40,12 @@ void Octave::alloc(const Config& conf, int width, int height, int levels, int ga
     // and don't think there is much performance penalty from doing it this way...
     try
     {
-        _intm_array = sycl::malloc_device<float*>(levels, Q);
+        // _intm_array = sycl::malloc_device<float*>(levels, Q);
         _data_array = sycl::malloc_device<float*>(levels, Q);
+        _intermediate = sycl::malloc_device<float>(width * height, Q);
 
-        if(!_intm_array || !_data_array)
+        // if(!_intm_array || !_data_array)
+        if(!_data_array || !_intermediate)
         {
             POP_FATAL("Octave memory allocation failed");
         }
@@ -56,10 +59,11 @@ void Octave::alloc(const Config& conf, int width, int height, int levels, int ga
         // Allocate the levels in the octave
         for(int i = 0; i < levels; ++i)
         {
-            _intm_array[i] = sycl::malloc_device<float>(width * height, Q);
+            // _intm_array[i] = sycl::malloc_device<float>(width * height, Q);
             _data_array[i] = sycl::malloc_device<float>(width * height, Q);
 
-            if(!_intm_array[i] || !_data_array[i])
+            // if(!_intm_array[i] || !_data_array[i])
+            if(!_data_array[i])
             {
                 POP_FATAL("Octave memory allocation failed");
             }

@@ -169,7 +169,8 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, const sy
     // Not sure if it is better to have these varaibles inside of the submit or not
     float* prev_level = oct_obj.getDataArray()[level - 1]; // src
     // fprintf(stderr, "\nThis is fine!!!\n");
-    float* cur_intm = oct_obj.getIntermediateArray()[level]; // dst_data
+    // float* cur_intm = oct_obj.getIntermediateArray()[level]; // dst_data
+    float* cur_intm = oct_obj.getIntermediate(); // dst_data
     // fprintf(stderr, "\nThis is fine!!!\n");
     const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
     // fprintf(stderr, "\nThis is fine!!!\n");
@@ -207,7 +208,8 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, const sycl::e
     printf("\n\n\tvert_from_interm_basic GLOBAL(%zu, %zu), LEVEL=%d\n", global[0], global[1], level);
     printf("\n\tSpan=%d \n", _d_gauss->inc.span[level]);
 
-    float* intermediate = oct_obj.getIntermediateArray()[level];
+    // float* intermediate = oct_obj.getIntermediateArray()[level];
+    float* intermediate = oct_obj.getIntermediate();
     float* dst_data = oct_obj.getDataArray()[level];
     const int span = _d_gauss->inc.span[level];
     const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];

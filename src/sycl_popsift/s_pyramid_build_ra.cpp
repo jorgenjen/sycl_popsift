@@ -112,9 +112,8 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
     return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(dependencies);
         sycl::range local{128, 1};
-        cgh.parallel_for(
-          sycl::nd_range{global, local},
-          normalizedSource::Horiz(base->getInput(), oct_obj.getIntermediateArray()[0], filter, span, width));
+        cgh.parallel_for(sycl::nd_range{global, local},
+                         normalizedSource::Horiz(base->getInput(), oct_obj.getIntermediate(), filter, span, width));
     });
 
     // _device_queue.wait(); // temporary waiting here remove in future
