@@ -85,15 +85,16 @@ void PopSift::uninit()
         return;
     }
 
-    if(popsift::d_consts != nullptr)
-        sycl::free(popsift::d_consts, _device_queue);
-    else
-        std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
+    // Uncommeetn for now not in use an global...
+    // if(popsift::d_consts != nullptr)
+    //     sycl::free(popsift::d_consts, _device_queue);
+    // else
+    //     std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
 
     if(_d_gauss != nullptr)
         sycl::free(_d_gauss, _device_queue);
     else
-        std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
+        std::cout << "d_gauss was a nullptr hennce not freeing" << std::endl;
 
     _pipe.uninit();
 
@@ -112,15 +113,15 @@ bool PopSift::applyConfiguration(bool force)
         _d_gauss_write = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue, &_d_gauss);
         _d_gauss_write.wait(); // tmp
                                // for now!
-        _d_consts_write = popsift::init_constants(_config.sigma,
-                                                  _config.levels,
-                                                  _config.getPeakThreshold(),
-                                                  _config._edge_limit,
-                                                  _config.getMaxExtrema(),
-                                                  _config.getNormalizationMultiplier(),
-                                                  _device_queue);
-
-        _d_consts_write.wait();
+        // _d_consts_write = popsift::init_constants(_config.sigma,
+        //                                           _config.levels,
+        //                                           _config.getPeakThreshold(),
+        //                                           _config._edge_limit,
+        //                                           _config.getMaxExtrema(),
+        //                                           _config.getNormalizationMultiplier(),
+        //                                           _device_queue);
+        //
+        // _d_consts_write.wait();
     }
     _shadow_config = _config;
     return true;

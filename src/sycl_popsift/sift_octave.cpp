@@ -11,6 +11,22 @@ Octave::Octave(sycl::queue& Q)
 
 Octave::~Octave()
 {
+    fprintf(stderr, "\nFREEING OCTAVE %d\n", _debug_octave_id);
+
+    if(!_data_array)
+    {
+        fprintf(stderr, "\nData array is NULL at octave=%d\n", _debug_octave_id);
+    }
+    if(!_dog_array)
+    {
+        fprintf(stderr, "\nDOG array is NULL at octave=%d\n", _debug_octave_id);
+    }
+
+    if(!_intermediate)
+    {
+        fprintf(stderr, "\nINTERMEDIATE array is NULL at octave=%d\n", _debug_octave_id);
+    }
+
     for(int i = 0; i < _levels - 1; ++i)
     {
         sycl::free(_data_array[i], _device_queue);

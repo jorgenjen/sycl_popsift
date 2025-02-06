@@ -88,7 +88,7 @@ extern ConstInfo h_consts;
 // const on device using USM device
 
 // Not sure if I should use extern or initilize to nullptr
-extern ConstInfo* d_consts;
+// extern ConstInfo* d_consts;
 // ConstInfo* d_consts = nullptr;
 
 sycl::event init_constants(float sigma0,

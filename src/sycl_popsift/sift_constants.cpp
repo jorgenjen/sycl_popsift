@@ -22,7 +22,7 @@ namespace popsift {
 
 // thread_local ConstInfo h_consts;
 ConstInfo h_consts;
-ConstInfo* d_consts = nullptr;
+// ConstInfo* d_consts = nullptr;
 // __device__ __constant__ ConstInfo d_consts;
 
 sycl::event init_constants(float sigma0,
@@ -67,19 +67,21 @@ sycl::event init_constants(float sigma0,
 
     // send constantst to device
 
-    try
-    {
-        if(d_consts == nullptr)
-            d_consts = sycl::malloc_device<ConstInfo>(1, Q);
-        else
-            std::cout << "\n\n\t\td_consts is nullptr -- no malloc needed\n\n" << std::endl;
-    }
-    catch(const sycl::exception& e)
-    {
-        std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-        // Here, d_consts was never assigned, so there's no need to free it
-    }
-    return Q.memcpy(d_consts, &h_consts, sizeof(ConstInfo));
+    // Uncomments for now as it is global varable and not in use
+    // try
+    // {
+    //     if(d_consts == nullptr)
+    //         d_consts = sycl::malloc_device<ConstInfo>(1, Q);
+    //     else
+    //         std::cout << "\n\n\t\td_consts is nullptr -- no malloc needed\n\n" << std::endl;
+    // }
+    // catch(const sycl::exception& e)
+    // {
+    //     std::cerr << "Memory allocation failed: " << e.what() << std::endl;
+    //     // Here, d_consts was never assigned, so there's no need to free it
+    // }
+    // return Q.memcpy(d_consts, &h_consts, sizeof(ConstInfo));
+    return sycl::event(); // tmp to avoid compiler warning function is not currently in use
 
     // TODO: ADd error checking here
 

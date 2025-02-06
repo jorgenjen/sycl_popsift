@@ -95,6 +95,7 @@ Pyramid::Pyramid(const Config& config, int width, int height, sycl::queue& Q, po
 Pyramid::~Pyramid()
 {
     // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
+    // should also cll destructor of octave which frees that memory
 }
 
 void Pyramid::step1(const Config& conf, popsift::Image* img, sycl::event d_gauss_write, sycl::event img_transfer)
