@@ -29,8 +29,9 @@ class Octave
     int _h{};
     int _max_w{};
     int _max_h{};
-    float _w_grid_divider{};
-    float _h_grid_divider{};
+    // Don't seem to be used anywhere in Popsift code
+    // float _w_grid_divider{};
+    // float _h_grid_divider{};
     int _debug_octave_id{};
     int _levels{};
     int _gauss_group{};
@@ -82,8 +83,8 @@ class Octave
     // Octave();
     Octave() = delete;
     Octave(sycl::queue& Q);
-    // ~Octave() { this->free(); }
-    ~Octave();
+    ~Octave() { this->free_arrays(); }
+    // ~Octave();
 
     void resetDimensions(const Config& conf, int w, int h);
 
@@ -96,8 +97,9 @@ class Octave
     inline int getWidth() const { return _w; }
     inline int getHeight() const { return _h; }
 
-    inline float getWGridDivider() const { return _w_grid_divider; }
-    inline float getHGridDivider() const { return _h_grid_divider; }
+    // not used
+    // inline float getWGridDivider() const { return _w_grid_divider; }
+    // inline float getHGridDivider() const { return _h_grid_divider; }
 
     inline float* getIntermediate() const { return _intermediate; }
     // inline float** getIntermediateArray() const { return _intm_array; }
@@ -154,33 +156,35 @@ class Octave
      * @param levels
      * @param gauss_group
      */
-    void alloc(const Config& conf, int width, int height, int levels, int gauss_group, sycl::queue& Q);
-    void free();
+    void alloc(const Config& conf, int width, int height, int levels);
 
     /**
      * debug:
      * download a level and write to disk
      */
-    void download_and_save_array(const char* basename, int octave);
+    void download_and_save_array(const char* basename, int octave); // need to implement
 
   private:
-    void alloc_data_planes();
-    void alloc_data_tex();
-    void alloc_interm_array();
-    void alloc_interm_tex();
-    void alloc_dog_array();
-    void alloc_dog_tex();
-    void alloc_streams();
-    void alloc_events();
+    void alloc_arrays();
+    void free_arrays();
 
-    void free_events();
-    void free_streams();
-    void free_dog_tex();
-    void free_dog_array();
-    void free_interm_tex();
-    void free_interm_array();
-    void free_data_tex();
-    void free_data_planes();
+    // void alloc_data_planes();
+    // void alloc_data_tex();
+    // void alloc_interm_array();
+    // void alloc_interm_tex();
+    // void alloc_dog_array();
+    // void alloc_dog_tex();
+    // void alloc_streams();
+    // void alloc_events();
+    //
+    // void free_events();
+    // void free_streams();
+    // void free_dog_tex();
+    // void free_dog_array();
+    // void free_interm_tex();
+    // void free_interm_array();
+    // void free_data_tex();
+    // void free_data_planes();
 };
 
 } // namespace popsift

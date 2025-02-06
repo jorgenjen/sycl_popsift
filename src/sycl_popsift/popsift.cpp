@@ -111,8 +111,8 @@ bool PopSift::applyConfiguration(bool force)
         // cout << "\n\n\t\tApplying configuration nuuuuuu!!\n\n" << endl;
         // for re ren we need to free and re malloc or change the size or not malloc again if it is already malloced
         _d_gauss_write = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue, &_d_gauss);
-        _d_gauss_write.wait(); // tmp
-                               // for now!
+        // _d_gauss_write.wait(); // tmp -- should not be needed as it's passed as a dependency
+
         // _d_consts_write = popsift::init_constants(_config.sigma,
         //                                           _config.levels,
         //                                           _config.getPeakThreshold(),

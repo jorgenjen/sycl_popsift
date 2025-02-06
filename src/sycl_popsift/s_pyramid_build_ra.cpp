@@ -72,20 +72,20 @@ class Horiz
         intermediate[x + y * width] = out * 255.0f;
 
         // JUst for verification -- remove!
-        if(x == 0 && y == 0)
-        {
-            sycl::ext::oneapi::experimental::printf("\n\nSCALED UP AS GIVEN TO KERNEL FUNCTOR width = %d:\n", width);
-            for(int y = 852 - 13; y < 852; ++y)
-            {
-                for(int x = width - 13; x < width; ++x)
-                {
-                    // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
-                    sycl::ext::oneapi::experimental::printf("%06.2f ", input[x + y * (width)] * 255.0f);
-                }
-                sycl::ext::oneapi::experimental::printf("\n");
-            }
-            sycl::ext::oneapi::experimental::printf("\n\n");
-        }
+        // if(x == 0 && y == 0)
+        // {
+        //     sycl::ext::oneapi::experimental::printf("\n\nSCALED UP AS GIVEN TO KERNEL FUNCTOR width = %d:\n", width);
+        //     for(int y = 852 - 13; y < 852; ++y)
+        //     {
+        //         for(int x = width - 13; x < width; ++x)
+        //         {
+        //             // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
+        //             sycl::ext::oneapi::experimental::printf("%06.2f ", input[x + y * (width)] * 255.0f);
+        //         }
+        //         sycl::ext::oneapi::experimental::printf("\n");
+        //     }
+        //     sycl::ext::oneapi::experimental::printf("\n\n");
+        // }
     }
 };
 

@@ -48,7 +48,7 @@ Pyramid::Pyramid(const Config& config, int width, int height, sycl::queue& Q, po
     for(int o = 0; o < _num_octaves; o++)
     {
         _octaves[o].debugSetOctave(o);
-        _octaves[o].alloc(config, w, h, _levels, _gauss_group, Q);
+        _octaves[o].alloc(config, w, h, _levels);
         w = ceilf(w / 2.0f);
         h = ceilf(h / 2.0f);
     }

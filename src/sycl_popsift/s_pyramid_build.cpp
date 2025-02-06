@@ -38,7 +38,7 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event p
     sycl::range local{64, 2};
     sycl::range global{(size_t)grid_divide(dst_width, local.get(0)), (size_t)grid_divide(dst_height, local.get(1))};
 
-    printf("\n\n\tIN downscale_from_prev_octave GLOBAL(%zu, %zu), OCTAVE=%d\n", global[0], global[1], octave);
+    // printf("\n\n\tIN downscale_from_prev_octave GLOBAL(%zu, %zu), OCTAVE=%d\n", global[0], global[1], octave);
 
     return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(prev_octave_done);
@@ -193,9 +193,9 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
 
     std::cout << "Octaves: " << _num_octaves << " Levels: " << _levels << " GaussTableChoice: " << gaussTableChoice
               << std::endl;
-    for(uint32_t octave = 0; octave < _num_octaves; octave++)
+    for(int octave = 0; octave < _num_octaves; octave++)
     {
-        fprintf(stderr, "BEFORE ACCESS OF octave %d", octave);
+        // fprintf(stderr, "BEFORE ACCESS OF octave %d", octave);
         Octave& oct_obj = _octaves[octave];
 
         for(int level = 0; level < _levels; level++)
@@ -209,15 +209,15 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
                 }
                 else
                 {
-                    fprintf(stderr, "BEFORE ACCESS OF PREV OCTAVE!!!!! in octave %d", octave);
+                    // fprintf(stderr, "BEFORE ACCESS OF PREV OCTAVE!!!!! in octave %d", octave);
                     Octave& prev_oct_obj = _octaves[octave - 1];
 
-                    fprintf(stderr, "Before downscale to Octave %d", octave);
+                    // fprintf(stderr, "Before downscale to Octave %d", octave);
                     oct_obj._level_complete_events[0] =
                       downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
 
                     oct_obj._level_complete_events[0].wait();
-                    fprintf(stderr, "AFTER downscale to Octave %d", octave);
+                    // fprintf(stderr, "AFTER downscale to Octave %d", octave);
                 }
             }
             else
@@ -227,10 +227,10 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
 
                 // Hope horiz is fine to use even though it goes out of scope after the line but should have been
                 // copied by then I think eventough vert_from_interm takes it as reference...
-                fprintf(stderr, "RIGHT BEFORE FAILURE level=%d -- octave=%d ", level, octave);
+                // fprintf(stderr, "RIGHT BEFORE FAILURE level=%d -- octave=%d ", level, octave);
                 oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
                 oct_obj._level_complete_events[level].wait();
-                fprintf(stderr, "AFTER WAIT ON EVENT level 1-5");
+                // fprintf(stderr, "AFTER WAIT ON EVENT level 1-5");
             }
         }
     }

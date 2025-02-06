@@ -164,11 +164,11 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
 
     // _device_queue.wait();
-    printf("\nGlobal in horiz from prev level wop wop(%zu, %zu), level=%d:\n", global[0], global[1], level);
+    // printf("\nGlobal in horiz from prev level wop wop(%zu, %zu), level=%d:\n", global[0], global[1], level);
 
     // Not sure if it is better to have these varaibles inside of the submit or not
     float* prev_level = oct_obj.getDataArray()[level - 1]; // src
-    // fprintf(stderr, "\nThis is fine!!!\n");
+    // // fprintf(stderr, "\nThis is fine!!!\n");
     // float* cur_intm = oct_obj.getIntermediateArray()[level]; // dst_data
     float* cur_intm = oct_obj.getIntermediate(); // dst_data
     // fprintf(stderr, "\nThis is fine!!!\n");
@@ -205,8 +205,8 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     sycl::range local{64, 2};
     sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
 
-    printf("\n\n\tvert_from_interm_basic GLOBAL(%zu, %zu), LEVEL=%d\n", global[0], global[1], level);
-    printf("\n\tSpan=%d \n", _d_gauss->inc.span[level]);
+    // printf("\n\n\tvert_from_interm_basic GLOBAL(%zu, %zu), LEVEL=%d\n", global[0], global[1], level);
+    // printf("\n\tSpan=%d \n", _d_gauss->inc.span[level]);
 
     // float* intermediate = oct_obj.getIntermediateArray()[level];
     float* intermediate = oct_obj.getIntermediate();
@@ -222,9 +222,9 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
                          absoluteSource::Vert(intermediate, dst_data, filter, span, width, height, level));
     });
 
-    fprintf(stderr, "After Vert_aa was submited\n");
-    e.wait();
-    printf("\n\t AFTER VERT SUBMIT CALL BEFORE RETURN level = %d\n", level);
+    // fprintf(stderr, "After Vert_aa was submited\n");
+    // e.wait();
+    // printf("\n\t AFTER VERT SUBMIT CALL BEFORE RETURN level = %d\n", level);
     return e;
 
     // _device_queue.wait();
