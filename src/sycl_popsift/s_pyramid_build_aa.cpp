@@ -149,7 +149,7 @@ class Vert
 } // namespace absoluteSource
 
 // Should only be called wiht a level > 0
-sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, const sycl::event& prev_level_write)
+sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::event prev_level_write)
 {
     Octave& oct_obj = _octaves[octave];
 
@@ -195,7 +195,7 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, const sy
     // POP_SYNC_CHK;
 }
 
-sycl::event Pyramid::vert_from_interm_basic(int octave, int level, const sycl::event& intm_write)
+sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event intm_write)
 {
     Octave& oct_obj = _octaves[octave];
 

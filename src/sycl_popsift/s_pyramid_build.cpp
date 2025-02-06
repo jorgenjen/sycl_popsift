@@ -20,7 +20,7 @@ namespace popsift {
 // }
 
 // not sure if we want the se to be inline they were in CUDA popsift
-inline sycl::event Pyramid::downscale_from_prev_octave(int octave, const sycl::event& prev_octave_done)
+inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event prev_octave_done)
 {
     Octave& oct_obj = _octaves[octave];
     Octave& prev_oct_obj = _octaves[octave - 1];
@@ -64,10 +64,73 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave, const sycl::e
     // POP_SYNC_CHK;
 }
 
+// Seems like a bit of an odd way to make the kernel?
+class make_dog;
+
+// Not sure if thes shoould be inline or not...
+// inline void Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event octave_complete)
+void Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event octave_complete)
+{
+    Octave& oct_obj = _octaves[octave];
+
+    const int width = oct_obj.getWidth();
+    const int height = oct_obj.getHeight();
+
+    sycl::range local{1024, 1};
+    sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+
+    float** data_array = oct_obj.getDataArray();
+    float** dog_array = oct_obj.getDogArray();
+    // another way to call lambda IDK what is better
+    sycl::event make_dog_event =
+      _device_queue.parallel_for<make_dog>(sycl::nd_range{global, local}, {octave_complete}, [=](sycl::nd_item<2> it) {
+          int x = it.get_global_id(0);
+          int y = it.get_global_id(1);
+          if(x > width)
+              return;
+
+          float a = data_array[0][x + y * width];
+          for(int level = 0; level < max_level - 1; level++)
+          {
+              const float b = data_array[level + 1][x + y * width];
+
+              dog_array[level][x + y * width] = b - a;
+              a = b;
+          }
+      });
+
+    // dim3 block(1024, 1);
+    // dim3 grid;
+    // grid.x = grid_divide(width, block.x);
+    // grid.y = grid_divide(height, block.y);
+    // grid.z = 1;
+    //
+    // gauss::make_dog<<<grid, block, 0, stream>>>(
+    //   oct_obj.getDataTexPoint(), oct_obj.getDogSurface(), oct_obj.getWidth(), oct_obj.getHeight(), max_level);
+
+    //     __global__ void make_dog(
+    //   cudaTextureObject_t src_data, cudaSurfaceObject_t dog_data, const int w, const int h, const int max_level)
+    // {
+    //     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    //     const int idy = blockIdx.y * blockDim.y + threadIdx.y;
+    //
+    //     float a = readTex(src_data, idx, idy, 0);
+    //     for(int level = 0; level < max_level - 1; level++)
+    //     {
+    //         const float b = readTex(src_data, idx, idy, level + 1);
+    //
+    //         surf2DLayeredwrite(b - a, dog_data, idx * 4, idy, level, cudaBoundaryModeZero);
+    //         a = b;
+    //     }
+    // }
+
+    // POP_SYNC_CHK;
+}
+
 inline sycl::event Pyramid::horiz_from_prev_level(int octave,
                                                   int level,
                                                   GaussTableChoice useInterpolatedGauss,
-                                                  const sycl::event& prev_level_write)
+                                                  sycl::event prev_level_write)
 {
     switch(useInterpolatedGauss)
     {
@@ -79,10 +142,10 @@ inline sycl::event Pyramid::horiz_from_prev_level(int octave,
     return sycl::event(); // just to return for now to avoid warning for compiler
 }
 
-inline sycl::event Pyramid::vert_from_interm(int octave,
-                                             int level,
-                                             GaussTableChoice useInterpolatedGauss,
-                                             const sycl::event& intm_write)
+sycl::event Pyramid::vert_from_interm(int octave,
+                                      int level,
+                                      GaussTableChoice useInterpolatedGauss,
+                                      sycl::event intm_write)
 {
     Octave& oct_obj = _octaves[octave];
 
@@ -102,10 +165,7 @@ inline sycl::event Pyramid::vert_from_interm(int octave,
     return sycl::event(); // just to return for now to avoid warning for compiler
 }
 
-void Pyramid::build_pyramid(const Config& conf,
-                            Image* base_img,
-                            const sycl::event& d_gauss_write,
-                            const sycl::event& img_transfer)
+void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_gauss_write, sycl::event img_transfer)
 {
     // #if (PYRAMID_PRINT_DEBUG==1)
     //     cerr << "Entering " << __FUNCTION__ << " with base image "  << endl
@@ -135,6 +195,7 @@ void Pyramid::build_pyramid(const Config& conf,
               << std::endl;
     for(uint32_t octave = 0; octave < _num_octaves; octave++)
     {
+        fprintf(stderr, "BEFORE ACCESS OF octave %d", octave);
         Octave& oct_obj = _octaves[octave];
 
         for(int level = 0; level < _levels; level++)
@@ -148,6 +209,7 @@ void Pyramid::build_pyramid(const Config& conf,
                 }
                 else
                 {
+                    fprintf(stderr, "BEFORE ACCESS OF PREV OCTAVE!!!!! in octave %d", octave);
                     Octave& prev_oct_obj = _octaves[octave - 1];
 
                     fprintf(stderr, "Before downscale to Octave %d", octave);
@@ -165,16 +227,21 @@ void Pyramid::build_pyramid(const Config& conf,
 
                 // Hope horiz is fine to use even though it goes out of scope after the line but should have been
                 // copied by then I think eventough vert_from_interm takes it as reference...
+                fprintf(stderr, "RIGHT BEFORE FAILURE level=%d -- octave=%d ", level, octave);
                 oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
+                oct_obj._level_complete_events[level].wait();
+                fprintf(stderr, "AFTER WAIT ON EVENT level 1-5");
             }
         }
     }
 
-    // for (int octave = 0; octave < _num_octaves; octave++) {
-    //     Octave &oct_obj = _octaves[octave];
-    //     cudaStream_t stream = oct_obj.getStream();
-    //     dogs_from_blurred(octave, _levels, stream);
-    // }
+    for(int octave = 0; octave < _num_octaves; octave++)
+    {
+        Octave& oct_obj = _octaves[octave];
+
+        // Final level done of octave is dependend event for it to run
+        dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]);
+    }
 
     // for (int octave = 0; octave < _num_octaves; octave++) {
     //     Octave &oct_obj = _octaves[octave];

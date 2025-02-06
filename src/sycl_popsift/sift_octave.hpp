@@ -40,13 +40,14 @@ class Octave
     // Intermediate
     // TODO: change to only use a float* _intm_data (or whatever) as we only need one!!!
     // might just need one float _intm_array as next scale depends on prev hence only one is written to at once
-    float** _intm_array; // array pointing to array of float array
-                         // which each represents the different levels (blur)
-                         // in the octave
+    // float** _intm_array; // array pointing to array of float array
+    // which each represents the different levels (blur)
+    // in the octave
 
     float* _intermediate; // should not need an array
 
-    float** _data_array;
+    float** _data_array; // Gaussians stored _levels
+    float** _dog_array;  // DoG stored _levels - 1
 
     // cudaArray_t _data{};
     // cudaChannelFormatDesc _data_desc{};
@@ -99,8 +100,9 @@ class Octave
     inline float getHGridDivider() const { return _h_grid_divider; }
 
     inline float* getIntermediate() const { return _intermediate; }
-    inline float** getIntermediateArray() const { return _intm_array; }
+    // inline float** getIntermediateArray() const { return _intm_array; }
     inline float** getDataArray() const { return _data_array; }
+    inline float** getDogArray() const { return _dog_array; }
 
     // inline cudaStream_t getStream( ) {
     //     return _stream;

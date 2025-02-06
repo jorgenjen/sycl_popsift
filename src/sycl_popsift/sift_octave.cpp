@@ -11,14 +11,15 @@ Octave::Octave(sycl::queue& Q)
 
 Octave::~Octave()
 {
-    for(int i = 0; i < _levels; ++i)
+    for(int i = 0; i < _levels - 1; ++i)
     {
-        // sycl::free(_intm_array[i], _device_queue);
         sycl::free(_data_array[i], _device_queue);
+        sycl::free(_dog_array[i], _device_queue);
     }
+    sycl::free(_data_array[_levels - 1], _device_queue); // has one more than DoG's
 
-    // sycl::free(_intm_array, _device_queue);
     sycl::free(_data_array, _device_queue);
+    sycl::free(_dog_array, _device_queue);
     sycl::free(_intermediate, _device_queue);
 }
 
@@ -42,6 +43,7 @@ void Octave::alloc(const Config& conf, int width, int height, int levels, int ga
     {
         // _intm_array = sycl::malloc_device<float*>(levels, Q);
         _data_array = sycl::malloc_device<float*>(levels, Q);
+        _dog_array = sycl::malloc_device<float*>(levels - 1, Q);
         _intermediate = sycl::malloc_device<float>(width * height, Q);
 
         // if(!_intm_array || !_data_array)
@@ -57,16 +59,22 @@ void Octave::alloc(const Config& conf, int width, int height, int levels, int ga
     try
     {
         // Allocate the levels in the octave
-        for(int i = 0; i < levels; ++i)
+        for(int i = 0; i < levels - 1; ++i)
         {
-            // _intm_array[i] = sycl::malloc_device<float>(width * height, Q);
             _data_array[i] = sycl::malloc_device<float>(width * height, Q);
+            _dog_array[i] = sycl::malloc_device<float>(width * height, Q);
 
-            // if(!_intm_array[i] || !_data_array[i])
-            if(!_data_array[i])
+            if(!_data_array[i] || !_dog_array[i])
             {
                 POP_FATAL("Octave memory allocation failed");
             }
+        }
+
+        // Data has one more than dog hence out of loop
+        _data_array[levels - 1] = sycl::malloc_device<float>(width * height, Q);
+        if(!_data_array[levels - 1])
+        {
+            POP_FATAL("Octave memory allocation failed");
         }
     }
     catch(const sycl::exception& e)
