@@ -134,7 +134,7 @@ class Vert
             out += (val * g);
 
             idy = y + offset;
-            val = idy >= height ? intermediate[x + (height - 1) * width] : intermediate[x + y * width]; // clamp edge
+            val = idy >= height ? intermediate[x + (height - 1) * width] : intermediate[x + idy * width]; // clamp edge
             out += (val * g);
         }
 
