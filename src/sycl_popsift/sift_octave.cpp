@@ -130,6 +130,23 @@ void Octave::resetDimensions(const Config& conf, int w, int h)
     if(w == _w && h == _h)
         return;
 
+    // This could result in worse performance than reallocating
+    // as far as I understand it could lead to access starting
+    // from a non cache-algned-address and hence end up using two cache lanes
+    // instead ofo one evethout we access coaleced memory that is 128 multiple wide.
+    //   "L1/TEX and L2 have 128B cache lines. Cache lines consist of 5 32B sectors.
+    //   The tag lookup is at 128B granularity." From cuda forum
+    // So might be better of freeing and reallocating to avoid this issue
+    // or do some math check of the remainder to see if we hit cache aligned memory or not
+    // As from my readng it seems like cudamalloc and cudafree (device malloc and free) are
+    // quite expensive (much more so than cpu malloc and free) Should test this and make cases
+    // where it ends up using two cache lines if  I can and compare free and malloc
+    // vs using two cache lanes an interesting experiment would be to see how many frames
+    // on that dimension woiuld need to be computed for it to be beneficial (if any)
+    //     DISCLAIMER: I could have fully misunderstood cache lines with respect to memory
+    //     segments and the only thing that matters is that you read coaleced memory but the
+    //     said you could have non cache aligned address so tha's why  I assume this could
+    //     be the case
     if(w * h <= _max_w * _max_h)
     {
         // Smaller than current allocation hence we can reuse

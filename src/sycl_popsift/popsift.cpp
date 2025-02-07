@@ -246,12 +246,6 @@ void PopSift::uploadImages()
         // cout << "Updated w=" << job->_w << " and h=" << job->_h << endl;
         // copy image to device
         job->setImg(img, _device_queue, _config.getUpscaleFactor());
-        // WARNING: the copy is asynchronous so could result in issues as the
-        // job could start before it is done but I think as the following tasks
-        // are also in the same sycl queue it should be fine due to it making
-        // the task graph properly and that the memcoyp is a dependency but not
-        // sure might have to set it to be a dependency before the next
-        // dependent kernel runs...
 
         // job->setImg( img );
         _pipe._queue_stage2.push(job);
@@ -303,12 +297,7 @@ void PopSift::extractDownloadLoop()
         // uploaded input image no longer needed, release for reuse
         p._unused.push(img);
 
-        // applyConfiguration();
-
-        // popsift::ImageBase* img = job->getImg();
-
-        // TODO(jorgejen): Do similar private init and appyl scalefactor that
-        // this method calls private_init( img->getWidth(), img->getHeight() );
+        p._pyramid->step2(_config);
     }
 
     private_uninit();
@@ -355,7 +344,8 @@ void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFac
     // img->load(_imageData);
     // img->load_divide(_imageData);
     // img->load_divide_point(_imageData, scaled_w);
-    _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
+    // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
+    _img_transfer_event = img->load_linear(_imageData, scaled_w);
     _img = img;
 }
 

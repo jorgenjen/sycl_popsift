@@ -12,6 +12,8 @@
 #include "sift_pyramid.hpp"
 #include "sycl/nd_range.hpp"
 
+#include <cmath>
+
 namespace popsift {
 namespace absoluteSource {
 
@@ -25,7 +27,7 @@ class Horiz
     const float* filter;
     const int span;
     const int width;
-    const int height;
+    const int height; // not sure if height was needed here (verify)
 
   public:
     Horiz(float* src, float* dst_data, const float* filter, const int span, const int width, const int height)
@@ -54,6 +56,8 @@ class Horiz
         float val;
         float out = 0.0f;
 
+        // Look into sycl mad or fma (multiply-and-add instruction done in one clock cycle)
+        // is probably done by the compiler anyways though
         for(int offset = span; offset > 0; offset--)
         {
             g = filter[offset];
@@ -147,6 +151,34 @@ class Vert
 };
 
 } // namespace absoluteSource
+
+// Moved from s_pyramid_build_ra.cpp as  I don't use normalized source when using USM
+sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std::vector<sycl::event> dependencies)
+{
+    Octave& oct_obj = _octaves[0];
+
+    const int width = oct_obj.getWidth();
+    const int height = oct_obj.getHeight();
+
+    float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
+
+    std::size_t grid_x = grid_divide(width, 128); // different from CUDA popsift
+
+    sycl::range global{grid_x, (size_t)height};
+
+    const float* filter = &_d_gauss->dd.filter[0];
+    const int span = _d_gauss->dd.span[0];
+
+    std::cout << "INPUT IMAGE -- LEVEL 0" << std::endl;
+
+    return _device_queue.submit([&](sycl::handler& cgh) {
+        cgh.depends_on(dependencies);
+        sycl::range local{128, 1};
+        cgh.parallel_for(
+          sycl::nd_range{global, local},
+          absoluteSource::Horiz(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+    });
+}
 
 // Should only be called wiht a level > 0
 sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::event prev_level_write)

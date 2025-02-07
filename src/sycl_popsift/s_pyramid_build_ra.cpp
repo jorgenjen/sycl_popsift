@@ -91,62 +91,64 @@ class Horiz
 
 } // namespace normalizedSource
 
-sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std::vector<sycl::event> dependencies)
-{
-    Octave& oct_obj = _octaves[0];
-
-    const int width = oct_obj.getWidth();
-    const int height = oct_obj.getHeight();
-
-    float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
-
-    std::size_t grid_x = grid_divide(width, 128); // different from CUDA popsift
-
-    sycl::range global{grid_x, (size_t)height};
-
-    const float* filter = &_d_gauss->dd.filter[0];
-    const int span = _d_gauss->dd.span[0];
-
-    std::cout << "INPUT IMAGE -- LEVEL 0" << std::endl;
-
-    return _device_queue.submit([&](sycl::handler& cgh) {
-        cgh.depends_on(dependencies);
-        sycl::range local{128, 1};
-        cgh.parallel_for(sycl::nd_range{global, local},
-                         normalizedSource::Horiz(base->getInput(), oct_obj.getIntermediate(), filter, span, width));
-    });
-
-    // _device_queue.wait(); // temporary waiting here remove in future
-
-    // Just for verification -- Remove!
-    // printf("Print intermediate \n");
-    // _device_queue.submit([&](sycl::handler& cgh) {
-    //     float* intermediate = oct_obj.getIntermediateArray()[0];
-    //     cgh.single_task([=]() {
-    //         sycl::ext::oneapi::experimental::printf("\n\n");
-    //         for(int y = height - 8; y < height; ++y)
-    //         {
-    //             for(int x = width - 8; x < width; ++x)
-    //             {
-    //                 // for(int y = 0; y < 13; ++y)
-    //                 // {
-    //                 //     for(int x = 0; x < 13; ++x)
-    //                 //     {
-    //                 // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
-    //                 sycl::ext::oneapi::experimental::printf("%10.6f ", intermediate[x + y * (width)]);
-    //             }
-    //             sycl::ext::oneapi::experimental::printf("\n");
-    //         }
-    //         sycl::ext::oneapi::experimental::printf("\n\n");
-    //     });
-    // });
-
-    // _device_queue.wait();
-    // print out intermediate here to see that it works like it should !
-
-    // NOTE: Is an error check after kernel that is conditionally set bu an ifdef
-    // consider implementing something similar
-    // POP_SYNC_CHK;
-}
+// Currently not using normalized source so moving  to s_pyramid_bulid_aa.cpp where
+// absolut source resides
+// sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std::vector<sycl::event> dependencies)
+// {
+//     Octave& oct_obj = _octaves[0];
+//
+//     const int width = oct_obj.getWidth();
+//     const int height = oct_obj.getHeight();
+//
+//     float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
+//
+//     std::size_t grid_x = grid_divide(width, 128); // different from CUDA popsift
+//
+//     sycl::range global{grid_x, (size_t)height};
+//
+//     const float* filter = &_d_gauss->dd.filter[0];
+//     const int span = _d_gauss->dd.span[0];
+//
+//     std::cout << "INPUT IMAGE -- LEVEL 0" << std::endl;
+//
+//     return _device_queue.submit([&](sycl::handler& cgh) {
+//         cgh.depends_on(dependencies);
+//         sycl::range local{128, 1};
+//         cgh.parallel_for(sycl::nd_range{global, local},
+//                          normalizedSource::Horiz(base->getInput(), oct_obj.getIntermediate(), filter, span, width));
+//     });
+//
+//     // _device_queue.wait(); // temporary waiting here remove in future
+//
+//     // Just for verification -- Remove!
+//     // printf("Print intermediate \n");
+//     // _device_queue.submit([&](sycl::handler& cgh) {
+//     //     float* intermediate = oct_obj.getIntermediateArray()[0];
+//     //     cgh.single_task([=]() {
+//     //         sycl::ext::oneapi::experimental::printf("\n\n");
+//     //         for(int y = height - 8; y < height; ++y)
+//     //         {
+//     //             for(int x = width - 8; x < width; ++x)
+//     //             {
+//     //                 // for(int y = 0; y < 13; ++y)
+//     //                 // {
+//     //                 //     for(int x = 0; x < 13; ++x)
+//     //                 //     {
+//     //                 // printf("\t\tValue at %d %d: %f\n", x, y, tex2D<float>(src_linear_tex, x, y));
+//     //                 sycl::ext::oneapi::experimental::printf("%10.6f ", intermediate[x + y * (width)]);
+//     //             }
+//     //             sycl::ext::oneapi::experimental::printf("\n");
+//     //         }
+//     //         sycl::ext::oneapi::experimental::printf("\n\n");
+//     //     });
+//     // });
+//
+//     // _device_queue.wait();
+//     // print out intermediate here to see that it works like it should !
+//
+//     // NOTE: Is an error check after kernel that is conditionally set bu an ifdef
+//     // consider implementing something similar
+//     // POP_SYNC_CHK;
+// }
 
 } // namespace popsift
