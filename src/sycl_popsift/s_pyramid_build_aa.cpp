@@ -174,32 +174,28 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
 
     float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
 
-    std::size_t grid_x = grid_divide(width, 128); // different from CUDA popsift
-
-    sycl::range global{grid_x, (size_t)height};
+    // Grid divide is different from cuda due to the way nd_range kerneels
+    // work in sycl but serves the same purpose
+    sycl::range local{128, 1};
+    sycl::range global{(size_t)grid_divide(width, local[0]), (size_t)height};
 
     const float* filter = &_d_gauss->dd.filter[0];
     const int span = _d_gauss->dd.span[0];
 
-    std::cout << "INPUT IMAGE -- LEVEL 0" << std::endl;
-
-    return _device_queue.submit([&](sycl::handler& cgh) {
-        cgh.depends_on(dependencies);
-        sycl::range local{128, 1};
-        // These don't really need to pass height...
-        if(grid_x == width)
-        {
-            cgh.parallel_for(
-              sycl::nd_range{global, local},
-              absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
-        }
-        else
-        {
-            cgh.parallel_for(
-              sycl::nd_range{global, local},
-              absoluteSource::Horiz<1>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
-        }
-    });
+    if(global[0] == width)
+    {
+        return _device_queue.parallel_for(
+          sycl::nd_range{global, local},
+          dependencies,
+          absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+    }
+    else
+    {
+        return _device_queue.parallel_for(
+          sycl::nd_range{global, local},
+          dependencies,
+          absoluteSource::Horiz<1>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+    }
 }
 
 // Should only be called wiht a level > 0
