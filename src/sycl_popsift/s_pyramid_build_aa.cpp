@@ -19,6 +19,7 @@ namespace absoluteSource {
 
 // SHould use this one instead of Horiz in absolute source as this one makes sense to use in both
 // situations and we dont need to divide the image initially, wasting performance.
+template<int if_required>
 class Horiz
 {
   private:
@@ -48,8 +49,19 @@ class Horiz
 
         // could have two different kernels one with this and one without
         // depending on if it is perfectly divisible by 128 but might not be worth it... Test
-        if(x >= width || y >= height)
-            return;
+
+        // Using template so that we can call kernel without if if it's perfectly divisible by 128
+        // and hence would not be needed
+        switch(if_required)
+        {
+            case 1:
+                if(x >= width || y >= height)
+                {
+                    return;
+                }
+                break;
+            default: break; // do nothing
+        }
 
         int idx;
         float g;
@@ -174,9 +186,19 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
     return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(dependencies);
         sycl::range local{128, 1};
-        cgh.parallel_for(
-          sycl::nd_range{global, local},
-          absoluteSource::Horiz(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+        // These don't really need to pass height...
+        if(grid_x == width)
+        {
+            cgh.parallel_for(
+              sycl::nd_range{global, local},
+              absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+        }
+        else
+        {
+            cgh.parallel_for(
+              sycl::nd_range{global, local},
+              absoluteSource::Horiz<1>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+        }
     });
 }
 
@@ -212,7 +234,7 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(prev_level_write);
         cgh.parallel_for(sycl::nd_range{global, local},
-                         absoluteSource::Horiz(prev_level, cur_intm, filter, span, width, height));
+                         absoluteSource::Horiz<1>(prev_level, cur_intm, filter, span, width, height));
     });
 
     // fprintf(stderr, "\nAFTER BEFORE WAIT!!!\n");
