@@ -15,13 +15,15 @@ RUN apt-get update && apt-get install -y  \
         librust-starship-module-config-derive-dev \
         zoxide \
         python3.12-minimal \
+        unzip \
         && rm -rf /var/lib/apt/lists/* # To reduce package size
+
 
 # ARG USERNAME=nvim
 
 
 RUN useradd -m nvim 
-USER nvim
+# USER nvim # Don't set continue to be root so that we can edit filesycl                                                    latest                         7d9c7c709781   About a minute ago   15.1GBs
 
 
 # Ensure .config directory exists
@@ -38,10 +40,6 @@ RUN cd $HOME/dotfiles/ && git checkout sycl_docker && bash ~/dotfiles/link.sh nv
 RUN nvim --headless "+Lazy! sync" +qa
 
 RUN mkdir -p $HOME/personal # Mount in this one
-
-
-
-# RUN bash ~/dotfiles/link.sh nvim
 
 
 # # Set default shell to bash
