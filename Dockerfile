@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y  \
         unzip \
         curl \
         wget \
+        ripgrep \
         && rm -rf /var/lib/apt/lists/* 
 
 # Download and install Neovim
