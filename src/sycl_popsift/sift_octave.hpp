@@ -29,9 +29,8 @@ class Octave
     int _h{};
     int _max_w{};
     int _max_h{};
-    // Don't seem to be used anywhere in Popsift code
-    // float _w_grid_divider{};
-    // float _h_grid_divider{};
+    float _w_grid_divider{};
+    float _h_grid_divider{};
     int _debug_octave_id{};
     int _levels{};
     int _gauss_group{};
@@ -97,9 +96,8 @@ class Octave
     inline int getWidth() const { return _w; }
     inline int getHeight() const { return _h; }
 
-    // not used
-    // inline float getWGridDivider() const { return _w_grid_divider; }
-    // inline float getHGridDivider() const { return _h_grid_divider; }
+    inline float getWGridDivider() const { return _w_grid_divider; }
+    inline float getHGridDivider() const { return _h_grid_divider; }
 
     inline float* getIntermediate() const { return _intermediate; }
     // inline float** getIntermediateArray() const { return _intm_array; }

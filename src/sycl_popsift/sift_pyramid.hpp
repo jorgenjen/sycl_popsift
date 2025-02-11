@@ -93,10 +93,10 @@ class Pyramid
     void resetDimensions(const Config& conf, int width, int height);
 
     /** step 1: load image and build pyramid */
-    void step1(const Config& conf, Image* img, sycl::event d_gauss_wirte, sycl::event img_transfer);
+    std::vector<sycl::event> step1(const Config& conf, Image* img, sycl::event d_gauss_wirte, sycl::event img_transfer);
 
     /** step 2: find extrema, orientations and descriptor */
-    void step2(const Config& conf);
+    void step2(const Config& conf, std::vector<sycl::event> dependencies);
 
     /** step 3: download descriptors */
     // FeaturesHost *get_descriptors(const Config &conf);
@@ -131,11 +131,14 @@ class Pyramid
     sycl::event vert_from_interm(int octave, int level, GaussTableChoice useInterpolatedGauss, sycl::event intm_write);
 
     // inline void dogs_from_blurred(int octave, int max_level, sycl::event octave_complete);
-    void dogs_from_blurred(int octave, int max_level, sycl::event octave_complete);
+    sycl::event dogs_from_blurred(int octave, int max_level, sycl::event octave_complete);
 
     void reset_extrema_mgmt();
-    void build_pyramid(const Config& conf, Image* base, sycl::event d_gauss_write, sycl::event img_transfer);
-    void find_extrema(const Config& conf);
+    std::vector<sycl::event> build_pyramid(const Config& conf,
+                                           Image* base,
+                                           sycl::event d_gauss_write,
+                                           sycl::event img_transfer);
+    void find_extrema(const Config& conf, std::vector<sycl::event> dependencies);
     void reallocExtrema(int numExtrema);
 
     int extrema_filter_grid(const Config& conf,

@@ -1,10 +1,14 @@
 
 #include "sycl_popsift/sift_pyramid.hpp"
 
+#include "sycl/usm.hpp"
+#include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/s_image.hpp" // not sure if needed to include here aswell clean up #includes at some point
 
 #include <cmath>
+#include <sstream>
+#include <vector>
 
 namespace popsift {
 
@@ -29,6 +33,19 @@ Pyramid::Pyramid(const Config& config, int width, int height, sycl::queue& Q, po
 
     int w = width;
     int h = height;
+
+    // Don't understand how this works as a octave global barrier as of yet
+    try
+    {
+        _d_extrema_num_blocks = sycl::malloc_device<int>(_num_octaves, Q);
+    }
+    catch(const sycl::exception& e)
+    {
+        std::stringstream ss;
+        ss << "Octave memory allocation failed" << e.what();
+        POP_FATAL(ss.str());
+        // std::cerr << "Memory allocation failed: " << e.what() << std::endl;
+    }
 
     // IMPORTANT: do next!!
     // TODO: IMPORTANT -> Implement the constructor to pyramid
@@ -98,11 +115,23 @@ Pyramid::~Pyramid()
     // should also cll destructor of octave which frees that memory
 }
 
-void Pyramid::step1(const Config& conf, popsift::Image* img, sycl::event d_gauss_write, sycl::event img_transfer)
+std::vector<sycl::event> Pyramid::step1(const Config& conf,
+                                        popsift::Image* img,
+                                        sycl::event d_gauss_write,
+                                        sycl::event img_transfer)
 {
     // TODO: Implement the reset -- far down the line need to find extrema first
     // reset_extrema_mgmt();
-    build_pyramid(conf, img, d_gauss_write, img_transfer);
+    return build_pyramid(conf, img, d_gauss_write, img_transfer);
+}
+
+void Pyramid::step2(const Config& conf, std::vector<sycl::event> dependencies)
+{
+    find_extrema(conf, dependencies);
+
+    // orientation( conf );
+    //
+    // descriptors( conf );
 }
 
 // void Pyramid::reset_extrema_mgmt()

@@ -103,6 +103,9 @@ void Octave::alloc(const Config& conf, int width, int height, int levels)
     _max_h = _h = height;
     _levels = levels;
 
+    _w_grid_divider = float(_w) / conf.getFilterGridSize();
+    _h_grid_divider = float(_h) / conf.getFilterGridSize();
+
     _level_complete_events.reserve(levels);
 
     // TODO: FIGURE out Replacements for these methods

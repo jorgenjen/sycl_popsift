@@ -11,6 +11,7 @@
 #include <cstring>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 // using namespace std;
 using std::cout;
@@ -284,11 +285,12 @@ void PopSift::extractDownloadLoop()
 
         // DO THE JOB!!!
 
-        p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+        std::vector<sycl::event> dependencies =
+          p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
         // FUFULL THE PROMISE
 
-        _device_queue.wait();
+        // _device_queue.wait();
         job->jobDone(5);
 
         cout << "Jobby: -- " << endl;
@@ -297,7 +299,7 @@ void PopSift::extractDownloadLoop()
         // uploaded input image no longer needed, release for reuse
         p._unused.push(img);
 
-        p._pyramid->step2(_config);
+        p._pyramid->step2(_config, dependencies);
     }
 
     private_uninit();

@@ -184,6 +184,7 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
 
     if(global[0] == width)
     {
+        // width % 128 = 0 and hence we don't need if check in kernel
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
           dependencies,
