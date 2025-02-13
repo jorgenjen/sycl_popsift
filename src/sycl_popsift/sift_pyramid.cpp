@@ -5,6 +5,7 @@
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/s_image.hpp" // not sure if needed to include here aswell clean up #includes at some point
+#include "sycl_popsift/sift_constants.hpp"
 
 #include <cmath>
 #include <sstream>
@@ -12,13 +13,19 @@
 
 namespace popsift {
 
-Pyramid::Pyramid(const Config& config, int width, int height, sycl::queue& Q, popsift::GaussInfo* d_gauss)
+Pyramid::Pyramid(const Config& config,
+                 int width,
+                 int height,
+                 sycl::queue& Q,
+                 popsift::GaussInfo* d_gauss,
+                 popsift::ConstInfo* d_consts)
   : _num_octaves(config.octaves)
   , _levels(config.levels + 3)
   , _assume_initial_blur(config.hasInitialBlur())
   , _initial_blur(config.getInitialBlur())
   , _device_queue(Q)
   , _d_gauss(d_gauss)
+  , _d_consts(d_consts)
 {
     // _octaves = new Octave[_num_octaves];
     // Could not find a way to use C array so using vector
@@ -125,9 +132,10 @@ std::vector<sycl::event> Pyramid::step1(const Config& conf,
     return build_pyramid(conf, img, d_gauss_write, img_transfer);
 }
 
-void Pyramid::step2(const Config& conf, std::vector<sycl::event> dependencies)
+// could probably pass the dependencies as a reference...
+void Pyramid::step2(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write)
 {
-    find_extrema(conf, dependencies);
+    find_extrema(conf, dependencies, d_consts_write);
 
     // orientation( conf );
     //

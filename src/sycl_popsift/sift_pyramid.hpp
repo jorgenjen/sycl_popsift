@@ -12,6 +12,7 @@
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/s_image.hpp"
+#include "sycl_popsift/sift_constants.hpp"
 #include "sycl_popsift/sift_octave.hpp"
 
 #include <iostream>
@@ -74,7 +75,8 @@ class Pyramid
     int* _d_extrema_num_blocks;
 
     sycl::queue _device_queue;
-    popsift::GaussInfo* _d_gauss; // copy of same pointer as PopSift's _d_gauss and it deals with freeing it
+    popsift::GaussInfo* _d_gauss;  // copy of same pointer as PopSift's _d_gauss and it deals with freeing it
+    popsift::ConstInfo* _d_consts; // copy of same pointer as Popsift's _d_consts and it deals with freeing it
 
     /* the download of converted descriptors should be asynchronous */
     // cudaStream_t _download_stream;
@@ -87,7 +89,8 @@ class Pyramid
     };
 
   public:
-    Pyramid(const Config& config, int w, int h, sycl::queue& Q, popsift::GaussInfo* d_gauss);
+    Pyramid(
+      const Config& config, int w, int h, sycl::queue& Q, popsift::GaussInfo* d_gauss, popsift::ConstInfo* d_consts);
     ~Pyramid();
 
     void resetDimensions(const Config& conf, int width, int height);
@@ -96,7 +99,7 @@ class Pyramid
     std::vector<sycl::event> step1(const Config& conf, Image* img, sycl::event d_gauss_wirte, sycl::event img_transfer);
 
     /** step 2: find extrema, orientations and descriptor */
-    void step2(const Config& conf, std::vector<sycl::event> dependencies);
+    void step2(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write);
 
     /** step 3: download descriptors */
     // FeaturesHost *get_descriptors(const Config &conf);
@@ -138,7 +141,7 @@ class Pyramid
                                            Image* base,
                                            sycl::event d_gauss_write,
                                            sycl::event img_transfer);
-    void find_extrema(const Config& conf, std::vector<sycl::event> dependencies);
+    void find_extrema(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write);
     void reallocExtrema(int numExtrema);
 
     int extrema_filter_grid(const Config& conf,

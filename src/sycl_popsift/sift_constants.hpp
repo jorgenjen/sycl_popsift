@@ -97,6 +97,7 @@ sycl::event init_constants(float sigma0,
                            float edge_limit,
                            int max_extrema,
                            int normalization_multiplier,
-                           sycl::queue& Q);
+                           sycl::queue& Q,
+                           ConstInfo** d_consts);
 
 } // namespace popsift

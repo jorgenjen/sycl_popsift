@@ -95,7 +95,12 @@ void PopSift::uninit()
     if(_d_gauss != nullptr)
         sycl::free(_d_gauss, _device_queue);
     else
-        std::cout << "d_gauss was a nullptr hennce not freeing" << std::endl;
+        std::cout << "_d_gauss was a nullptr hennce not freeing" << std::endl;
+
+    if(_d_consts != nullptr)
+        sycl::free(_d_consts, _device_queue);
+    else
+        std::cout << "_d_consts was a nullptr hennce not freeing" << std::endl;
 
     _pipe.uninit();
 
@@ -114,14 +119,15 @@ bool PopSift::applyConfiguration(bool force)
         _d_gauss_write = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue, &_d_gauss);
         // _d_gauss_write.wait(); // tmp -- should not be needed as it's passed as a dependency
 
-        // _d_consts_write = popsift::init_constants(_config.sigma,
-        //                                           _config.levels,
-        //                                           _config.getPeakThreshold(),
-        //                                           _config._edge_limit,
-        //                                           _config.getMaxExtrema(),
-        //                                           _config.getNormalizationMultiplier(),
-        //                                           _device_queue);
-        //
+        _d_consts_write = popsift::init_constants(_config.sigma,
+                                                  _config.levels,
+                                                  _config.getPeakThreshold(),
+                                                  _config._edge_limit,
+                                                  _config.getMaxExtrema(),
+                                                  _config.getNormalizationMultiplier(),
+                                                  _device_queue,
+                                                  &_d_consts);
+
         // _d_consts_write.wait();
     }
     _shadow_config = _config;
@@ -180,7 +186,7 @@ bool PopSift::private_init(int w, int h)
         return true;
     }
 
-    p._pyramid = new popsift::Pyramid(_config, w, h, _device_queue, _d_gauss);
+    p._pyramid = new popsift::Pyramid(_config, w, h, _device_queue, _d_gauss, _d_consts);
 
     return true;
 }
@@ -299,7 +305,7 @@ void PopSift::extractDownloadLoop()
         // uploaded input image no longer needed, release for reuse
         p._unused.push(img);
 
-        p._pyramid->step2(_config, dependencies);
+        p._pyramid->step2(_config, dependencies, _d_consts_write);
     }
 
     // _device_queue.wait(); // Having a wait here before I have all events configured properly

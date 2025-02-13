@@ -15,6 +15,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <sstream>
 
 using namespace std;
 
@@ -31,7 +32,8 @@ sycl::event init_constants(float sigma0,
                            float edge_limit,
                            int max_extrema,
                            int normalization_multiplier,
-                           sycl::queue& Q)
+                           sycl::queue& Q,
+                           ConstInfo** d_consts)
 {
     // cudaError_t err;
 
@@ -67,21 +69,25 @@ sycl::event init_constants(float sigma0,
 
     // send constantst to device
 
-    // Uncomments for now as it is global varable and not in use
-    // try
-    // {
-    //     if(d_consts == nullptr)
-    //         d_consts = sycl::malloc_device<ConstInfo>(1, Q);
-    //     else
-    //         std::cout << "\n\n\t\td_consts is nullptr -- no malloc needed\n\n" << std::endl;
-    // }
-    // catch(const sycl::exception& e)
-    // {
-    //     std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-    //     // Here, d_consts was never assigned, so there's no need to free it
-    // }
-    // return Q.memcpy(d_consts, &h_consts, sizeof(ConstInfo));
-    return sycl::event(); // tmp to avoid compiler warning function is not currently in use
+    try
+    {
+        if(*d_consts == nullptr)
+            *d_consts = sycl::malloc_device<ConstInfo>(1, Q);
+        else
+            std::cout << "\n\n\t\td_consts is not nullpointer and hence initialized --> no malloc needed\n\n"
+                      << std::endl;
+    }
+    catch(const sycl::exception& e)
+    {
+        stringstream ss;
+        ss << "Memory allocation failed: " << e.what();
+
+        POP_FATAL(ss.str());
+
+        // Here, d_consts was never assigned, so there's no need to free it
+    }
+    return Q.memcpy(*d_consts, &h_consts, sizeof(ConstInfo));
+    // return sycl::event(); // tmp to avoid compiler warning function is not currently in use
 
     // TODO: ADd error checking here
 

@@ -4,6 +4,7 @@
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/s_image.hpp"
+#include "sycl_popsift/sift_constants.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 
 #include <sycl/sycl.hpp>
@@ -147,6 +148,7 @@ class PopSift
     // sycl::buffer<unsigned char, 2> _imageData;
     sycl::queue _device_queue;
     popsift::GaussInfo* _d_gauss = nullptr;
+    popsift::ConstInfo* _d_consts = nullptr;
 
     sycl::event _d_gauss_write;
     sycl::event _d_consts_write;
