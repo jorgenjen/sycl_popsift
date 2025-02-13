@@ -26,6 +26,187 @@
 namespace popsift {
 #define LOCAL_X 32
 
+static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, uint32_t mask)
+{
+    gt |= ((val > f) ? mask : 0);
+    lt |= ((val < f) ? mask : 0);
+}
+
+// #define TX(dx, dy, dz) readTex(obj, x + dx, y + dy, z + dz)
+// #define DOG(dx, dy, dz) dog[z + dz][x + dx + (y + dy) * width]
+
+// different clamping I think I only need for bottom and right -- z should always be safe
+#define CLAMP_MODE 1
+#if CLAMP_MODE == 0
+// no clamping
+#define DOG(dx, dy, dz) dog[z + dz][x + dx + (y + dy) * width]
+#elif CLAMP_MODE == 1
+// Clamping for bottom and right
+#define DOG(dx, dy, dz)                                                                                                \
+    (x + dx >= width && y + dy >= height) ? dog[z + dz][width - 1 + (height - 1) * width]                              \
+    : (x + dx >= width)                   ? dog[z + dz][width - 1 + (y + dy) * width]                                  \
+    : (y + dy >= height)                  ? dog[z + dz][x + dx + (height - 1) * width]                                 \
+                                          : dog[z + dz][x + dx + (y + dy) * width]
+
+#else
+// Full clamping
+#define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
+#define DOG(dx, dy, dz) dog[z + dz][CLAMP(x + dx, 0, width - 1) + CLAMP(y + dy, 0, height - 1) * width]
+
+#endif
+
+static inline bool is_extremum(float** dog, int x, int y, int z, int width, int height)
+{
+    uint32_t gt = 0;
+    uint32_t lt = 0;
+
+    const float val0 = DOG(0, 1, 1);
+    const float val2 = DOG(2, 1, 1);
+    const float val = DOG(1, 1, 1);
+
+    // bit indeces for neighbours:
+    //     7 0 1    0x80 0x01 0x02
+    //     6   2 -> 0x40      0x04
+    //     5 4 3    0x20 0x10 0x08
+    // upper layer << 24 ; own layer << 16 ; lower layer << 8
+    // 1st group: left and right neigbhour
+    extremum_cmp(val, val0, gt, lt, 0x00400000); // ( 0x01<<6 ) << 16
+    extremum_cmp(val, val2, gt, lt, 0x00040000); // ( 0x01<<2 ) << 16
+
+    if((gt != 0x00440000) && (lt != 0x00440000))
+        return false;
+
+    // 2nd group: requires a total of 8 128-byte reads
+    extremum_cmp(val, DOG(0, 0, 1), gt, lt, 0x00800000); // ( 0x01<<7 ) << 16
+    extremum_cmp(val, DOG(0, 2, 1), gt, lt, 0x00200000); // ( 0x01<<5 ) << 16
+    extremum_cmp(val, DOG(0, 0, 0), gt, lt, 0x80000000); // ( 0x01<<6 ) << 24
+    extremum_cmp(val, DOG(0, 2, 0), gt, lt, 0x40000000); // ( 0x01<<6 ) << 24
+    extremum_cmp(val, DOG(0, 1, 0), gt, lt, 0x20000000); // ( 0x01<<6 ) << 24
+    extremum_cmp(val, DOG(0, 0, 2), gt, lt, 0x00008000); // ( 0x01<<6 ) <<  8
+    extremum_cmp(val, DOG(0, 1, 2), gt, lt, 0x00004000); // ( 0x01<<6 ) <<  8
+    extremum_cmp(val, DOG(0, 2, 2), gt, lt, 0x00002000); // ( 0x01<<6 ) <<  8
+
+    if((gt != 0xe0e4e000) && (lt != 0xe0e4e000))
+        return false;
+
+    // 3rd group: remaining 2 cache misses in own layer
+    extremum_cmp(val, DOG(1, 0, 1), gt, lt, 0x00010000); // ( 0x01<<0 ) << 16
+    extremum_cmp(val, DOG(2, 0, 1), gt, lt, 0x00020000); // ( 0x01<<1 ) << 16
+    extremum_cmp(val, DOG(1, 2, 1), gt, lt, 0x00100000); // ( 0x01<<4 ) << 16
+    extremum_cmp(val, DOG(2, 2, 1), gt, lt, 0x00080000); // ( 0x01<<3 ) << 16
+
+    if((gt != 0xe0ffe000) && (lt != 0xe0ffe000))
+        return false;
+
+    // 4th group: 3 cache misses higher layer
+    extremum_cmp(val, DOG(1, 0, 0), gt, lt, 0x01000000); // ( 0x01<<0 ) << 24
+    extremum_cmp(val, DOG(2, 0, 0), gt, lt, 0x02000000); // ( 0x01<<1 ) << 24
+    extremum_cmp(val, DOG(1, 1, 0), gt, lt, 0x00000004); // ( 0x01<<2 )
+    extremum_cmp(val, DOG(2, 1, 0), gt, lt, 0x04000000); // ( 0x01<<2 ) << 24
+    extremum_cmp(val, DOG(1, 2, 0), gt, lt, 0x10000000); // ( 0x01<<4 ) << 24
+    extremum_cmp(val, DOG(2, 2, 0), gt, lt, 0x08000000); // ( 0x01<<3 ) << 24
+
+    if((gt != 0xffffe004) && (lt != 0xffffe004))
+        return false;
+
+    // 5th group: 3 cache misss lower layer
+    extremum_cmp(val, DOG(1, 0, 2), gt, lt, 0x00000100); // ( 0x01<<0 ) <<  8
+    extremum_cmp(val, DOG(2, 0, 2), gt, lt, 0x00000200); // ( 0x01<<1 ) <<  8
+    extremum_cmp(val, DOG(1, 1, 2), gt, lt, 0x00000001); // ( 0x01<<0 )
+    extremum_cmp(val, DOG(2, 1, 2), gt, lt, 0x00000400); // ( 0x01<<2 ) <<  8
+    extremum_cmp(val, DOG(1, 2, 2), gt, lt, 0x00001000); // ( 0x01<<4 ) <<  8
+    extremum_cmp(val, DOG(2, 2, 2), gt, lt, 0x00000800); // ( 0x01<<3 ) <<  8
+
+    if((gt != 0xffffff05) && (lt != 0xffffff05))
+        return false;
+
+    return true;
+}
+
+template<int sift_mode>
+class ModeFunctions
+{
+  public:
+    /* refine
+     * returns 0 : continue looping
+     *         1 : break loop and succeed
+     */
+    inline int refine(sycl::vec<float, 3>& d, sycl::vec<int, 3>& n, int width, int height, int maxlevel, bool last_it);
+};
+
+template<>
+class ModeFunctions<Config::RefineInLevel>
+{
+  public:
+    inline int refine(
+      sycl::vec<float, 3>& d, sycl::vec<int, 3>& n, int width, int height, int maxlevel, bool last_it) const
+    {
+        if(last_it)
+            return 0;
+
+        // int2 t;
+        sycl::vec<int, 2> t;
+
+        t.x() = ((d.x() >= 0.6f && n.x() < width - 2) ? 1 : 0) + ((d.x() <= -0.6f && n.x() > 1) ? -1 : 0);
+
+        t.y() = ((d.y() >= 0.6f && n.y() < height - 2) ? 1 : 0) + ((d.y() <= -0.6f && n.y() > 1) ? -1 : 0);
+
+        if(t.x() == 0 && t.y() == 0)
+        {
+            // no more changes
+            return 1;
+        }
+
+        n.x() += t.x();
+        n.y() += t.y();
+        // n.z += t.z; - VLFeat is not changing levels !!!
+
+        return 0;
+    }
+};
+
+template<>
+class ModeFunctions<Config::RefineInOctave>
+{
+  public:
+    // inline int refine(float3& d, int3& n, int width, int height, int maxlevel, bool last_it) const
+    inline int refine(
+      sycl::vec<float, 3>& d, sycl::vec<int, 3>& n, int width, int height, int maxlevel, bool last_it) const
+    {
+        if(last_it)
+            return 0;
+
+        // int3 t;
+
+        sycl::vec<int, 3> t;
+
+        t.x() = ((d.x() >= 0.6f && n.x() < width - 2) ? 1 : 0) + ((d.x() <= -0.6f && n.x() > 1) ? -1 : 0);
+
+        t.y() = ((d.y() >= 0.6f && n.y() < height - 2) ? 1 : 0) + ((d.y() <= -0.6f && n.y() > 1) ? -1 : 0);
+
+        t.z() = ((d.z() >= 0.6f && n.z() < maxlevel - 1) ? 1 : 0) + ((d.z() <= -0.6f && n.z() > 1) ? -1 : 0);
+
+        if(t.x() == 0 && t.y() == 0 && t.z() == 0)
+        {
+            // no more changes
+            return 1;
+        }
+
+        n.x() += t.x();
+        n.y() += t.y();
+        n.z() += t.z();
+
+        return 0;
+    }
+};
+
+// Not sure if I should use a function or just add the code but doing it to be close to cuda version
+inline static bool first_contrast_ok(const float val, const popsift::ConstInfo* d_consts)
+{
+    // fabs should be equivalent to fabsf as it's overloaded with support for float in sycl
+    return (sycl::fabs(val) >= 1.6f * d_consts->threshold);
+}
+
 template<int sift_mode>
 inline bool find_extrema_in_dog_sub(float** dog,
                                     int debug_octave,
@@ -36,7 +217,8 @@ inline bool find_extrema_in_dog_sub(float** dog,
                                     float h_grid_divider,
                                     int grid_width,
                                     InitialExtremum& ec,
-                                    sycl::nd_item<3>& it)
+                                    sycl::nd_item<3>& it,
+                                    const popsift::ConstInfo* d_consts)
 {
     ec.xpos = 0.0f;
     ec.ypos = 0.0f;
@@ -74,50 +256,72 @@ inline bool find_extrema_in_dog_sub(float** dog,
     const int y = it.get_global_id(1) + 1;
     const int level = it.get_global_id(0) + 1;
 
-    if(block_x == 32 && block_y == 12 && block_z == 0)
-    {
-        const sycl::sub_group sg = it.get_sub_group();
-        const sycl::range sg_range = sg.get_local_range();
-
-        sycl::ext::oneapi::experimental::printf("x=%d - y=%d - z=%d ---> sg_range %d -- Local-range(%d, %d, %d)  -- "
-                                                "Group-range(%d, %d, %d) -- Global range(%d, %d, %d)\n",
-                                                x,
-                                                y,
-                                                level,
-                                                sg_range.size(),
-                                                it.get_local_range(0),
-                                                it.get_local_range(1),
-                                                it.get_local_range(2),
-                                                it.get_group_range(0),
-                                                it.get_group_range(1),
-                                                it.get_group_range(2),
-                                                it.get_global_range(0),
-                                                it.get_global_range(1),
-                                                it.get_global_range(2)
-
-        );
-    }
-
-    //     const float val = readTex(dog, x, y, level);
+    // if(block_x == 32 && block_y == 12 && block_z == 0)
+    // {
+    //     const sycl::sub_group sg = it.get_sub_group();
+    //     const sycl::range sg_range = sg.get_local_range();
     //
-    //     ModeFunctions<sift_mode> f;
-    //     if(!first_contrast_ok(val))
-    //         return false;
+    //     sycl::ext::oneapi::experimental::printf(
+    //       "x=%d - y=%d - z=%d ---> sg_range %d -- Local-range(%d, %d, %d)  -- "
+    //       "Group-range(%d, %d, %d) -- Global range(%d, %d, %d) ---- val=%f from dog[%d][%d + %d * %d]\n",
+    //       x,
+    //       y,
+    //       level,
+    //       sg_range.size(),
+    //       it.get_local_range(0),
+    //       it.get_local_range(1),
+    //       it.get_local_range(2),
+    //       it.get_group_range(0),
+    //       it.get_group_range(1),
+    //       it.get_group_range(2),
+    //       it.get_global_range(0),
+    //       it.get_global_range(1),
+    //       it.get_global_range(2),
+    //       dog[level][x + y * width],
+    //       level,
+    //       x,
+    //       y,
+    //       width
     //
-    //     if(!is_extremum(dog, x - 1, y - 1, level - 1))
+    //     );
+    //     if(x == 33)
     //     {
-    //         // if( debug_octave==0 && level==2 && x==14 && y==73 ) printf("But I fail\n");
-    //         return false;
+    //         sycl::ext::oneapi::experimental::printf("val=%f\n\n", dog[1][16 + 38 * width]);
     //     }
+    //
+    //     // if(x == 64 && y == 16)
+    //     // {
+    //     //     sycl::ext::oneapi::experimental::printf(
+    //     //       "w=%d -- h=%d &&&&& val = %f", width, height, dog[level][x + y * width]);
+    //     // }
+    // }
+
+    // const float val = readTex(dog, x, y, level);
+
+    const float val = dog[level][x + y * width];
+    //
+    // ModeFunctions<sift_mode> f;
+    // if(!first_contrast_ok(val))
+    //     return false;
+
+    ModeFunctions<sift_mode> f;
+    if(!first_contrast_ok(val, d_consts))
+        return false;
+
+    if(!is_extremum(dog, x - 1, y - 1, level - 1, width, height))
+    {
+        // if( debug_octave==0 && level==2 && x==14 && y==73 ) printf("But I fail\n");
+        return false;
+    }
     //
     //     // float3 D;  // Dx Dy Ds
     //     // float3 DD; // Dxx Dyy Dss
     //     // float3 DX; // Dxy Dxs Dys
     //     // float3 d;  // dx dy ds
-    //     sycl::vec<float, 3> D;  // Dx Dy Ds
-    //     sycl::vec<float, 3> DD; // Dxx Dyy Dss
-    //     sycl::vec<float, 3> DX; // Dxy Dxs Dys
-    //     sycl::vec<float, 3> d;  // dx dy ds
+    sycl::vec<float, 3> D;  // Dx Dy Ds
+    sycl::vec<float, 3> DD; // Dxx Dyy Dss
+    sycl::vec<float, 3> DX; // Dxy Dxs Dys
+    sycl::vec<float, 3> d;  // dx dy ds
     //
     //     float v = val;
     //
@@ -275,6 +479,7 @@ class find_extrema_in_dog
     const float w_grid_divider;
     const float h_grid_divider;
     const int grid_width;
+    const popsift::ConstInfo* d_consts;
 
   public:
     find_extrema_in_dog(float** dog,
@@ -286,7 +491,8 @@ class find_extrema_in_dog
                         int number_of_blocks,
                         const float w_grid_divider,
                         const float h_grid_divider,
-                        const int grid_width)
+                        const int grid_width,
+                        const popsift::ConstInfo* d_consts)
       : dog(dog)
       , octave(octave)
       , width(width)
@@ -297,6 +503,7 @@ class find_extrema_in_dog
       , w_grid_divider(w_grid_divider)
       , h_grid_divider(h_grid_divider)
       , grid_width(grid_width)
+      , d_consts(d_consts)
     {}
 
     inline void operator()(sycl::nd_item<3> it) const
@@ -305,11 +512,11 @@ class find_extrema_in_dog
         ec.ignore = false;
 
         bool indicator = find_extrema_in_dog_sub<sift_mode>(
-          dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, ec, it);
+          dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, ec, it, d_consts);
     }
 };
 
-void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependencies)
+void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write)
 {
     static const int HEIGHT = 4;
 
@@ -377,7 +584,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                 printf("RefineInOctave type popsift default\n");
                 _device_queue.parallel_for(
                   sycl::nd_range{global, local},
-                  dependencies,
+                  {dependencies[octave], d_consts_write},
                   find_extrema_in_dog<HEIGHT, Config::RefineInOctave>(oct_obj.getDogArray(),
                                                                       octave,
                                                                       width,
@@ -387,7 +594,8 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                                                                       global.get(0) * global.get(1),
                                                                       oct_obj.getWGridDivider(),
                                                                       oct_obj.getHGridDivider(),
-                                                                      conf.getFilterGridSize()));
+                                                                      conf.getFilterGridSize(),
+                                                                      _d_consts));
                 break;
         }
 
