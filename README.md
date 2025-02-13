@@ -16,4 +16,4 @@
     - in 3D:
         - cuda.x --> nd[2] && cuda.y --> nd[1] && cuda.z --> nd[0]
         
-![sycl linearization][linearization_in_sycl.png]
+![sycl linearization](/linearization_in_sycl.png)
