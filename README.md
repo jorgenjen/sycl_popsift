@@ -10,3 +10,10 @@
 1. Segfault happening when running in quick succession. Seems to happen on first octave after or during level 5 so could be related to level 5 (final level) or subsampling for next octave. Always happens for the first octave atelast in the examples I've gotten so far.
 
 
+2. Doing kernel invocatons wrong in 2d as linearization should be as describled in documentation(see below) to get the sub-groups to read from coaleced memory to replicate the cuda code and get the sub-groups to equal the accesses of the cuda warps.
+    - So in sycl we need the following conversions from cuda kernel to sycl in 2D
+        - cuda.x --> nd[1] && cuda.y --> nd[0]
+    - in 3D:
+        - cuda.x --> nd[2] && cuda.y --> nd[1] && cuda.z --> nd[0]
+        
+![sycl linearization][linearization_in_sycl.png]
