@@ -112,7 +112,7 @@ Pyramid::Pyramid(const Config& config, int width, int height, sycl::queue& Q, po
 Pyramid::~Pyramid()
 {
     // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
-    // should also cll destructor of octave which frees that memory
+    sycl::free(_d_extrema_num_blocks, _device_queue);
 }
 
 std::vector<sycl::event> Pyramid::step1(const Config& conf,
@@ -156,5 +156,7 @@ void Pyramid::resetDimensions(const Config& conf, int width, int height)
         h = ceilf(h / 2.0f);
     }
 }
+
+int* Pyramid::getNumberOfBlocks(int octave) { return &_d_extrema_num_blocks[octave]; }
 
 } // namespace popsift

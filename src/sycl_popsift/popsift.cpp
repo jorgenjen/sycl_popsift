@@ -302,6 +302,7 @@ void PopSift::extractDownloadLoop()
         p._pyramid->step2(_config, dependencies);
     }
 
+    // _device_queue.wait(); // Having a wait here before I have all events configured properly
     private_uninit();
 }
 

@@ -257,7 +257,7 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
     float* dog_lvl = _octaves[INSPTECT_LEVEL].getDogArray()[0];
     int width = _octaves[INSPTECT_LEVEL].getWidth();
     int height = _octaves[INSPTECT_LEVEL].getHeight();
-    _device_queue.single_task([=]() {
+    _device_queue.single_task(make_dog_events, [=]() {
         sycl::ext::oneapi::experimental::printf(
           "\n\nMe DoG's in range: y(%d -> %d) x(%d -> %d) for lvl = %d\n", height - 8, height, width - 8, width),
           INSPTECT_LEVEL;
