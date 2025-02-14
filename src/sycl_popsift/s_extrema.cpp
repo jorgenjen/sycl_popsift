@@ -6,12 +6,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 #include "common/assist.h"
+#include "s_solve.h"
 #include "sift_extremum.h"
 // #include "common/clamp.h"
 #include "common/debug_macros.hpp"
 // #include "s_solve.h" # Need this one later on
 #include "sift_constants.hpp"
 #include "sift_pyramid.hpp"
+#include "sycl/kernel_bundle_enums.hpp"
 #include "sycl/nd_item.hpp"
 #include "sycl/sub_group.hpp"
 #include "sycl/vector.hpp"
@@ -20,6 +22,7 @@
 // #include <cuda_runtime.h>
 // #include <texture_fetch_functions.h>
 
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -256,53 +259,8 @@ inline bool find_extrema_in_dog_sub(float** dog,
     const int y = it.get_global_id(1) + 1;
     const int level = it.get_global_id(0) + 1;
 
-    // if(block_x == 32 && block_y == 12 && block_z == 0)
-    // {
-    //     const sycl::sub_group sg = it.get_sub_group();
-    //     const sycl::range sg_range = sg.get_local_range();
-    //
-    //     sycl::ext::oneapi::experimental::printf(
-    //       "x=%d - y=%d - z=%d ---> sg_range %d -- Local-range(%d, %d, %d)  -- "
-    //       "Group-range(%d, %d, %d) -- Global range(%d, %d, %d) ---- val=%f from dog[%d][%d + %d * %d]\n",
-    //       x,
-    //       y,
-    //       level,
-    //       sg_range.size(),
-    //       it.get_local_range(0),
-    //       it.get_local_range(1),
-    //       it.get_local_range(2),
-    //       it.get_group_range(0),
-    //       it.get_group_range(1),
-    //       it.get_group_range(2),
-    //       it.get_global_range(0),
-    //       it.get_global_range(1),
-    //       it.get_global_range(2),
-    //       dog[level][x + y * width],
-    //       level,
-    //       x,
-    //       y,
-    //       width
-    //
-    //     );
-    //     if(x == 33)
-    //     {
-    //         sycl::ext::oneapi::experimental::printf("val=%f\n\n", dog[1][16 + 38 * width]);
-    //     }
-    //
-    //     // if(x == 64 && y == 16)
-    //     // {
-    //     //     sycl::ext::oneapi::experimental::printf(
-    //     //       "w=%d -- h=%d &&&&& val = %f", width, height, dog[level][x + y * width]);
-    //     // }
-    // }
-
     // const float val = readTex(dog, x, y, level);
-
     const float val = dog[level][x + y * width];
-    //
-    // ModeFunctions<sift_mode> f;
-    // if(!first_contrast_ok(val))
-    //     return false;
 
     ModeFunctions<sift_mode> f;
     if(!first_contrast_ok(val, d_consts))
@@ -310,7 +268,6 @@ inline bool find_extrema_in_dog_sub(float** dog,
 
     if(!is_extremum(dog, x - 1, y - 1, level - 1, width, height))
     {
-        // if( debug_octave==0 && level==2 && x==14 && y==73 ) printf("But I fail\n");
         return false;
     }
     //
@@ -322,98 +279,136 @@ inline bool find_extrema_in_dog_sub(float** dog,
     sycl::vec<float, 3> DD; // Dxx Dyy Dss
     sycl::vec<float, 3> DX; // Dxy Dxs Dys
     sycl::vec<float, 3> d;  // dx dy ds
-    //
-    //     float v = val;
-    //
+
+    float v = val;
+
     //     // int3 n = make_int3(x, y, level); // nj ni ns
-    //     sycl::vec<int, 3> n(x, y, level);
-    //
-    //     int32_t iter = 0;
-    //
-    // #define MAX_ITERATIONS 5
-    //
-    //     do
-    //     {
-    //         iter++;
-    //
-    //         // const int z = level - 1;
-    //         /* compute gradient */
-    //         const float x2y1z1 = readTex(dog, n.x + 1, n.y, n.z);
-    //         const float x0y1z1 = readTex(dog, n.x - 1, n.y, n.z);
-    //         const float x1y2z1 = readTex(dog, n.x, n.y + 1, n.z);
-    //         const float x1y0z1 = readTex(dog, n.x, n.y - 1, n.z);
-    //         const float x1y1z2 = readTex(dog, n.x, n.y, n.z + 1);
-    //         const float x1y1z0 = readTex(dog, n.x, n.y, n.z - 1);
-    //         // D.x = 0.5f * ( x2y1z1 - x0y1z1 );
-    //         // D.y = 0.5f * ( x1y2z1 - x1y0z1 );
-    //         // D.z = 0.5f * ( x1y1z2 - x1y1z0 );
-    //         D.x = scalbnf(x2y1z1 - x0y1z1, -1);
-    //         D.y = scalbnf(x1y2z1 - x1y0z1, -1);
-    //         D.z = scalbnf(x1y1z2 - x1y1z0, -1);
-    //
-    //         /* compute Hessian */
-    //         const float x1y1z1 = readTex(dog, n.x, n.y, n.z);
-    //         // DD.x = x2y1z1 + x0y1z1 - 2.0f * x1y1z1;
-    //         // DD.y = x1y2z1 + x1y0z1 - 2.0f * x1y1z1;
-    //         // DD.z = x1y1z2 + x1y1z0 - 2.0f * x1y1z1;
-    //         DD.x = x2y1z1 + x0y1z1 - scalbnf(x1y1z1, 1);
-    //         DD.y = x1y2z1 + x1y0z1 - scalbnf(x1y1z1, 1);
-    //         DD.z = x1y1z2 + x1y1z0 - scalbnf(x1y1z1, 1);
-    //
-    //         const float x0y0z1 = readTex(dog, n.x - 1, n.y - 1, n.z);
-    //         const float x0y1z0 = readTex(dog, n.x - 1, n.y, n.z - 1);
-    //         const float x0y1z2 = readTex(dog, n.x - 1, n.y, n.z + 1);
-    //         const float x0y2z1 = readTex(dog, n.x - 1, n.y + 1, n.z);
-    //         const float x1y0z0 = readTex(dog, n.x, n.y - 1, n.z - 1);
-    //         const float x1y0z2 = readTex(dog, n.x, n.y - 1, n.z + 1);
-    //         const float x1y2z0 = readTex(dog, n.x, n.y + 1, n.z - 1);
-    //         const float x1y2z2 = readTex(dog, n.x, n.y + 1, n.z + 1);
-    //         const float x2y0z1 = readTex(dog, n.x + 1, n.y - 1, n.z);
-    //         const float x2y1z0 = readTex(dog, n.x + 1, n.y, n.z - 1);
-    //         const float x2y1z2 = readTex(dog, n.x + 1, n.y, n.z + 1);
-    //         const float x2y2z1 = readTex(dog, n.x + 1, n.y + 1, n.z);
-    //         // DX.x = 0.25f * ( x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1 );
-    //         // DX.y = 0.25f * ( x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0 );
-    //         // DX.z = 0.25f * ( x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2 );
-    //         DX.x = scalbnf(x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1, -2);
-    //         DX.y = scalbnf(x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0, -2);
-    //         DX.z = scalbnf(x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2, -2);
-    //
-    //         float3 b;
-    //         float A[3][3];
-    //
-    //         /* Solve linear system. */
-    //         A[0][0] = DD.x;
-    //         A[1][1] = DD.y;
-    //         A[2][2] = DD.z;
-    //         A[1][0] = A[0][1] = DX.x;
-    //         A[2][0] = A[0][2] = DX.y;
-    //         A[2][1] = A[1][2] = DX.z;
-    //
-    //         b.x = -D.x;
-    //         b.y = -D.y;
-    //         b.z = -D.z;
-    //
-    //         if(!solve(A, b))
-    //         {
-    //             d.x = 0;
-    //             d.y = 0;
-    //             d.z = 0;
-    //             break;
-    //         }
-    //
-    //         d = b;
-    //
-    //         /* If the translation of the keypoint is big, move the keypoint
-    //          * and re-iterate the computation. Otherwise we are all set.
-    //          */
-    //         const int retval = f.refine(d, n, width, height, maxlevel, iter == MAX_ITERATIONS);
-    //
-    //         if(retval == 1)
-    //         {
-    //             break;
-    //         }
-    //     } while(iter < MAX_ITERATIONS); /* go to next iter */
+    sycl::vec<int, 3> n{x, y, level};
+
+    int32_t iter = 0;
+
+#define MAX_ITERATIONS 5
+#define CLAMP_READ_DOG 1
+
+#if CLAMP_READ_DOG == 0
+#define READ_DOG(x, y, z) dog[z][x + y * width]
+#else
+// Full clamping
+#define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
+#define READ_DOG(x, y, z) dog[z][CLAMP(x, 0, width - 1) + CLAMP(y, 0, height - 1) * width]
+
+#endif
+
+    do
+    {
+        iter++;
+
+        // const int z = level - 1;
+
+        // to ensure we are withing boundary (-1 is no problem) z is safe
+        const int x_add = (n.x() + 1 >= width) ? 0 : 1;
+        const int y_add = (n.y() + 1 >= height) ? 0 : 1;
+
+        /* compute gradient */
+        // const float x2y1z1 = readTex(dog, n.x + 1, n.y, n.z);
+        // const float x0y1z1 = readTex(dog, n.x - 1, n.y, n.z);
+        // const float x1y2z1 = readTex(dog, n.x, n.y + 1, n.z);
+        // const float x1y0z1 = readTex(dog, n.x, n.y - 1, n.z);
+        // const float x1y1z2 = readTex(dog, n.x, n.y, n.z + 1);
+        // const float x1y1z0 = readTex(dog, n.x, n.y, n.z - 1);
+
+        const float x2y1z1 = READ_DOG(n.x() + x_add, n.y(), n.z());
+        const float x0y1z1 = READ_DOG(n.x() - 1, n.y(), n.z());
+        const float x1y2z1 = READ_DOG(n.x(), n.y() + y_add, n.z());
+        const float x1y0z1 = READ_DOG(n.x(), n.y() - 1, n.z());
+        const float x1y1z2 = READ_DOG(n.x(), n.y(), n.z() + 1);
+        const float x1y1z0 = READ_DOG(n.x(), n.y(), n.z() - 1);
+
+        // TODO: Compare performance of using scalbnf vs doing the computation as shown in th commented out code
+        // D.x = 0.5f * ( x2y1z1 - x0y1z1 );
+        // D.y = 0.5f * ( x1y2z1 - x1y0z1 );
+        // D.z = 0.5f * ( x1y1z2 - x1y1z0 );
+
+        // Uses the cmath implementatino of scalbnf which is should be the same result as the cuda version
+        // does scalbnf(x, n) = x * 2^n -- not sure if this is faster than the above in the case of SYCL
+        D.x() = scalbnf(x2y1z1 - x0y1z1, -1);
+        D.y() = scalbnf(x1y2z1 - x1y0z1, -1);
+        D.z() = scalbnf(x1y1z2 - x1y1z0, -1);
+
+        /* compute Hessian */
+        // const float x1y1z1 = readTex(dog, n.x, n.y, n.z);
+        const float x1y1z1 = READ_DOG(n.x(), n.y(), n.z());
+
+        // DD.x = x2y1z1 + x0y1z1 - 2.0f * x1y1z1;
+        // DD.y = x1y2z1 + x1y0z1 - 2.0f * x1y1z1;
+        // DD.z = x1y1z2 + x1y1z0 - 2.0f * x1y1z1;
+        DD.x() = x2y1z1 + x0y1z1 - scalbnf(x1y1z1, 1);
+        DD.y() = x1y2z1 + x1y0z1 - scalbnf(x1y1z1, 1);
+        DD.z() = x1y1z2 + x1y1z0 - scalbnf(x1y1z1, 1);
+
+        const float x0y0z1 = READ_DOG(n.x() - 1, n.y() - 1, n.z());
+        const float x0y1z0 = READ_DOG(n.x() - 1, n.y(), n.z() - 1);
+        const float x0y1z2 = READ_DOG(n.x() - 1, n.y(), n.z() + 1);
+        const float x0y2z1 = READ_DOG(n.x() - 1, n.y() + y_add, n.z());
+        const float x1y0z0 = READ_DOG(n.x(), n.y() - 1, n.z() - 1);
+        const float x1y0z2 = READ_DOG(n.x(), n.y() - 1, n.z() + 1);
+        const float x1y2z0 = READ_DOG(n.x(), n.y() + y_add, n.z() - 1);
+        const float x1y2z2 = READ_DOG(n.x(), n.y() + y_add, n.z() + 1);
+        const float x2y0z1 = READ_DOG(n.x() + x_add, n.y() - 1, n.z());
+        const float x2y1z0 = READ_DOG(n.x() + x_add, n.y(), n.z() - 1);
+        const float x2y1z2 = READ_DOG(n.x() + x_add, n.y(), n.z() + 1);
+        const float x2y2z1 = READ_DOG(n.x() + x_add, n.y() + y_add, n.z());
+
+        // DX.x = 0.25f * ( x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1 );
+        // DX.y = 0.25f * ( x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0 );
+        // DX.z = 0.25f * ( x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2 );
+        DX.x() = scalbnf(x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1, -2);
+        DX.y() = scalbnf(x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0, -2);
+        DX.z() = scalbnf(x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2, -2);
+
+        // PROBLEM CODE BELOW THIS LINE
+        // float3 b;
+        sycl::vec<float, 3> b;
+        float A[3][3];
+
+        /* Solve linear system. */
+        A[0][0] = DD.x();
+        A[1][1] = DD.y();
+        A[2][2] = DD.z();
+        A[1][0] = A[0][1] = DX.x();
+        A[2][0] = A[0][2] = DX.y();
+        A[2][1] = A[1][2] = DX.z();
+
+        b.x() = -D.x();
+        b.y() = -D.y();
+        b.z() = -D.z();
+
+        if(!solve(A, b))
+        {
+            d.x() = 0;
+            d.y() = 0;
+            d.z() = 0;
+            break;
+        }
+
+        d = b;
+
+        /* If the translation of the keypoint is big, move the keypoint
+         * and re-iterate the computation. Otherwise we are all set.
+         */
+
+        // EVEN THIS FAILS -- seems like these accesses are the source of problems look into!!!!
+        // sycl::ext::oneapi::experimental::printf(
+        //   "d = (%f, %f, %f) -- n = (%f, %f, %f)", d.x(), d.y(), d.z(), n.x(), n.y(), n.z());
+
+        // THIS IS THE PROBLEM CHILD FOR SOME REASON!!!
+        // const int retval = f.refine(d, n, width, height, maxlevel, iter == MAX_ITERATIONS);
+
+        // if(retval == 1)
+        // {
+        //     break;
+        // }
+    } while(iter < MAX_ITERATIONS); /* go to next iter */
     //
     //     if(d.x >= 1.5f || d.y >= 1.5f || d.z >= 1.5f)
     //     {
