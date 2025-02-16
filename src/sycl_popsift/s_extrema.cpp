@@ -16,6 +16,7 @@
 #include "sycl/kernel_bundle_enums.hpp"
 #include "sycl/nd_item.hpp"
 #include "sycl/sub_group.hpp"
+#include "sycl/usm.hpp"
 #include "sycl/vector.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 
@@ -24,10 +25,21 @@
 
 #include <cmath>
 #include <cstdio>
+#include <sstream>
 #include <vector>
 
 namespace popsift {
 #define LOCAL_X 32
+
+typedef struct int3
+{
+    int x, y, z;
+} int3;
+//
+// typedef struct float3
+// {
+//     float x, y, z;
+// } float3;
 
 static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, uint32_t mask)
 {
@@ -39,7 +51,8 @@ static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, 
 // #define DOG(dx, dy, dz) dog[z + dz][x + dx + (y + dy) * width]
 
 // different clamping I think I only need for bottom and right -- z should always be safe
-#define CLAMP_MODE 1
+// REFINE makes the requirement go up to full clamp mode
+#define CLAMP_MODE 2
 #if CLAMP_MODE == 0
 // no clamping
 #define DOG(dx, dy, dz) dog[z + dz][x + dx + (y + dy) * width]
@@ -134,15 +147,26 @@ class ModeFunctions
      * returns 0 : continue looping
      *         1 : break loop and succeed
      */
-    inline int refine(sycl::vec<float, 3>& d, sycl::vec<int, 3>& n, int width, int height, int maxlevel, bool last_it);
+    inline int refine(sycl::vec<float, 3>& d,
+                      sycl::vec<int, 3>& n,
+                      int width,
+                      int height,
+                      int maxlevel,
+                      bool last_it,
+                      size_t global_id);
 };
 
 template<>
 class ModeFunctions<Config::RefineInLevel>
 {
   public:
-    inline int refine(
-      sycl::vec<float, 3>& d, sycl::vec<int, 3>& n, int width, int height, int maxlevel, bool last_it) const
+    inline int refine(sycl::vec<float, 3>& d,
+                      sycl::vec<int, 3>& n,
+                      int width,
+                      int height,
+                      int maxlevel,
+                      bool last_it,
+                      size_t global_id) const
     {
         if(last_it)
             return 0;
@@ -173,31 +197,52 @@ class ModeFunctions<Config::RefineInOctave>
 {
   public:
     // inline int refine(float3& d, int3& n, int width, int height, int maxlevel, bool last_it) const
-    inline int refine(
-      sycl::vec<float, 3>& d, sycl::vec<int, 3>& n, int width, int height, int maxlevel, bool last_it) const
+    inline int refine(sycl::vec<float, 3> d,
+                      sycl::vec<int, 3> n,
+                      int width,
+                      int height,
+                      int maxlevel,
+                      bool last_it,
+                      size_t global_id) const
     {
         if(last_it)
             return 0;
 
         // int3 t;
 
-        sycl::vec<int, 3> t;
+        // sycl::vec<int, 3> t;
+        int3 t;
 
-        t.x() = ((d.x() >= 0.6f && n.x() < width - 2) ? 1 : 0) + ((d.x() <= -0.6f && n.x() > 1) ? -1 : 0);
+        t.x = ((d.x() >= 0.6f && n.x() < width - 2) ? 1 : 0) + ((d.x() <= -0.6f && n.x() > 1) ? -1 : 0);
 
-        t.y() = ((d.y() >= 0.6f && n.y() < height - 2) ? 1 : 0) + ((d.y() <= -0.6f && n.y() > 1) ? -1 : 0);
+        t.y = ((d.y() >= 0.6f && n.y() < height - 2) ? 1 : 0) + ((d.y() <= -0.6f && n.y() > 1) ? -1 : 0);
 
-        t.z() = ((d.z() >= 0.6f && n.z() < maxlevel - 1) ? 1 : 0) + ((d.z() <= -0.6f && n.z() > 1) ? -1 : 0);
+        t.z = ((d.z() >= 0.6f && n.z() < maxlevel - 1) ? 1 : 0) + ((d.z() <= -0.6f && n.z() > 1) ? -1 : 0);
 
-        if(t.x() == 0 && t.y() == 0 && t.z() == 0)
+        if(t.x == 0 && t.y == 0 && t.z == 0)
         {
             // no more changes
             return 1;
         }
+        sycl::ext::oneapi::experimental::printf(
+          "\n\t\tINSIDE REFINE ------------- d = (%f, %f, %f) -- n = (%d, %d, %d) -- t = (%d, %d, %d), global_id = %d",
+          d.y(),
+          d.z(),
+          n.x(),
+          n.y(),
+          n.z(),
+          t.x,
+          t.y,
+          t.z,
+          global_id);
 
-        n.x() += t.x();
-        n.y() += t.y();
-        n.z() += t.z();
+        // mine
+        // return 1;
+
+        // FROM changing thees values the problems occur...
+        n.x() += t.x;
+        n.y() += t.y;
+        n.z() += t.z;
 
         return 0;
     }
@@ -220,13 +265,23 @@ inline bool find_extrema_in_dog_sub(float** dog,
                                     float h_grid_divider,
                                     int grid_width,
                                     InitialExtremum& ec,
-                                    sycl::nd_item<3>& it,
-                                    const popsift::ConstInfo* d_consts)
+                                    sycl::nd_item<3> it,
+                                    const popsift::ConstInfo* d_consts,
+                                    char* out)
+// sycl::stream out)
+// sycl::accessor<char, 1, sycl::access::mode::write> acc)
 {
     ec.xpos = 0.0f;
     ec.ypos = 0.0f;
     ec.lpos = 0;
     ec.sigma = 0.0f;
+
+    // std::stringstream ss; // just for debug_print
+
+    // ss << "Print from kernel" << std::endl;
+    // std::string str = ss.str();
+    // std::copy(str.begin(), str.end(), debug_print);
+    // debug_print[str.size()] = '\0'; // Null-terminate the string
 
     /*
      * First consideration: extrema cannot be found on any outermost edge,
@@ -283,7 +338,18 @@ inline bool find_extrema_in_dog_sub(float** dog,
     float v = val;
 
     //     // int3 n = make_int3(x, y, level); // nj ni ns
-    sycl::vec<int, 3> n{x, y, level};
+    sycl::vec<int, 3> n(x, y, level);
+    // int3 n{x, y, level};
+
+    // if(out[1] != 'H')
+    // {
+    //     out[1]++;
+    //     sycl::ext::oneapi::experimental::printf(
+    //       "\t\nPrint n = (%d, %d, %d), x=%d y=%d level=%d", n.x(), n.y(), n.z(), x, y, level);
+    //     // n.x() = 87;
+    //     // sycl::ext::oneapi::experimental::printf(
+    //     //   "\t\nPrint n = (%d, %d, %d), x=%d y=%d level=%d\n\n", n.x(), n.y(), n.z(), x, y, level);
+    // }
 
     int32_t iter = 0;
 
@@ -310,12 +376,12 @@ inline bool find_extrema_in_dog_sub(float** dog,
         const int y_add = (n.y() + 1 >= height) ? 0 : 1;
 
         /* compute gradient */
-        // const float x2y1z1 = readTex(dog, n.x + 1, n.y, n.z);
-        // const float x0y1z1 = readTex(dog, n.x - 1, n.y, n.z);
-        // const float x1y2z1 = readTex(dog, n.x, n.y + 1, n.z);
-        // const float x1y0z1 = readTex(dog, n.x, n.y - 1, n.z);
-        // const float x1y1z2 = readTex(dog, n.x, n.y, n.z + 1);
-        // const float x1y1z0 = readTex(dog, n.x, n.y, n.z - 1);
+        // const float x2y1z1 = readTex(dog, n.x() + 1, n.y(), n.z());
+        // const float x0y1z1 = readTex(dog, n.x() - 1, n.y(), n.z());
+        // const float x1y2z1 = readTex(dog, n.x(), n.y() + 1, n.z());
+        // const float x1y0z1 = readTex(dog, n.x(), n.y() - 1, n.z());
+        // const float x1y1z2 = readTex(dog, n.x(), n.y(), n.z() + 1);
+        // const float x1y1z0 = readTex(dog, n.x(), n.y(), n.z() - 1);
 
         const float x2y1z1 = READ_DOG(n.x() + x_add, n.y(), n.z());
         const float x0y1z1 = READ_DOG(n.x() - 1, n.y(), n.z());
@@ -336,7 +402,7 @@ inline bool find_extrema_in_dog_sub(float** dog,
         D.z() = scalbnf(x1y1z2 - x1y1z0, -1);
 
         /* compute Hessian */
-        // const float x1y1z1 = readTex(dog, n.x, n.y, n.z);
+        // const float x1y1z1 = readTex(dog, n.x(), n.y(), n.z());
         const float x1y1z1 = READ_DOG(n.x(), n.y(), n.z());
 
         // DD.x = x2y1z1 + x0y1z1 - 2.0f * x1y1z1;
@@ -397,18 +463,65 @@ inline bool find_extrema_in_dog_sub(float** dog,
          * and re-iterate the computation. Otherwise we are all set.
          */
 
+        // sycl::ext::oneapi::experimental::printf("PRINT FROM EXTREMUM");
         // EVEN THIS FAILS -- seems like these accesses are the source of problems look into!!!!
-        // sycl::ext::oneapi::experimental::printf(
-        //   "d = (%f, %f, %f) -- n = (%f, %f, %f)", d.x(), d.y(), d.z(), n.x(), n.y(), n.z());
+        // if(it.get_global_linear_id() == 815415)
+
+        // if(out[0] != 'H')
+        // {
+        //     out[0]++; // next uppercase char started as A
+        //     // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
+        //     sycl::ext::oneapi::experimental::printf("\nPRINT FROM EXTREMUM global_linear = %d\n",
+        //                                             it.get_global_linear_id());
+        //     sycl::ext::oneapi::experimental::printf(
+        //       "PRINT FROM EXTREMUM d = (%f, %f, %f) -- n = (%d, %d, %d)", d.x(), d.y(), d.z(), n.x(), n.y(), n.z());
+        // }
+
+        // if(out[0] != 'H')
+        // {
+        //     out[0]++; // next uppercase char started as A
+        // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
+        sycl::ext::oneapi::experimental::printf(
+          "\n\t\tPRE refine called with ---- d = (%f, %f, %f) -- n = (%d, %d, %d) -- Globla_linearized_id = %d",
+          d.x(),
+          d.y(),
+          d.z(),
+          n.x(),
+          n.y(),
+          n.z(),
+          it.get_global_linear_id());
+        // }
 
         // THIS IS THE PROBLEM CHILD FOR SOME REASON!!!
-        // const int retval = f.refine(d, n, width, height, maxlevel, iter == MAX_ITERATIONS);
+        const int retval = f.refine(d, n, width, height, maxlevel, iter == MAX_ITERATIONS, it.get_global_linear_id());
 
-        // if(retval == 1)
+        // if(out[0] != 'H')
         // {
-        //     break;
+        // out[0]++; // next uppercase char started as A
+        // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
+        sycl::ext::oneapi::experimental::printf(
+          "\n\t\tAFTER refine called with -- d = (%f, %f, %f) -- n = (%d, %d, %d) -- Globla_linearized_id = %d\n",
+          d.x(),
+          d.y(),
+          d.z(),
+          n.x(),
+          n.y(),
+          n.z(),
+          it.get_global_linear_id());
         // }
+
+        if(retval == 1)
+        {
+            break;
+        }
     } while(iter < MAX_ITERATIONS); /* go to next iter */
+
+    // if(it.get_global_linear_id() == 0)
+    // {
+    //     // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
+    //     sycl::ext::oneapi::experimental::printf("\nPRINT FROM EXTREMUM\n");
+    // }
+
     //
     //     if(d.x >= 1.5f || d.y >= 1.5f || d.z >= 1.5f)
     //     {
@@ -475,6 +588,7 @@ class find_extrema_in_dog
     const float h_grid_divider;
     const int grid_width;
     const popsift::ConstInfo* d_consts;
+    char* out;
 
   public:
     find_extrema_in_dog(float** dog,
@@ -487,7 +601,8 @@ class find_extrema_in_dog
                         const float w_grid_divider,
                         const float h_grid_divider,
                         const int grid_width,
-                        const popsift::ConstInfo* d_consts)
+                        const popsift::ConstInfo* d_consts,
+                        char* out)
       : dog(dog)
       , octave(octave)
       , width(width)
@@ -499,6 +614,7 @@ class find_extrema_in_dog
       , h_grid_divider(h_grid_divider)
       , grid_width(grid_width)
       , d_consts(d_consts)
+      , out(out)
     {}
 
     inline void operator()(sycl::nd_item<3> it) const
@@ -506,8 +622,261 @@ class find_extrema_in_dog
         InitialExtremum ec;
         ec.ignore = false;
 
+        // if(it.get_global_linear_id() == 0)
+        // {
+        //     sycl::ext::oneapi::experimental::printf("PRINT IN find extrema in dog kernel!!\n");
+        // }
+
         bool indicator = find_extrema_in_dog_sub<sift_mode>(
-          dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, ec, it, d_consts);
+          dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, ec, it, d_consts, out);
+
+        // Used to be a function
+        //         // bool indicator = [&]() -> bool {
+        //         bool indicator;
+        //         do
+        //         {
+        //             ec.xpos = 0.0f;
+        //             ec.ypos = 0.0f;
+        //             ec.lpos = 0;
+        //             ec.sigma = 0.0f;
+        //
+        //             /*
+        //              * First consideration: extrema cannot be found on any outermost edge,
+        //              * one pixel on the left, right, upper, lower edge will never qualify.
+        //              * Also, the upper and lower DoG layer will never qualify. So there is
+        //              * no reason for selecting any of those pixel for the center of a 3x3x3
+        //              * region.
+        //              * Instead, I use groups of 32xHEIGHT threads that read from a 34x34x3 area,
+        //              * but implicitly, they fetch * 64xHEIGHT+2x3 floats (bad luck).
+        //              * To find maxima, compare first on the left edge of the 3x3x3 cube, ie.
+        //              * a 1x3x3 area. If the rightmost 2 threads of a warp (x==30 and 3==31)
+        //              * are not extreme w.r.t. to the left slice, 8 fetch operations.
+        //              */
+        //
+        //             // sub-group(warp in cuda) is in 3D space along the nd_range[2] dimension and hence the problem
+        //             needs to be
+        //             // reorganized from the cuda equivalent for it to be the similar in hardware
+        //
+        //             // USE CUDA NAMING VARIABLES TO START OF WITH
+        //             const int block_x = it.get_group(2) * it.get_local_range(2); // local[2] == 32
+        //             const int block_y = it.get_group(1) * it.get_local_range(1); // local[1] == 4
+        //             const int block_z = it.get_group(0);
+        //             const int x = it.get_global_id(2) + 1;
+        //             const int y = it.get_global_id(1) + 1;
+        //             const int level = it.get_global_id(0) + 1;
+        //
+        //             // const float val = readTex(dog, x, y, level);
+        //             const float val = dog[level][x + y * width];
+        //
+        //             ModeFunctions<sift_mode> f;
+        //             if(!first_contrast_ok(val, d_consts))
+        //             {
+        //                 // return false;
+        //                 indicator = false;
+        //                 break;
+        //             }
+        //
+        //             if(!is_extremum(dog, x - 1, y - 1, level - 1, width, height))
+        //             {
+        //                 // return false;
+        //                 indicator = false;
+        //                 break;
+        //             }
+        //             //
+        //             //     // float3 D;  // Dx Dy Ds
+        //             //     // float3 DD; // Dxx Dyy Dss
+        //             //     // float3 DX; // Dxy Dxs Dys
+        //             //     // float3 d;  // dx dy ds
+        //             sycl::vec<float, 3> D;  // Dx Dy Ds
+        //             sycl::vec<float, 3> DD; // Dxx Dyy Dss
+        //             sycl::vec<float, 3> DX; // Dxy Dxs Dys
+        //             sycl::vec<float, 3> d;  // dx dy ds
+        //
+        //             float v = val;
+        //
+        //             //     // int3 n = make_int3(x, y, level); // nj ni ns
+        //             sycl::vec<int, 3> n{x, y, level};
+        //
+        //             int32_t iter = 0;
+        //
+        // #define MAX_ITERATIONS 5
+        // #define CLAMP_READ_DOG 1
+        //
+        // #if CLAMP_READ_DOG == 0
+        // #define READ_DOG(x, y, z) dog[z][x + y * width]
+        // #else
+        // // Full clamping
+        // #define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
+        // #define READ_DOG(x, y, z) dog[z][CLAMP(x, 0, width - 1) + CLAMP(y, 0, height - 1) * width]
+        //
+        // #endif
+        //
+        //             do
+        //             {
+        //                 iter++;
+        //
+        //                 // const int z = level - 1;
+        //
+        //                 // to ensure we are withing boundary (-1 is no problem) z is safe
+        //                 const int x_add = (n.x() + 1 >= width) ? 0 : 1;
+        //                 const int y_add = (n.y() + 1 >= height) ? 0 : 1;
+        //
+        //                 /* compute gradient */
+        //                 // const float x2y1z1 = readTex(dog, n.x + 1, n.y, n.z);
+        //                 // const float x0y1z1 = readTex(dog, n.x - 1, n.y, n.z);
+        //                 // const float x1y2z1 = readTex(dog, n.x, n.y + 1, n.z);
+        //                 // const float x1y0z1 = readTex(dog, n.x, n.y - 1, n.z);
+        //                 // const float x1y1z2 = readTex(dog, n.x, n.y, n.z + 1);
+        //                 // const float x1y1z0 = readTex(dog, n.x, n.y, n.z - 1);
+        //
+        //                 const float x2y1z1 = READ_DOG(n.x() + x_add, n.y(), n.z());
+        //                 const float x0y1z1 = READ_DOG(n.x() - 1, n.y(), n.z());
+        //                 const float x1y2z1 = READ_DOG(n.x(), n.y() + y_add, n.z());
+        //                 const float x1y0z1 = READ_DOG(n.x(), n.y() - 1, n.z());
+        //                 const float x1y1z2 = READ_DOG(n.x(), n.y(), n.z() + 1);
+        //                 const float x1y1z0 = READ_DOG(n.x(), n.y(), n.z() - 1);
+        //
+        //                 // TODO: Compare performance of using scalbnf vs doing the computation as shown in th
+        //                 commented out code
+        //                 // D.x = 0.5f * ( x2y1z1 - x0y1z1 );
+        //                 // D.y = 0.5f * ( x1y2z1 - x1y0z1 );
+        //                 // D.z = 0.5f * ( x1y1z2 - x1y1z0 );
+        //
+        //                 // Uses the cmath implementatino of scalbnf which is should be the same result as the cuda
+        //                 version
+        //                 // does scalbnf(x, n) = x * 2^n -- not sure if this is faster than the above in the case of
+        //                 SYCL D.x() = scalbnf(x2y1z1 - x0y1z1, -1); D.y() = scalbnf(x1y2z1 - x1y0z1, -1); D.z() =
+        //                 scalbnf(x1y1z2 - x1y1z0, -1);
+        //
+        //                 /* compute Hessian */
+        //                 // const float x1y1z1 = readTex(dog, n.x, n.y, n.z);
+        //                 const float x1y1z1 = READ_DOG(n.x(), n.y(), n.z());
+        //
+        //                 // DD.x = x2y1z1 + x0y1z1 - 2.0f * x1y1z1;
+        //                 // DD.y = x1y2z1 + x1y0z1 - 2.0f * x1y1z1;
+        //                 // DD.z = x1y1z2 + x1y1z0 - 2.0f * x1y1z1;
+        //                 DD.x() = x2y1z1 + x0y1z1 - scalbnf(x1y1z1, 1);
+        //                 DD.y() = x1y2z1 + x1y0z1 - scalbnf(x1y1z1, 1);
+        //                 DD.z() = x1y1z2 + x1y1z0 - scalbnf(x1y1z1, 1);
+        //
+        //                 const float x0y0z1 = READ_DOG(n.x() - 1, n.y() - 1, n.z());
+        //                 const float x0y1z0 = READ_DOG(n.x() - 1, n.y(), n.z() - 1);
+        //                 const float x0y1z2 = READ_DOG(n.x() - 1, n.y(), n.z() + 1);
+        //                 const float x0y2z1 = READ_DOG(n.x() - 1, n.y() + y_add, n.z());
+        //                 const float x1y0z0 = READ_DOG(n.x(), n.y() - 1, n.z() - 1);
+        //                 const float x1y0z2 = READ_DOG(n.x(), n.y() - 1, n.z() + 1);
+        //                 const float x1y2z0 = READ_DOG(n.x(), n.y() + y_add, n.z() - 1);
+        //                 const float x1y2z2 = READ_DOG(n.x(), n.y() + y_add, n.z() + 1);
+        //                 const float x2y0z1 = READ_DOG(n.x() + x_add, n.y() - 1, n.z());
+        //                 const float x2y1z0 = READ_DOG(n.x() + x_add, n.y(), n.z() - 1);
+        //                 const float x2y1z2 = READ_DOG(n.x() + x_add, n.y(), n.z() + 1);
+        //                 const float x2y2z1 = READ_DOG(n.x() + x_add, n.y() + y_add, n.z());
+        //
+        //                 // DX.x = 0.25f * ( x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1 );
+        //                 // DX.y = 0.25f * ( x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0 );
+        //                 // DX.z = 0.25f * ( x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2 );
+        //                 DX.x() = scalbnf(x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1, -2);
+        //                 DX.y() = scalbnf(x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0, -2);
+        //                 DX.z() = scalbnf(x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2, -2);
+        //
+        //                 // PROBLEM CODE BELOW THIS LINE
+        //                 // float3 b;
+        //                 sycl::vec<float, 3> b;
+        //                 float A[3][3];
+        //
+        //                 /* Solve linear system. */
+        //                 A[0][0] = DD.x();
+        //                 A[1][1] = DD.y();
+        //                 A[2][2] = DD.z();
+        //                 A[1][0] = A[0][1] = DX.x();
+        //                 A[2][0] = A[0][2] = DX.y();
+        //                 A[2][1] = A[1][2] = DX.z();
+        //
+        //                 b.x() = -D.x();
+        //                 b.y() = -D.y();
+        //                 b.z() = -D.z();
+        //
+        //                 if(!solve(A, b))
+        //                 {
+        //                     d.x() = 0;
+        //                     d.y() = 0;
+        //                     d.z() = 0;
+        //                     break;
+        //                 }
+        //
+        //                 d = b;
+        //
+        //                 /* If the translation of the keypoint is big, move the keypoint
+        //                  * and re-iterate the computation. Otherwise we are all set.
+        //                  */
+        //
+        //                 // sycl::ext::oneapi::experimental::printf("PRINT FROM EXTREMUM");
+        //                 // EVEN THIS FAILS -- seems like these accesses are the source of problems look into!!!!
+        //                 // sycl::ext::oneapi::experimental::printf(
+        //                 //   "PRINT FROM EXTREMUM d = (%f, %f, %f) -- n = (%f, %f, %f)", d.x(), d.y(), d.z(), n.x(),
+        //                 n.y(),
+        //                 //   n.z());
+        //
+        //                 // THIS IS THE PROBLEM CHILD FOR SOME REASON!!!
+        //                 // const int retval = f.refine(d, n, width, height, maxlevel, iter == MAX_ITERATIONS);
+        //
+        //                 // if(retval == 1)
+        //                 // {
+        //                 //     break;
+        //                 // }
+        //             } while(iter < MAX_ITERATIONS); /* go to next iter */
+        //
+        //             //
+        //             //     if(d.x >= 1.5f || d.y >= 1.5f || d.z >= 1.5f)
+        //             //     {
+        //             //         // excessive pixel movement in at least dimension, reject
+        //             //         return false;
+        //             //     }
+        //             //
+        //             //     const float xn = n.x + d.x;
+        //             //     const float yn = n.y + d.y;
+        //             //     const float sn = n.z + d.z;
+        //             //
+        //             //     if(!verify(xn, yn, sn, width, height, maxlevel))
+        //             //     {
+        //             //         return false;
+        //             //     }
+        //             //
+        //             //     // float contr   = v + 0.5f * (D.x * d.x + D.y * d.y + D.z * d.z);
+        //             //     const float contr = v + scalbnf(D.x * d.x + D.y * d.y + D.z * d.z, -1);
+        //             //     const float tr = DD.x + DD.y;
+        //             //     const float det = DD.x * DD.y - DX.x * DX.x;
+        //             //     const float edgeval = tr * tr / det;
+        //             //
+        //             //     /* negative determinant => curvatures have different signs -> reject it */
+        //             //     if(det <= 0.0f)
+        //             //     {
+        //             //         return false;
+        //             //     }
+        //             //
+        //             //     /* accept-reject extremum */
+        //             //     // if( fabsf(contr) < (d_consts.threshold*2.0f) )
+        //             //     if(fabsf(contr) < scalbnf(d_consts.threshold, 1))
+        //             //     {
+        //             //         return false;
+        //             //     }
+        //             //
+        //             //     /* reject condition: tr(H)^2/det(H) < (r+1)^2/r */
+        //             //     if(edgeval >= (d_consts.edge_limit + 1.0f) * (d_consts.edge_limit + 1.0f) /
+        //             d_consts.edge_limit)
+        //             //     {
+        //             //         return false;
+        //             //     }
+        //             //
+        //             //     ec.xpos = xn;
+        //             //     ec.ypos = yn;
+        //             //     ec.lpos = (int)roundf(sn);
+        //             //     ec.sigma = d_consts.sigma0 * pow(d_consts.sigma_k, sn); // * 2;
+        //             //     ec.cell = floorf(yn / h_grid_divider) * grid_width + floorf(xn / w_grid_divider);
+        //             //     // const float sigma_k = powf(2.0f, 1.0f / levels );
+        //
+        //             indicator = true;
+        //         } while(false); // Runs once so we can use break (just for debuggin purposes)
     }
 };
 
@@ -515,10 +884,13 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
 {
     static const int HEIGHT = 4;
 
+    char* out = sycl::malloc_shared<char>(1000, _device_queue);
+    out[0] = 'A';
+    out[1] = 'A';
     for(int octave = 0; octave < _num_octaves; octave++)
     {
         if(octave > 0)
-            return;
+            break;
         Octave& oct_obj = _octaves[octave];
 
         // int* extrema_num_blocks = getNumberOfBlocks(octave); // not ready for this :C
@@ -558,6 +930,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                global[1],
                global[2]);
 
+        // Buffer for debugging
         switch(conf.getSiftMode())
         {
             case Config::RefineInLevel:
@@ -577,26 +950,34 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                 break;
             default:
                 printf("RefineInOctave type popsift default\n");
-                _device_queue.parallel_for(
-                  sycl::nd_range{global, local},
-                  {dependencies[octave], d_consts_write},
-                  find_extrema_in_dog<HEIGHT, Config::RefineInOctave>(oct_obj.getDogArray(),
-                                                                      octave,
-                                                                      width,
-                                                                      height,
-                                                                      _levels - 1,
-                                                                      num_blocks,
-                                                                      global.get(0) * global.get(1),
-                                                                      oct_obj.getWGridDivider(),
-                                                                      oct_obj.getHGridDivider(),
-                                                                      conf.getFilterGridSize(),
-                                                                      _d_consts));
+                _device_queue.submit([&](sycl::handler& cgh) {
+                    // sycl::stream out(1024, 256, cgh); // output buffer
+                    cgh.depends_on({dependencies[octave], d_consts_write});
+                    cgh.parallel_for(sycl::nd_range{global, local},
+                                     find_extrema_in_dog<HEIGHT, Config::RefineInOctave>(oct_obj.getDogArray(),
+                                                                                         octave,
+                                                                                         width,
+                                                                                         height,
+                                                                                         _levels - 1,
+                                                                                         num_blocks,
+                                                                                         global.get(0) * global.get(1),
+                                                                                         oct_obj.getWGridDivider(),
+                                                                                         oct_obj.getHGridDivider(),
+                                                                                         conf.getFilterGridSize(),
+                                                                                         _d_consts,
+                                                                                         out));
+                });
                 break;
         }
 
         // cuda::event_record(oct_obj.getEventExtremaDone(), oct_str, __FILE__, __LINE__);
     }
     _device_queue.wait();
+    fflush(stderr);
+    fflush(stdout);
+    fprintf(stderr, "\n\n\t\tHello there mate how we doin");
+    // fprintf(stderr, "From out: %s", out);
+    sycl::free(out, _device_queue);
 }
 
 } // namespace popsift
