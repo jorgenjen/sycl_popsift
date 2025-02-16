@@ -8,6 +8,7 @@
 #include <sycl/sycl.hpp>
 
 #include <cmath> // ceilf
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <sstream>
@@ -296,9 +297,6 @@ void PopSift::extractDownloadLoop()
 
         // FUFULL THE PROMISE
 
-        // _device_queue.wait();
-        job->jobDone(5);
-
         cout << "Jobby: -- " << endl;
         job->printJob();
 
@@ -306,6 +304,11 @@ void PopSift::extractDownloadLoop()
         p._unused.push(img);
 
         p._pyramid->step2(_config, dependencies, _d_consts_write);
+
+        _device_queue.wait();
+        fflush(stdout);
+        fflush(stderr);
+        job->jobDone(5);
     }
 
     // _device_queue.wait(); // Having a wait here before I have all events configured properly
