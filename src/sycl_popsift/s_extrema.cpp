@@ -228,18 +228,9 @@ class ModeFunctions<Config::RefineInOctave>
             // no more changes
             return 1;
         }
-        sycl::ext::oneapi::experimental::printf(
-          "\n\t\tINSIDE REFINE ------------- d = (%f, %f, %f) -- n = (%d, %d, %d) -- t = (%d, %d, %d), global_id = %d",
-          d.x(),
-          d.y(),
-          d.z(),
-          n.x(),
-          n.y(),
-          n.z(),
-          t.x(),
-          t.y(),
-          t.z(),
-          global_id);
+        // sycl::ext::oneapi::experimental::printf(
+        //   "\n\t\tINSIDE REFINE ------------- d = (%f, %f, %f) -- n = (%d, %d, %d) -- t = (%d, %d, %d), global_id =
+        //   %d", d.x(), d.y(), d.z(), n.x(), n.y(), n.z(), t.x(), t.y(), t.z(), global_id);
 
         // mine
         // return 1;
@@ -258,6 +249,18 @@ inline static bool first_contrast_ok(const float val, const popsift::ConstInfo* 
 {
     // fabs should be equivalent to fabsf as it's overloaded with support for float in sycl
     return (sycl::fabs(val) >= 1.6f * d_consts->threshold);
+}
+
+/** verify() checks whether a refine position is outside the image boundaries or
+ *  outside the DoG boundaries.
+ *  returns true  : values after refine make sense
+ *          false : they do not
+ */
+inline static bool verify(float xn, float yn, float sn, int width, int height, int maxlevel)
+{
+    // reject if outside of image bounds or far outside DoG bounds
+    return ((xn < 0.0f || xn > width - 1.0f || yn < 0.0f || yn > height - 1.0f || sn < -0.0f || sn > maxlevel) ? false
+                                                                                                               : true);
 }
 
 template<int sift_mode>
@@ -488,18 +491,19 @@ inline bool find_extrema_in_dog_sub(float** dog,
         // {
         //     out[0]++; // next uppercase char started as A
         // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
-        sycl::ext::oneapi::experimental::printf("\n\t\tPRE refine called with ---- d = (%f, %f, %f) -- n = (%d, %d, "
-                                                "%d) -- Globla_linearized_id = %d ----- w=%d -- h=%d -- max_z=%d",
-                                                d.x(),
-                                                d.y(),
-                                                d.z(),
-                                                n.x(),
-                                                n.y(),
-                                                n.z(),
-                                                it.get_global_linear_id(),
-                                                width,
-                                                height,
-                                                it.get_global_range(0));
+
+        // sycl::ext::oneapi::experimental::printf("\n\t\tPRE refine called with ---- d = (%f, %f, %f) -- n = (%d, %d, "
+        //                                         "%d) -- Globla_linearized_id = %d ----- w=%d -- h=%d -- max_z=%d",
+        //                                         d.x(),
+        //                                         d.y(),
+        //                                         d.z(),
+        //                                         n.x(),
+        //                                         n.y(),
+        //                                         n.z(),
+        //                                         it.get_global_linear_id(),
+        //                                         width,
+        //                                         height,
+        //                                         it.get_global_range(0));
         // }
 
         // THIS IS THE PROBLEM CHILD FOR SOME REASON!!!
@@ -509,18 +513,18 @@ inline bool find_extrema_in_dog_sub(float** dog,
         // {
         // out[0]++; // next uppercase char started as A
         // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
-        sycl::ext::oneapi::experimental::printf("\n\t\tAFTER refine called with -- d = (%f, %f, %f) -- n = (%d, %d, "
-                                                "%d) -- Globla_linearized_id = %d iter = %d -- w=%d - h=%d\n",
-                                                d.x(),
-                                                d.y(),
-                                                d.z(),
-                                                n.x(),
-                                                n.y(),
-                                                n.z(),
-                                                it.get_global_linear_id(),
-                                                iter,
-                                                width,
-                                                height);
+        // sycl::ext::oneapi::experimental::printf("\n\t\tAFTER refine called with -- d = (%f, %f, %f) -- n = (%d, %d, "
+        //                                         "%d) -- Globla_linearized_id = %d iter = %d -- w=%d - h=%d\n",
+        //                                         d.x(),
+        //                                         d.y(),
+        //                                         d.z(),
+        //                                         n.x(),
+        //                                         n.y(),
+        //                                         n.z(),
+        //                                         it.get_global_linear_id(),
+        //                                         iter,
+        //                                         width,
+        //                                         height);
         // }
 
         if(retval == 1)
@@ -535,53 +539,52 @@ inline bool find_extrema_in_dog_sub(float** dog,
     //     sycl::ext::oneapi::experimental::printf("\nPRINT FROM EXTREMUM\n");
     // }
 
-    //
-    //     if(d.x >= 1.5f || d.y >= 1.5f || d.z >= 1.5f)
-    //     {
-    //         // excessive pixel movement in at least dimension, reject
-    //         return false;
-    //     }
-    //
-    //     const float xn = n.x + d.x;
-    //     const float yn = n.y + d.y;
-    //     const float sn = n.z + d.z;
-    //
-    //     if(!verify(xn, yn, sn, width, height, maxlevel))
-    //     {
-    //         return false;
-    //     }
-    //
-    //     // float contr   = v + 0.5f * (D.x * d.x + D.y * d.y + D.z * d.z);
-    //     const float contr = v + scalbnf(D.x * d.x + D.y * d.y + D.z * d.z, -1);
-    //     const float tr = DD.x + DD.y;
-    //     const float det = DD.x * DD.y - DX.x * DX.x;
-    //     const float edgeval = tr * tr / det;
-    //
-    //     /* negative determinant => curvatures have different signs -> reject it */
-    //     if(det <= 0.0f)
-    //     {
-    //         return false;
-    //     }
-    //
-    //     /* accept-reject extremum */
-    //     // if( fabsf(contr) < (d_consts.threshold*2.0f) )
-    //     if(fabsf(contr) < scalbnf(d_consts.threshold, 1))
-    //     {
-    //         return false;
-    //     }
-    //
-    //     /* reject condition: tr(H)^2/det(H) < (r+1)^2/r */
-    //     if(edgeval >= (d_consts.edge_limit + 1.0f) * (d_consts.edge_limit + 1.0f) / d_consts.edge_limit)
-    //     {
-    //         return false;
-    //     }
-    //
-    //     ec.xpos = xn;
-    //     ec.ypos = yn;
-    //     ec.lpos = (int)roundf(sn);
-    //     ec.sigma = d_consts.sigma0 * pow(d_consts.sigma_k, sn); // * 2;
-    //     ec.cell = floorf(yn / h_grid_divider) * grid_width + floorf(xn / w_grid_divider);
-    //     // const float sigma_k = powf(2.0f, 1.0f / levels );
+    if(d.x() >= 1.5f || d.y() >= 1.5f || d.z() >= 1.5f)
+    {
+        // excessive pixel movement in at least dimension, reject
+        return false;
+    }
+
+    const float xn = n.x() + d.x();
+    const float yn = n.y() + d.y();
+    const float sn = n.z() + d.z();
+
+    if(!verify(xn, yn, sn, width, height, maxlevel))
+    {
+        return false;
+    }
+
+    // float contr   = v + 0.5f * (D.x() * d.x() + D.y() * d.y() + D.z() * d.z());
+    const float contr = v + scalbnf(D.x() * d.x() + D.y() * d.y() + D.z() * d.z(), -1);
+    const float tr = DD.x() + DD.y();
+    const float det = DD.x() * DD.y() - DX.x() * DX.x();
+    const float edgeval = tr * tr / det;
+
+    /* negative determinant => curvatures have different signs -> reject it */
+    if(det <= 0.0f)
+    {
+        return false;
+    }
+
+    /* accept-reject extremum */
+    // if( fabsf(contr) < (d_consts.threshold*2.0f) )
+    if(fabsf(contr) < scalbnf(d_consts->threshold, 1))
+    {
+        return false;
+    }
+
+    /* reject condition: tr(H)^2/det(H) < (r+1)^2/r */
+    if(edgeval >= (d_consts->edge_limit + 1.0f) * (d_consts->edge_limit + 1.0f) / d_consts->edge_limit)
+    {
+        return false;
+    }
+
+    ec.xpos = xn;
+    ec.ypos = yn;
+    ec.lpos = (int)roundf(sn);
+    ec.sigma = d_consts->sigma0 * pow(d_consts->sigma_k, sn); // * 2;
+    ec.cell = floorf(yn / h_grid_divider) * grid_width + floorf(xn / w_grid_divider);
+    // const float sigma_k = powf(2.0f, 1.0f / levels );
 
     return true;
 }
@@ -634,262 +637,31 @@ class find_extrema_in_dog
     {
         InitialExtremum ec;
         ec.ignore = false;
-
         // if(it.get_global_linear_id() == 0)
         // {
         //     sycl::ext::oneapi::experimental::printf("PRINT IN find extrema in dog kernel!!\n");
         // }
-
         bool indicator = find_extrema_in_dog_sub<sift_mode>(
           dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, ec, it, d_consts, out);
 
-        // Used to be a function
-        //         // bool indicator = [&]() -> bool {
-        //         bool indicator;
-        //         do
-        //         {
-        //             ec.xpos = 0.0f;
-        //             ec.ypos = 0.0f;
-        //             ec.lpos = 0;
-        //             ec.sigma = 0.0f;
-        //
-        //             /*
-        //              * First consideration: extrema cannot be found on any outermost edge,
-        //              * one pixel on the left, right, upper, lower edge will never qualify.
-        //              * Also, the upper and lower DoG layer will never qualify. So there is
-        //              * no reason for selecting any of those pixel for the center of a 3x3x3
-        //              * region.
-        //              * Instead, I use groups of 32xHEIGHT threads that read from a 34x34x3 area,
-        //              * but implicitly, they fetch * 64xHEIGHT+2x3 floats (bad luck).
-        //              * To find maxima, compare first on the left edge of the 3x3x3 cube, ie.
-        //              * a 1x3x3 area. If the rightmost 2 threads of a warp (x==30 and 3==31)
-        //              * are not extreme w.r.t. to the left slice, 8 fetch operations.
-        //              */
-        //
-        //             // sub-group(warp in cuda) is in 3D space along the nd_range[2] dimension and hence the problem
-        //             needs to be
-        //             // reorganized from the cuda equivalent for it to be the similar in hardware
-        //
-        //             // USE CUDA NAMING VARIABLES TO START OF WITH
-        //             const int block_x = it.get_group(2) * it.get_local_range(2); // local[2] == 32
-        //             const int block_y = it.get_group(1) * it.get_local_range(1); // local[1] == 4
-        //             const int block_z = it.get_group(0);
-        //             const int x = it.get_global_id(2) + 1;
-        //             const int y = it.get_global_id(1) + 1;
-        //             const int level = it.get_global_id(0) + 1;
-        //
-        //             // const float val = readTex(dog, x, y, level);
-        //             const float val = dog[level][x + y * width];
-        //
-        //             ModeFunctions<sift_mode> f;
-        //             if(!first_contrast_ok(val, d_consts))
-        //             {
-        //                 // return false;
-        //                 indicator = false;
-        //                 break;
-        //             }
-        //
-        //             if(!is_extremum(dog, x - 1, y - 1, level - 1, width, height))
-        //             {
-        //                 // return false;
-        //                 indicator = false;
-        //                 break;
-        //             }
-        //             //
-        //             //     // float3 D;  // Dx Dy Ds
-        //             //     // float3 DD; // Dxx Dyy Dss
-        //             //     // float3 DX; // Dxy Dxs Dys
-        //             //     // float3 d;  // dx dy ds
-        //             sycl::vec<float, 3> D;  // Dx Dy Ds
-        //             sycl::vec<float, 3> DD; // Dxx Dyy Dss
-        //             sycl::vec<float, 3> DX; // Dxy Dxs Dys
-        //             sycl::vec<float, 3> d;  // dx dy ds
-        //
-        //             float v = val;
-        //
-        //             //     // int3 n = make_int3(x, y, level); // nj ni ns
-        //             sycl::vec<int, 3> n{x, y, level};
-        //
-        //             int32_t iter = 0;
-        //
-        // #define MAX_ITERATIONS 5
-        // #define CLAMP_READ_DOG 1
-        //
-        // #if CLAMP_READ_DOG == 0
-        // #define READ_DOG(x, y, z) dog[z][x + y * width]
-        // #else
-        // // Full clamping
-        // #define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
-        // #define READ_DOG(x, y, z) dog[z][CLAMP(x, 0, width - 1) + CLAMP(y, 0, height - 1) * width]
-        //
-        // #endif
-        //
-        //             do
-        //             {
-        //                 iter++;
-        //
-        //                 // const int z = level - 1;
-        //
-        //                 // to ensure we are withing boundary (-1 is no problem) z is safe
-        //                 const int x_add = (n.x() + 1 >= width) ? 0 : 1;
-        //                 const int y_add = (n.y() + 1 >= height) ? 0 : 1;
-        //
-        //                 /* compute gradient */
-        //                 // const float x2y1z1 = readTex(dog, n.x + 1, n.y, n.z);
-        //                 // const float x0y1z1 = readTex(dog, n.x - 1, n.y, n.z);
-        //                 // const float x1y2z1 = readTex(dog, n.x, n.y + 1, n.z);
-        //                 // const float x1y0z1 = readTex(dog, n.x, n.y - 1, n.z);
-        //                 // const float x1y1z2 = readTex(dog, n.x, n.y, n.z + 1);
-        //                 // const float x1y1z0 = readTex(dog, n.x, n.y, n.z - 1);
-        //
-        //                 const float x2y1z1 = READ_DOG(n.x() + x_add, n.y(), n.z());
-        //                 const float x0y1z1 = READ_DOG(n.x() - 1, n.y(), n.z());
-        //                 const float x1y2z1 = READ_DOG(n.x(), n.y() + y_add, n.z());
-        //                 const float x1y0z1 = READ_DOG(n.x(), n.y() - 1, n.z());
-        //                 const float x1y1z2 = READ_DOG(n.x(), n.y(), n.z() + 1);
-        //                 const float x1y1z0 = READ_DOG(n.x(), n.y(), n.z() - 1);
-        //
-        //                 // TODO: Compare performance of using scalbnf vs doing the computation as shown in th
-        //                 commented out code
-        //                 // D.x = 0.5f * ( x2y1z1 - x0y1z1 );
-        //                 // D.y = 0.5f * ( x1y2z1 - x1y0z1 );
-        //                 // D.z = 0.5f * ( x1y1z2 - x1y1z0 );
-        //
-        //                 // Uses the cmath implementatino of scalbnf which is should be the same result as the cuda
-        //                 version
-        //                 // does scalbnf(x, n) = x * 2^n -- not sure if this is faster than the above in the case of
-        //                 SYCL D.x() = scalbnf(x2y1z1 - x0y1z1, -1); D.y() = scalbnf(x1y2z1 - x1y0z1, -1); D.z() =
-        //                 scalbnf(x1y1z2 - x1y1z0, -1);
-        //
-        //                 /* compute Hessian */
-        //                 // const float x1y1z1 = readTex(dog, n.x, n.y, n.z);
-        //                 const float x1y1z1 = READ_DOG(n.x(), n.y(), n.z());
-        //
-        //                 // DD.x = x2y1z1 + x0y1z1 - 2.0f * x1y1z1;
-        //                 // DD.y = x1y2z1 + x1y0z1 - 2.0f * x1y1z1;
-        //                 // DD.z = x1y1z2 + x1y1z0 - 2.0f * x1y1z1;
-        //                 DD.x() = x2y1z1 + x0y1z1 - scalbnf(x1y1z1, 1);
-        //                 DD.y() = x1y2z1 + x1y0z1 - scalbnf(x1y1z1, 1);
-        //                 DD.z() = x1y1z2 + x1y1z0 - scalbnf(x1y1z1, 1);
-        //
-        //                 const float x0y0z1 = READ_DOG(n.x() - 1, n.y() - 1, n.z());
-        //                 const float x0y1z0 = READ_DOG(n.x() - 1, n.y(), n.z() - 1);
-        //                 const float x0y1z2 = READ_DOG(n.x() - 1, n.y(), n.z() + 1);
-        //                 const float x0y2z1 = READ_DOG(n.x() - 1, n.y() + y_add, n.z());
-        //                 const float x1y0z0 = READ_DOG(n.x(), n.y() - 1, n.z() - 1);
-        //                 const float x1y0z2 = READ_DOG(n.x(), n.y() - 1, n.z() + 1);
-        //                 const float x1y2z0 = READ_DOG(n.x(), n.y() + y_add, n.z() - 1);
-        //                 const float x1y2z2 = READ_DOG(n.x(), n.y() + y_add, n.z() + 1);
-        //                 const float x2y0z1 = READ_DOG(n.x() + x_add, n.y() - 1, n.z());
-        //                 const float x2y1z0 = READ_DOG(n.x() + x_add, n.y(), n.z() - 1);
-        //                 const float x2y1z2 = READ_DOG(n.x() + x_add, n.y(), n.z() + 1);
-        //                 const float x2y2z1 = READ_DOG(n.x() + x_add, n.y() + y_add, n.z());
-        //
-        //                 // DX.x = 0.25f * ( x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1 );
-        //                 // DX.y = 0.25f * ( x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0 );
-        //                 // DX.z = 0.25f * ( x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2 );
-        //                 DX.x() = scalbnf(x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1, -2);
-        //                 DX.y() = scalbnf(x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0, -2);
-        //                 DX.z() = scalbnf(x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2, -2);
-        //
-        //                 // PROBLEM CODE BELOW THIS LINE
-        //                 // float3 b;
-        //                 sycl::vec<float, 3> b;
-        //                 float A[3][3];
-        //
-        //                 /* Solve linear system. */
-        //                 A[0][0] = DD.x();
-        //                 A[1][1] = DD.y();
-        //                 A[2][2] = DD.z();
-        //                 A[1][0] = A[0][1] = DX.x();
-        //                 A[2][0] = A[0][2] = DX.y();
-        //                 A[2][1] = A[1][2] = DX.z();
-        //
-        //                 b.x() = -D.x();
-        //                 b.y() = -D.y();
-        //                 b.z() = -D.z();
-        //
-        //                 if(!solve(A, b))
-        //                 {
-        //                     d.x() = 0;
-        //                     d.y() = 0;
-        //                     d.z() = 0;
-        //                     break;
-        //                 }
-        //
-        //                 d = b;
-        //
-        //                 /* If the translation of the keypoint is big, move the keypoint
-        //                  * and re-iterate the computation. Otherwise we are all set.
-        //                  */
-        //
-        //                 // sycl::ext::oneapi::experimental::printf("PRINT FROM EXTREMUM");
-        //                 // EVEN THIS FAILS -- seems like these accesses are the source of problems look into!!!!
-        //                 // sycl::ext::oneapi::experimental::printf(
-        //                 //   "PRINT FROM EXTREMUM d = (%f, %f, %f) -- n = (%f, %f, %f)", d.x(), d.y(), d.z(), n.x(),
-        //                 n.y(),
-        //                 //   n.z());
-        //
-        //                 // THIS IS THE PROBLEM CHILD FOR SOME REASON!!!
-        //                 // const int retval = f.refine(d, n, width, height, maxlevel, iter == MAX_ITERATIONS);
-        //
-        //                 // if(retval == 1)
-        //                 // {
-        //                 //     break;
-        //                 // }
-        //             } while(iter < MAX_ITERATIONS); /* go to next iter */
-        //
-        //             //
-        //             //     if(d.x >= 1.5f || d.y >= 1.5f || d.z >= 1.5f)
-        //             //     {
-        //             //         // excessive pixel movement in at least dimension, reject
-        //             //         return false;
-        //             //     }
-        //             //
-        //             //     const float xn = n.x + d.x;
-        //             //     const float yn = n.y + d.y;
-        //             //     const float sn = n.z + d.z;
-        //             //
-        //             //     if(!verify(xn, yn, sn, width, height, maxlevel))
-        //             //     {
-        //             //         return false;
-        //             //     }
-        //             //
-        //             //     // float contr   = v + 0.5f * (D.x * d.x + D.y * d.y + D.z * d.z);
-        //             //     const float contr = v + scalbnf(D.x * d.x + D.y * d.y + D.z * d.z, -1);
-        //             //     const float tr = DD.x + DD.y;
-        //             //     const float det = DD.x * DD.y - DX.x * DX.x;
-        //             //     const float edgeval = tr * tr / det;
-        //             //
-        //             //     /* negative determinant => curvatures have different signs -> reject it */
-        //             //     if(det <= 0.0f)
-        //             //     {
-        //             //         return false;
-        //             //     }
-        //             //
-        //             //     /* accept-reject extremum */
-        //             //     // if( fabsf(contr) < (d_consts.threshold*2.0f) )
-        //             //     if(fabsf(contr) < scalbnf(d_consts.threshold, 1))
-        //             //     {
-        //             //         return false;
-        //             //     }
-        //             //
-        //             //     /* reject condition: tr(H)^2/det(H) < (r+1)^2/r */
-        //             //     if(edgeval >= (d_consts.edge_limit + 1.0f) * (d_consts.edge_limit + 1.0f) /
-        //             d_consts.edge_limit)
-        //             //     {
-        //             //         return false;
-        //             //     }
-        //             //
-        //             //     ec.xpos = xn;
-        //             //     ec.ypos = yn;
-        //             //     ec.lpos = (int)roundf(sn);
-        //             //     ec.sigma = d_consts.sigma0 * pow(d_consts.sigma_k, sn); // * 2;
-        //             //     ec.cell = floorf(yn / h_grid_divider) * grid_width + floorf(xn / w_grid_divider);
-        //             //     // const float sigma_k = powf(2.0f, 1.0f / levels );
-        //
-        //             indicator = true;
-        //         } while(false); // Runs once so we can use break (just for debuggin purposes)
+        // if(it.get_global_linear_id() == 1628073)
+        // if(it.get_global_id(2) == 640 && it.get_global_id(1) == 221 && it.get_global_id(0) == 0)
+        if(it.get_global_linear_id() == 960017)
+        {
+            sycl::ext::oneapi::experimental::printf("Initial extremum at pos(%d, %d %d): xpos=%f ypos=%f -- lpos=%d "
+                                                    "sigma=%f cell=%d write_index=%d indicator=%d\n",
+                                                    it.get_global_id(2),
+                                                    it.get_global_id(1),
+                                                    it.get_global_id(0),
+                                                    ec.xpos,
+                                                    ec.ypos,
+                                                    ec.lpos,
+                                                    ec.sigma,
+                                                    ec.cell,
+                                                    // ec.ignore,
+                                                    ec.write_index,
+                                                    indicator);
+        }
     }
 };
 
