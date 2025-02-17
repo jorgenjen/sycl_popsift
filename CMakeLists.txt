@@ -36,6 +36,10 @@ find_package(IntelSYCL REQUIRED) # should de added after project definition
 # Not specifying any sources to add_sycl_to_target() adds SYCL compilation to all sources, 
 # which may affect compilation time significantly:
 
+# SEtting build type to get dbugsymbols
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug)
+endif()
 
 
 

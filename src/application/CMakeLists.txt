@@ -15,6 +15,7 @@ if(NOT CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     # CMake 3.23.5 is the minimum recommended for IntelLLVM on Linux
     cmake_minimum_required(VERSION 3.23.5)
     set(CMAKE_CXX_COMPILER icpx)
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g") # To avod optimizations and enable debugging symbols in addition to line below making debugging easier
   endif()
 
 

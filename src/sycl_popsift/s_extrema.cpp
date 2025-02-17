@@ -35,11 +35,11 @@ typedef struct int3
 {
     int x, y, z;
 } int3;
-//
-// typedef struct float3
-// {
-//     float x, y, z;
-// } float3;
+
+typedef struct float3
+{
+    float x, y, z;
+} float3;
 
 static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, uint32_t mask)
 {
@@ -52,7 +52,7 @@ static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, 
 
 // different clamping I think I only need for bottom and right -- z should always be safe
 // REFINE makes the requirement go up to full clamp mode
-#define CLAMP_MODE 2
+#define CLAMP_MODE 3
 #if CLAMP_MODE == 0
 // no clamping
 #define DOG(dx, dy, dz) dog[z + dz][x + dx + (y + dy) * width]
@@ -60,9 +60,13 @@ static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, 
 // Clamping for bottom and right
 #define DOG(dx, dy, dz)                                                                                                \
     (x + dx >= width && y + dy >= height) ? dog[z + dz][width - 1 + (height - 1) * width]                              \
-    : (x + dx >= width)                   ? dog[z + dz][width - 1 + (y + dy) * width]                                  \
     : (y + dy >= height)                  ? dog[z + dz][x + dx + (height - 1) * width]                                 \
+    : (x + dx >= width)                   ? dog[z + dz][width - 1 + (y + dy) * width]                                  \
                                           : dog[z + dz][x + dx + (y + dy) * width]
+
+#elif CLAMP_MODE == 2
+#define CLAMP(val, max) ((val) > (max) ? (max) : (val)) // the parenthesies avoid operator precedence problems(?)
+#define DOG(dx, dy, dz) dog[z + dz][CLAMP(x + dx, width - 1) + CLAMP(y + dy, height - 1) * width]
 
 #else
 // Full clamping
@@ -197,8 +201,8 @@ class ModeFunctions<Config::RefineInOctave>
 {
   public:
     // inline int refine(float3& d, int3& n, int width, int height, int maxlevel, bool last_it) const
-    inline int refine(sycl::vec<float, 3> d,
-                      sycl::vec<int, 3> n,
+    inline int refine(sycl::vec<float, 3>& d,
+                      sycl::vec<int, 3>& n,
                       int width,
                       int height,
                       int maxlevel,
@@ -210,39 +214,40 @@ class ModeFunctions<Config::RefineInOctave>
 
         // int3 t;
 
-        // sycl::vec<int, 3> t;
-        int3 t;
+        sycl::vec<int, 3> t;
+        // int3 t;
 
-        t.x = ((d.x() >= 0.6f && n.x() < width - 2) ? 1 : 0) + ((d.x() <= -0.6f && n.x() > 1) ? -1 : 0);
+        t.x() = ((d.x() >= 0.6f && n.x() < width - 2) ? 1 : 0) + ((d.x() <= -0.6f && n.x() > 1) ? -1 : 0);
 
-        t.y = ((d.y() >= 0.6f && n.y() < height - 2) ? 1 : 0) + ((d.y() <= -0.6f && n.y() > 1) ? -1 : 0);
+        t.y() = ((d.y() >= 0.6f && n.y() < height - 2) ? 1 : 0) + ((d.y() <= -0.6f && n.y() > 1) ? -1 : 0);
 
-        t.z = ((d.z() >= 0.6f && n.z() < maxlevel - 1) ? 1 : 0) + ((d.z() <= -0.6f && n.z() > 1) ? -1 : 0);
+        t.z() = ((d.z() >= 0.6f && n.z() < maxlevel - 1) ? 1 : 0) + ((d.z() <= -0.6f && n.z() > 1) ? -1 : 0);
 
-        if(t.x == 0 && t.y == 0 && t.z == 0)
+        if(t.x() == 0 && t.y() == 0 && t.z() == 0)
         {
             // no more changes
             return 1;
         }
         sycl::ext::oneapi::experimental::printf(
           "\n\t\tINSIDE REFINE ------------- d = (%f, %f, %f) -- n = (%d, %d, %d) -- t = (%d, %d, %d), global_id = %d",
+          d.x(),
           d.y(),
           d.z(),
           n.x(),
           n.y(),
           n.z(),
-          t.x,
-          t.y,
-          t.z,
+          t.x(),
+          t.y(),
+          t.z(),
           global_id);
 
         // mine
         // return 1;
 
         // FROM changing thees values the problems occur...
-        n.x() += t.x;
-        n.y() += t.y;
-        n.z() += t.z;
+        n.x() += t.x();
+        n.y() += t.y();
+        n.z() += t.z();
 
         return 0;
     }
@@ -361,7 +366,9 @@ inline bool find_extrema_in_dog_sub(float** dog,
 #else
 // Full clamping
 #define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
-#define READ_DOG(x, y, z) dog[z][CLAMP(x, 0, width - 1) + CLAMP(y, 0, height - 1) * width]
+#define READ_DOG(x, y, z)                                                                                              \
+    dog[CLAMP(z, 0, it.get_global_range(0) + 1)][CLAMP(x, 0, width - 1) + CLAMP(y, 0, height - 1) * width]
+    // #define READ_DOG(x, y, z) dog[z][CLAMP(x, 0, 1279) + CLAMP(y, 0, 851) * 1280] // Testing with hardcoded w and h
 
 #endif
 
@@ -481,15 +488,18 @@ inline bool find_extrema_in_dog_sub(float** dog,
         // {
         //     out[0]++; // next uppercase char started as A
         // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
-        sycl::ext::oneapi::experimental::printf(
-          "\n\t\tPRE refine called with ---- d = (%f, %f, %f) -- n = (%d, %d, %d) -- Globla_linearized_id = %d",
-          d.x(),
-          d.y(),
-          d.z(),
-          n.x(),
-          n.y(),
-          n.z(),
-          it.get_global_linear_id());
+        sycl::ext::oneapi::experimental::printf("\n\t\tPRE refine called with ---- d = (%f, %f, %f) -- n = (%d, %d, "
+                                                "%d) -- Globla_linearized_id = %d ----- w=%d -- h=%d -- max_z=%d",
+                                                d.x(),
+                                                d.y(),
+                                                d.z(),
+                                                n.x(),
+                                                n.y(),
+                                                n.z(),
+                                                it.get_global_linear_id(),
+                                                width,
+                                                height,
+                                                it.get_global_range(0));
         // }
 
         // THIS IS THE PROBLEM CHILD FOR SOME REASON!!!
@@ -499,15 +509,18 @@ inline bool find_extrema_in_dog_sub(float** dog,
         // {
         // out[0]++; // next uppercase char started as A
         // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
-        sycl::ext::oneapi::experimental::printf(
-          "\n\t\tAFTER refine called with -- d = (%f, %f, %f) -- n = (%d, %d, %d) -- Globla_linearized_id = %d\n",
-          d.x(),
-          d.y(),
-          d.z(),
-          n.x(),
-          n.y(),
-          n.z(),
-          it.get_global_linear_id());
+        sycl::ext::oneapi::experimental::printf("\n\t\tAFTER refine called with -- d = (%f, %f, %f) -- n = (%d, %d, "
+                                                "%d) -- Globla_linearized_id = %d iter = %d -- w=%d - h=%d\n",
+                                                d.x(),
+                                                d.y(),
+                                                d.z(),
+                                                n.x(),
+                                                n.y(),
+                                                n.z(),
+                                                it.get_global_linear_id(),
+                                                iter,
+                                                width,
+                                                height);
         // }
 
         if(retval == 1)
