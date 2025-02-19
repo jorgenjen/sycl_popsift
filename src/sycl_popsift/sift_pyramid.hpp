@@ -78,6 +78,10 @@ class Pyramid
     popsift::GaussInfo* _d_gauss;  // copy of same pointer as PopSift's _d_gauss and it deals with freeing it
     popsift::ConstInfo* _d_consts; // copy of same pointer as Popsift's _d_consts and it deals with freeing it
 
+    // Global memory not supported by sycl
+    ExtremaCounters _hct;  // host // not sure if we want to have this global like h_consts and h_gauss
+    ExtremaCounters* _dct; // device
+
     /* the download of converted descriptors should be asynchronous */
     // cudaStream_t _download_stream;
 

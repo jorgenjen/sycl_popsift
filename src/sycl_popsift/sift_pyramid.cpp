@@ -62,7 +62,22 @@ Pyramid::Pyramid(const Config& config,
     // memset(&hct, 0, sizeof(ExtremaCounters));
     // cudaMemcpyToSymbol(dct, &hct, sizeof(ExtremaCounters), 0,
     // cudaMemcpyHostToDevice);
-    //
+
+    memset(&_hct, 0, sizeof(ExtremaCounters));
+
+    try
+    {
+        _dct = sycl::malloc_device<ExtremaCounters>(1, Q);
+    }
+    catch(const sycl::exception& e)
+    {
+        std::stringstream ss;
+        ss << "Octave memory allocation failed" << e.what();
+        POP_FATAL(ss.str());
+        // std::cerr << "Memory allocation failed: " << e.what() << std::endl;
+    }
+    Q.memset(_dct, 0, sizeof(ExtremaCounters));
+
     // memset(&hbuf, 0, sizeof(ExtremaBuffers));
     // memset(&dbuf_shadow, 0, sizeof(ExtremaBuffers));
     //
@@ -120,6 +135,7 @@ Pyramid::~Pyramid()
 {
     // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
     sycl::free(_d_extrema_num_blocks, _device_queue);
+    sycl::free(_dct, _device_queue);
 }
 
 std::vector<sycl::event> Pyramid::step1(const Config& conf,
