@@ -13,6 +13,7 @@
 // #include "s_solve.h" # Need this one later on
 #include "sift_constants.hpp"
 #include "sift_pyramid.hpp"
+#include "sycl/group_algorithm.hpp"
 #include "sycl/kernel_bundle_enums.hpp"
 #include "sycl/nd_item.hpp"
 #include "sycl/sub_group.hpp"
@@ -40,6 +41,66 @@ typedef struct float3
 {
     float x, y, z;
 } float3;
+
+// template<int HEIGHT>
+// Must take care here as sub-group will not be 32 in all cases like a warp in cuda
+// should also make the blocks based on sub-group multiplier(idk what the name was) preference of the device used
+// static inline uint32_t extrema_count(unsigned int indicator, int* extrema_counter, sycl::nd_item<3>& it)
+// Not sure why indicator was not bool ??
+static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
+{
+    // uint32_t mask = popsift::ballot(indicator); // bitfield of warps with results
+    // int ct = __popc(mask); // horizontal reduce
+
+    // Just do a reduce here instead
+
+    // sub_group is undergoing change and not recomended to use but seems most fitting in this case
+    sycl::sub_group sub_group = it.get_sub_group();
+
+#define USE_MASK 1
+#if USE_MASK == 1
+    // Should be the same as ballot_sync and __popc
+    uint32_t mask = sycl::reduce_over_group(
+      sub_group,
+      indicator ? (1u << sub_group.get_local_id()[0]) : 0u,
+      sycl::ext::oneapi::bit_or<uint32_t>()); // better to get_local_id from sub group or it? should be same
+    int ct = sycl::popcount(mask);
+#else
+    // basic reduce to sum indicators being true
+    // int ct = sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
+    int ct = sycl::reduce_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
+#endif
+    if(it.get_group(2) == 0 && it.get_group(1) == 0 && it.get_local_id(2) == 0)
+    {
+        sycl::ext::oneapi::experimental::printf("Number of sub_groups in work_group= %d\n",
+                                                sub_group.get_group_range().size());
+        sycl::ext::oneapi::experimental::printf("Sub group size = %d\n", sub_group.get_local_range().size());
+    }
+
+    // if(ct > 1 && sub_group.get_local_id() == 0)
+    // {
+    //     sycl::ext::oneapi::experimental::printf("ct = %d -- block(%zu, %zu)", ct, it.get_group(2), it.get_group(1));
+    // }
+
+    // int write_index;
+    // if(threadIdx.x == 0)
+    // {
+    //     // atomicAdd returns the old value, we consider this the based
+    //     // index for this thread's write operation
+    //     write_index = atomicAdd(extrema_counter, ct);
+    // }
+    // // broadcast from thread 0 to all threads in warp
+    // // write_index = popsift::shuffle(write_index, 0);
+    // write_index = sycl::group_broadcast(it.get_group(), write_index, 0); // work-item 0 broadcasts to all in
+    // sub-group
+    //
+    // // this thread's offset: count only bits below the bit of the own
+    // // thread index; this provides the 0 result and every result up to ct
+    // write_index += __popc(mask & ((1 << threadIdx.x) - 1));
+    //
+    // return write_index;
+    return 0;
+}
 
 static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, uint32_t mask)
 {
@@ -69,7 +130,7 @@ static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, 
 #define DOG(dx, dy, dz) dog[z + dz][CLAMP(x + dx, width - 1) + CLAMP(y + dy, height - 1) * width]
 
 #else
-// Full clamping
+// Full clamping // Probs better of using sycl::clamp here
 #define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
 #define DOG(dx, dy, dz) dog[z + dz][CLAMP(x + dx, 0, width - 1) + CLAMP(y + dy, 0, height - 1) * width]
 
@@ -273,9 +334,8 @@ inline bool find_extrema_in_dog_sub(float** dog,
                                     float h_grid_divider,
                                     int grid_width,
                                     InitialExtremum& ec,
-                                    sycl::nd_item<3> it,
-                                    const popsift::ConstInfo* d_consts,
-                                    char* out)
+                                    sycl::nd_item<3>& it,
+                                    const popsift::ConstInfo* d_consts)
 // sycl::stream out)
 // sycl::accessor<char, 1, sycl::access::mode::write> acc)
 {
@@ -604,7 +664,7 @@ class find_extrema_in_dog
     const float h_grid_divider;
     const int grid_width;
     const popsift::ConstInfo* d_consts;
-    char* out;
+    ExtremaCounters* dct;
 
   public:
     find_extrema_in_dog(float** dog,
@@ -618,7 +678,7 @@ class find_extrema_in_dog
                         const float h_grid_divider,
                         const int grid_width,
                         const popsift::ConstInfo* d_consts,
-                        char* out)
+                        ExtremaCounters* dct)
       : dog(dog)
       , octave(octave)
       , width(width)
@@ -630,7 +690,7 @@ class find_extrema_in_dog
       , h_grid_divider(h_grid_divider)
       , grid_width(grid_width)
       , d_consts(d_consts)
-      , out(out)
+      , dct(dct)
     {}
 
     inline void operator()(sycl::nd_item<3> it) const
@@ -641,8 +701,19 @@ class find_extrema_in_dog
         // {
         //     sycl::ext::oneapi::experimental::printf("PRINT IN find extrema in dog kernel!!\n");
         // }
+
+        // not sure if it needs it seems like inline functions have access to local
+        // could be a special case with it being available always in device code
+        // or that inline is inlined :D and hence has access
         bool indicator = find_extrema_in_dog_sub<sift_mode>(
-          dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, ec, it, d_consts, out);
+          dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, ec, it, d_consts);
+
+        // if(it.get_local_id(0) == 0 && it.get_local_id(1) == 0 && it.get_local_id(0) == 0)
+        // if(it.get_group(2) == 5 && it.get_group(1) == 3)
+        // {
+        //     sycl::id<3> i = it.get_local_id();
+        //     sycl::ext::oneapi::experimental::printf("local_id (%zu, %zu, %zu)", i[2], i[1], i[0]);
+        // }
 
         // if(it.get_global_linear_id() == 1628073)
         // if(it.get_global_id(2) == 640 && it.get_global_id(1) == 221 && it.get_global_id(0) == 0)
@@ -662,6 +733,42 @@ class find_extrema_in_dog
                                                     ec.write_index,
                                                     indicator);
         }
+
+        // Don't think the tamplate argument does anything
+        // uint32_t write_index = extrema_count<HEIGHT>(indicator, &dct.ext_ct[octave]);
+        uint32_t write_index = extrema_count(indicator, &dct->ext_ct[octave], it);
+        //
+        //     InitialExtremum* d_extrema = dobuf.i_ext_dat[octave];
+        //     int* d_ext_off = dobuf.i_ext_off[octave];
+        //
+        //     if(indicator && write_index < d_consts.max_extrema)
+        //     {
+        //         ec.write_index = write_index;
+        //         // store the initial extremum in an array
+        //         d_extrema[write_index] = ec;
+        //
+        //         // index for indirect access to d_extrema, to enable
+        //         // access after filtering some initial extrema
+        //         d_ext_off[write_index] = write_index;
+        //     }
+        //
+        //     // without syncthreads, (0,0) threads may precede some calls to extrema_count()
+        //     // in non-(0,0) threads and increase barrier count too early
+        //     // __syncthreads();
+        //     sycl::group_barrier(it.get_group()); // from book -- barrier on the group same as __syncthreads();
+        //                                          // can also be done for sub-groups by passing that group like
+        //                                          __syncwarp()
+        //
+        //     if(threadIdx.x == 0 && threadIdx.y == 0)
+        //     {
+        //         int ct = atomicAdd(d_number_of_blocks, 1);
+        //         if(ct >= number_of_blocks - 1)
+        //         {
+        //             int num_ext = atomicMin(&dct.ext_ct[octave], d_consts.max_extrema);
+        //             // printf( "Block %d,%d,%d num ext %d\n", blockIdx.x, blockIdx.y, blockIdx.z, dct.ext_ct[octave]
+        //             );
+        //         }
+        //     }
     }
 };
 
@@ -669,9 +776,6 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
 {
     static const int HEIGHT = 4;
 
-    char* out = sycl::malloc_shared<char>(1000, _device_queue);
-    out[0] = 'A';
-    out[1] = 'A';
     for(int octave = 0; octave < _num_octaves; octave++)
     {
         if(octave > 0)
@@ -700,7 +804,8 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
         // sycl::range local{LOCAL_X, HEIGHT, (size_t)_levels - 3};
         // // sycl::range local{LOCAL_X, HEIGHT, 1};
         // sycl::range global{
-        //   (size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1)), (size_t)_levels - 3};
+        //   (size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1)), (size_t)_levels -
+        //   3};
 
         // Based on the fact that sub-group is along nd_range[2]:
         sycl::range local{1, HEIGHT, LOCAL_X};
@@ -736,7 +841,6 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
             default:
                 printf("RefineInOctave type popsift default\n");
                 _device_queue.submit([&](sycl::handler& cgh) {
-                    // sycl::stream out(1024, 256, cgh); // output buffer
                     cgh.depends_on({dependencies[octave], d_consts_write});
                     cgh.parallel_for(sycl::nd_range{global, local},
                                      find_extrema_in_dog<HEIGHT, Config::RefineInOctave>(oct_obj.getDogArray(),
@@ -750,7 +854,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                                                                                          oct_obj.getHGridDivider(),
                                                                                          conf.getFilterGridSize(),
                                                                                          _d_consts,
-                                                                                         out));
+                                                                                         _dct));
                 });
                 break;
         }
@@ -758,11 +862,9 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
         // cuda::event_record(oct_obj.getEventExtremaDone(), oct_str, __FILE__, __LINE__);
     }
     _device_queue.wait();
-    fflush(stderr);
-    fflush(stdout);
-    fprintf(stderr, "\n\n\t\tHello there mate how we doin");
-    // fprintf(stderr, "From out: %s", out);
-    sycl::free(out, _device_queue);
+    // fflush(stderr);
+    // fflush(stdout);
+    // fprintf(stderr, "\n\n\t\tHello there mate how we doin");
 }
 
 } // namespace popsift
