@@ -74,20 +74,26 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
     // int ct = sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
     int ct = sycl::reduce_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
 #endif
-    if(it.get_group(2) == 0 && it.get_group(1) == 0 && it.get_local_id(2) == 3)
-    {
-        sycl::ext::oneapi::experimental::printf("Number of sub_groups in work_group= %d\n",
-                                                sub_group.get_group_range().size());
-        sycl::ext::oneapi::experimental::printf("Sub group size = %d\n", sub_group.get_local_range().size());
-    }
-
-    // if(ct > 1 && sub_group.get_local_id() == 0)
+    // if(it.get_group(2) == 0 && it.get_group(1) == 0 && it.get_local_id(2) == 3)
     // {
-    //     sycl::ext::oneapi::experimental::printf("ct = %d -- block(%zu, %zu)", ct, it.get_group(2), it.get_group(1));
+    //     sycl::ext::oneapi::experimental::printf("Number of sub_groups in work_group= %d\n",
+    //                                             sub_group.get_group_range().size());
+    //     sycl::ext::oneapi::experimental::printf("Sub group size = %d\n", sub_group.get_local_range().size());
+    // }
+
+    // if(ct > 0 && sub_group.leader())
+    // {
+    //     sycl::ext::oneapi::experimental::printf(
+    //       "\n\tct = %d -- block(%zu, %zu, %zu) -- %d == sub-group linear id in work-group",
+    //       ct,
+    //       it.get_group(2),
+    //       it.get_group(1),
+    //       it.get_group(0),
+    //       sub_group.get_group_linear_id());
     // }
 
     int write_index;
-    if(sub_group.leader()) // is always thread 0 in sub_group
+    if(sub_group.leader()) // is always work-item with local_id 0 in the sub_group
     {
         // SHould probably query first to ensure the memory scope and order is supported by the device
         // see page 540 (560 in pdf) // using memory_order_relaxed which any device should support
@@ -99,6 +105,23 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
                                        sycl::memory_order_relaxed,
                                        sycl::memory_scope_device,
                                        sycl::access::address_space::global_space>(*extrema_counter) += ct;
+    }
+
+    // work-item 0 broadcassts to all other same as leader work-item
+    // every one now get's the base value that they can add to
+    write_index = sycl::group_broadcast(sub_group, write_index, 0);
+
+    if(it.get_group(2) == 37 && it.get_group(1) == 126 && it.get_group(0) == 2 && sub_group.get_group_linear_id() == 14)
+    {
+        sycl::ext::oneapi::experimental::printf("\nmask=%zu, ct=%d, thread_mask = %d, AND_mask = %d, "
+                                                "population_count=%d, for work-item_id=%d, write_index = %d",
+                                                mask,
+                                                ct,
+                                                ((1 << sub_group.get_local_id()[0]) - 1),
+                                                (mask & ((1 << sub_group.get_local_id()[0]) - 1)),
+                                                sycl::popcount(mask & ((1 << sub_group.get_local_id()[0]) - 1)),
+                                                sub_group.get_local_id()[0],
+                                                write_index);
     }
 
     // int write_index;
