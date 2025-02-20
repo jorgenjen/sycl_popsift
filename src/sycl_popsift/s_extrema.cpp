@@ -13,8 +13,11 @@
 // #include "s_solve.h" # Need this one later on
 #include "sift_constants.hpp"
 #include "sift_pyramid.hpp"
+#include "sycl/access/access.hpp"
+#include "sycl/atomic_ref.hpp"
 #include "sycl/group_algorithm.hpp"
 #include "sycl/kernel_bundle_enums.hpp"
+#include "sycl/memory_enums.hpp"
 #include "sycl/nd_item.hpp"
 #include "sycl/sub_group.hpp"
 #include "sycl/usm.hpp"
@@ -60,6 +63,7 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
 #define USE_MASK 1
 #if USE_MASK == 1
     // Should be the same as ballot_sync and __popc
+    // Will work as long as sub-group is not larger than 32
     uint32_t mask = sycl::reduce_over_group(
       sub_group,
       indicator ? (1u << sub_group.get_local_id()[0]) : 0u,
@@ -70,7 +74,7 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
     // int ct = sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
     int ct = sycl::reduce_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
 #endif
-    if(it.get_group(2) == 0 && it.get_group(1) == 0 && it.get_local_id(2) == 0)
+    if(it.get_group(2) == 0 && it.get_group(1) == 0 && it.get_local_id(2) == 3)
     {
         sycl::ext::oneapi::experimental::printf("Number of sub_groups in work_group= %d\n",
                                                 sub_group.get_group_range().size());
@@ -81,6 +85,21 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
     // {
     //     sycl::ext::oneapi::experimental::printf("ct = %d -- block(%zu, %zu)", ct, it.get_group(2), it.get_group(1));
     // }
+
+    int write_index;
+    if(sub_group.leader()) // is always thread 0 in sub_group
+    {
+        // SHould probably query first to ensure the memory scope and order is supported by the device
+        // see page 540 (560 in pdf) // using memory_order_relaxed which any device should support
+
+        // The atomic add returns the old value in extrema_coutner before the addition which is considered the base
+        // As each thread uses this and adds to it's own counter (write_index) how many of the threads in the sub-group
+        // before it had it's indicator to true
+        write_index = sycl::atomic_ref<int,
+                                       sycl::memory_order_relaxed,
+                                       sycl::memory_scope_device,
+                                       sycl::access::address_space::global_space>(*extrema_counter) += ct;
+    }
 
     // int write_index;
     // if(threadIdx.x == 0)
