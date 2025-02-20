@@ -24,9 +24,6 @@
 #include "sycl/vector.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 
-// #include <cuda_runtime.h>
-// #include <texture_fetch_functions.h>
-
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -419,7 +416,7 @@ inline bool find_extrema_in_dog_sub(float** dog,
 #if CLAMP_READ_DOG == 0
 #define READ_DOG(x, y, z) dog[z][x + y * width]
 #else
-// Full clamping
+// Full clamping // Should probably use sycl::max and sycl::min
 #define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
 #define READ_DOG(x, y, z)                                                                                              \
     dog[CLAMP(z, 0, it.get_global_range(0) + 1)][CLAMP(x, 0, width - 1) + CLAMP(y, 0, height - 1) * width]
@@ -435,8 +432,8 @@ inline bool find_extrema_in_dog_sub(float** dog,
         // const int z = level - 1;
 
         // to ensure we are withing boundary (-1 is no problem) z is safe
-        const int x_add = (n.x() + 1 >= width) ? 0 : 1;
-        const int y_add = (n.y() + 1 >= height) ? 0 : 1;
+        // const int x_add = (n.x() + 1 >= width) ? 0 : 1;
+        // const int y_add = (n.y() + 1 >= height) ? 0 : 1;
 
         /* compute gradient */
         // const float x2y1z1 = readTex(dog, n.x() + 1, n.y(), n.z());
@@ -446,9 +443,9 @@ inline bool find_extrema_in_dog_sub(float** dog,
         // const float x1y1z2 = readTex(dog, n.x(), n.y(), n.z() + 1);
         // const float x1y1z0 = readTex(dog, n.x(), n.y(), n.z() - 1);
 
-        const float x2y1z1 = READ_DOG(n.x() + x_add, n.y(), n.z());
+        const float x2y1z1 = READ_DOG(n.x() + 1, n.y(), n.z());
         const float x0y1z1 = READ_DOG(n.x() - 1, n.y(), n.z());
-        const float x1y2z1 = READ_DOG(n.x(), n.y() + y_add, n.z());
+        const float x1y2z1 = READ_DOG(n.x(), n.y() + 1, n.z());
         const float x1y0z1 = READ_DOG(n.x(), n.y() - 1, n.z());
         const float x1y1z2 = READ_DOG(n.x(), n.y(), n.z() + 1);
         const float x1y1z0 = READ_DOG(n.x(), n.y(), n.z() - 1);
@@ -478,15 +475,15 @@ inline bool find_extrema_in_dog_sub(float** dog,
         const float x0y0z1 = READ_DOG(n.x() - 1, n.y() - 1, n.z());
         const float x0y1z0 = READ_DOG(n.x() - 1, n.y(), n.z() - 1);
         const float x0y1z2 = READ_DOG(n.x() - 1, n.y(), n.z() + 1);
-        const float x0y2z1 = READ_DOG(n.x() - 1, n.y() + y_add, n.z());
+        const float x0y2z1 = READ_DOG(n.x() - 1, n.y() + 1, n.z());
         const float x1y0z0 = READ_DOG(n.x(), n.y() - 1, n.z() - 1);
         const float x1y0z2 = READ_DOG(n.x(), n.y() - 1, n.z() + 1);
-        const float x1y2z0 = READ_DOG(n.x(), n.y() + y_add, n.z() - 1);
-        const float x1y2z2 = READ_DOG(n.x(), n.y() + y_add, n.z() + 1);
-        const float x2y0z1 = READ_DOG(n.x() + x_add, n.y() - 1, n.z());
-        const float x2y1z0 = READ_DOG(n.x() + x_add, n.y(), n.z() - 1);
-        const float x2y1z2 = READ_DOG(n.x() + x_add, n.y(), n.z() + 1);
-        const float x2y2z1 = READ_DOG(n.x() + x_add, n.y() + y_add, n.z());
+        const float x1y2z0 = READ_DOG(n.x(), n.y() + 1, n.z() - 1);
+        const float x1y2z2 = READ_DOG(n.x(), n.y() + 1, n.z() + 1);
+        const float x2y0z1 = READ_DOG(n.x() + 1, n.y() - 1, n.z());
+        const float x2y1z0 = READ_DOG(n.x() + 1, n.y(), n.z() - 1);
+        const float x2y1z2 = READ_DOG(n.x() + 1, n.y(), n.z() + 1);
+        const float x2y2z1 = READ_DOG(n.x() + 1, n.y() + 1, n.z());
 
         // DX.x = 0.25f * ( x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1 );
         // DX.y = 0.25f * ( x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0 );
