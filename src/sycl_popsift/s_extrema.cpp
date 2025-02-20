@@ -32,16 +32,6 @@
 namespace popsift {
 #define LOCAL_X 32
 
-typedef struct int3
-{
-    int x, y, z;
-} int3;
-
-typedef struct float3
-{
-    float x, y, z;
-} float3;
-
 // template<int HEIGHT> // did not do anything
 // Must take care here as sub-group will not be 32 in all cases like a warp in cuda
 // should also make the blocks based on sub-group multiplier(idk what the name was) preference of the device used
@@ -262,10 +252,7 @@ class ModeFunctions<Config::RefineInOctave>
         if(last_it)
             return 0;
 
-        // int3 t;
-
         sycl::vec<int, 3> t;
-        // int3 t;
 
         t.x() = ((d.x() >= 0.6f && n.x() < width - 2) ? 1 : 0) + ((d.x() <= -0.6f && n.x() > 1) ? -1 : 0);
 
@@ -278,14 +265,7 @@ class ModeFunctions<Config::RefineInOctave>
             // no more changes
             return 1;
         }
-        // sycl::ext::oneapi::experimental::printf(
-        //   "\n\t\tINSIDE REFINE ------------- d = (%f, %f, %f) -- n = (%d, %d, %d) -- t = (%d, %d, %d), global_id
-        //   = %d", d.x(), d.y(), d.z(), n.x(), n.y(), n.z(), t.x(), t.y(), t.z(), global_id);
 
-        // mine
-        // return 1;
-
-        // FROM changing thees values the problems occur...
         n.x() += t.x();
         n.y() += t.y();
         n.z() += t.z();
@@ -325,20 +305,11 @@ inline bool find_extrema_in_dog_sub(float** dog,
                                     InitialExtremum& ec,
                                     sycl::nd_item<3>& it,
                                     const popsift::ConstInfo* d_consts)
-// sycl::stream out)
-// sycl::accessor<char, 1, sycl::access::mode::write> acc)
 {
     ec.xpos = 0.0f;
     ec.ypos = 0.0f;
     ec.lpos = 0;
     ec.sigma = 0.0f;
-
-    // std::stringstream ss; // just for debug_print
-
-    // ss << "Print from kernel" << std::endl;
-    // std::string str = ss.str();
-    // std::copy(str.begin(), str.end(), debug_print);
-    // debug_print[str.size()] = '\0'; // Null-terminate the string
 
     /*
      * First consideration: extrema cannot be found on any outermost edge,
@@ -353,17 +324,10 @@ inline bool find_extrema_in_dog_sub(float** dog,
      * are not extreme w.r.t. to the left slice, 8 fetch operations.
      */
 
-    // const int block_x = blockIdx.x * 32;
-    // const int block_y = blockIdx.y * blockDim.y;
-    // const int block_z = blockIdx.z;
-    // const int y = block_y + threadIdx.y + 1;
-    // const int x = block_x + threadIdx.x + 1;
-    // const int level = block_z + 1;
-
     // sub-group(warp in cuda) is in 3D space along the nd_range[2] dimension and hence the problem needs to be
     // reorganized from the cuda equivalent for it to be the similar in hardware
 
-    // USE CUDA NAMING VARIABLES TO START OF WITH
+    // value in variables correspond to the values in the cuda version making the rest of the function almost identical
     const int block_x = it.get_group(2) * it.get_local_range(2); // local[2] == 32
     const int block_y = it.get_group(1) * it.get_local_range(1); // local[1] == 4
     const int block_z = it.get_group(0);
@@ -371,8 +335,24 @@ inline bool find_extrema_in_dog_sub(float** dog,
     const int y = it.get_global_id(1) + 1;
     const int level = it.get_global_id(0) + 1;
 
-    // const float val = readTex(dog, x, y, level);
-    const float val = dog[level][x + y * width];
+#define CLAMP_READ_DOG 1
+
+#if CLAMP_READ_DOG == 0
+#define READ_DOG(x, y, z) dog[z][x + y * width]
+#else
+// Full clamping // Should probably use sycl::clamp (but i cant get sycl::clamp to work)
+#define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
+#define READ_DOG(x, y, z)                                                                                              \
+    dog[CLAMP(z, 0, it.get_global_range(0) + 1)][CLAMP(x, 0, width - 1) + CLAMP(y, 0, height - 1) * width]
+
+// DOES NOT WORK...
+// #define READ_DOG(x, y, z) \
+//     dog[sycl::clamp<int>(z, 0, it.get_global_range(0) + 1)] \
+//        [sycl::clamp<int>(x, 0, width - 1) + sycl::clamp<int>(y, 0, height - 1) * width]
+#endif
+
+    // const float val = dog[level][x + y * width];
+    const float val = READ_DOG(x, y, level); // not sure if this one need's clamping (dont think so)
 
     ModeFunctions<sift_mode> f;
     if(!first_contrast_ok(val, d_consts))
@@ -382,11 +362,7 @@ inline bool find_extrema_in_dog_sub(float** dog,
     {
         return false;
     }
-    //
-    //     // float3 D;  // Dx Dy Ds
-    //     // float3 DD; // Dxx Dyy Dss
-    //     // float3 DX; // Dxy Dxs Dys
-    //     // float3 d;  // dx dy ds
+
     sycl::vec<float, 3> D;  // Dx Dy Ds
     sycl::vec<float, 3> DD; // Dxx Dyy Dss
     sycl::vec<float, 3> DX; // Dxy Dxs Dys
@@ -394,36 +370,11 @@ inline bool find_extrema_in_dog_sub(float** dog,
 
     float v = val;
 
-    //     // int3 n = make_int3(x, y, level); // nj ni ns
-    sycl::vec<int, 3> n(x, y, level);
-    // int3 n{x, y, level};
-
-    // if(out[1] != 'H')
-    // {
-    //     out[1]++;
-    //     sycl::ext::oneapi::experimental::printf(
-    //       "\t\nPrint n = (%d, %d, %d), x=%d y=%d level=%d", n.x(), n.y(), n.z(), x, y, level);
-    //     // n.x() = 87;
-    //     // sycl::ext::oneapi::experimental::printf(
-    //     //   "\t\nPrint n = (%d, %d, %d), x=%d y=%d level=%d\n\n", n.x(), n.y(), n.z(), x, y, level);
-    // }
+    sycl::vec<int, 3> n(x, y, level); // nj ni ns
 
     int32_t iter = 0;
 
 #define MAX_ITERATIONS 5
-#define CLAMP_READ_DOG 1
-
-#if CLAMP_READ_DOG == 0
-#define READ_DOG(x, y, z) dog[z][x + y * width]
-#else
-// Full clamping // Should probably use sycl::max and sycl::min
-#define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
-#define READ_DOG(x, y, z)                                                                                              \
-    dog[CLAMP(z, 0, it.get_global_range(0) + 1)][CLAMP(x, 0, width - 1) + CLAMP(y, 0, height - 1) * width]
-    // #define READ_DOG(x, y, z) dog[z][CLAMP(x, 0, 1279) + CLAMP(y, 0, 851) * 1280] // Testing with hardcoded w and
-    // h
-
-#endif
 
     do
     {
@@ -436,13 +387,6 @@ inline bool find_extrema_in_dog_sub(float** dog,
         // const int y_add = (n.y() + 1 >= height) ? 0 : 1;
 
         /* compute gradient */
-        // const float x2y1z1 = readTex(dog, n.x() + 1, n.y(), n.z());
-        // const float x0y1z1 = readTex(dog, n.x() - 1, n.y(), n.z());
-        // const float x1y2z1 = readTex(dog, n.x(), n.y() + 1, n.z());
-        // const float x1y0z1 = readTex(dog, n.x(), n.y() - 1, n.z());
-        // const float x1y1z2 = readTex(dog, n.x(), n.y(), n.z() + 1);
-        // const float x1y1z0 = readTex(dog, n.x(), n.y(), n.z() - 1);
-
         const float x2y1z1 = READ_DOG(n.x() + 1, n.y(), n.z());
         const float x0y1z1 = READ_DOG(n.x() - 1, n.y(), n.z());
         const float x1y2z1 = READ_DOG(n.x(), n.y() + 1, n.z());
@@ -450,27 +394,35 @@ inline bool find_extrema_in_dog_sub(float** dog,
         const float x1y1z2 = READ_DOG(n.x(), n.y(), n.z() + 1);
         const float x1y1z0 = READ_DOG(n.x(), n.y(), n.z() - 1);
 
-        // TODO: Compare performance of using scalbnf vs doing the computation as shown in th commented out code
-        // D.x = 0.5f * ( x2y1z1 - x0y1z1 );
-        // D.y = 0.5f * ( x1y2z1 - x1y0z1 );
-        // D.z = 0.5f * ( x1y1z2 - x1y1z0 );
+        // TODO: Compare scalbnf vs straight up doing the computation
+#define USE_SCALBNF 1
 
+#if USE_SCALBNF
         // Uses the cmath implementatino of scalbnf which is should be the same result as the cuda version
-        // does scalbnf(x, n) = x * 2^n -- not sure if this is faster than the above in the case of SYCL
+        // does scalbnf(x, n) = x * 2^n -- not sure if this is faster than the below in the case of SYCL
         D.x() = scalbnf(x2y1z1 - x0y1z1, -1);
         D.y() = scalbnf(x1y2z1 - x1y0z1, -1);
         D.z() = scalbnf(x1y1z2 - x1y1z0, -1);
+#else
+
+        D.x() = 0.5f * (x2y1z1 - x0y1z1);
+        D.y() = 0.5f * (x1y2z1 - x1y0z1);
+        D.z() = 0.5f * (x1y1z2 - x1y1z0);
+
+#endif
 
         /* compute Hessian */
-        // const float x1y1z1 = readTex(dog, n.x(), n.y(), n.z());
         const float x1y1z1 = READ_DOG(n.x(), n.y(), n.z());
 
-        // DD.x = x2y1z1 + x0y1z1 - 2.0f * x1y1z1;
-        // DD.y = x1y2z1 + x1y0z1 - 2.0f * x1y1z1;
-        // DD.z = x1y1z2 + x1y1z0 - 2.0f * x1y1z1;
+#if USE_SCALBNF
         DD.x() = x2y1z1 + x0y1z1 - scalbnf(x1y1z1, 1);
         DD.y() = x1y2z1 + x1y0z1 - scalbnf(x1y1z1, 1);
         DD.z() = x1y1z2 + x1y1z0 - scalbnf(x1y1z1, 1);
+#else
+        DD.x() = x2y1z1 + x0y1z1 - 2.0f * x1y1z1;
+        DD.y() = x1y2z1 + x1y0z1 - 2.0f * x1y1z1;
+        DD.z() = x1y1z2 + x1y1z0 - 2.0f * x1y1z1;
+#endif
 
         const float x0y0z1 = READ_DOG(n.x() - 1, n.y() - 1, n.z());
         const float x0y1z0 = READ_DOG(n.x() - 1, n.y(), n.z() - 1);
@@ -485,15 +437,16 @@ inline bool find_extrema_in_dog_sub(float** dog,
         const float x2y1z2 = READ_DOG(n.x() + 1, n.y(), n.z() + 1);
         const float x2y2z1 = READ_DOG(n.x() + 1, n.y() + 1, n.z());
 
-        // DX.x = 0.25f * ( x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1 );
-        // DX.y = 0.25f * ( x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0 );
-        // DX.z = 0.25f * ( x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2 );
+#if USE_SCALBNF
         DX.x() = scalbnf(x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1, -2);
         DX.y() = scalbnf(x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0, -2);
         DX.z() = scalbnf(x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2, -2);
+#else
+        DX.x() = 0.25f * (x2y2z1 + x0y0z1 - x0y2z1 - x2y0z1);
+        DX.y() = 0.25f * (x2y1z2 + x0y1z0 - x0y1z2 - x2y1z0);
+        DX.z() = 0.25f * (x1y2z2 + x1y0z0 - x1y2z0 - x1y0z2);
+#endif
 
-        // PROBLEM CODE BELOW THIS LINE
-        // float3 b;
         sycl::vec<float, 3> b;
         float A[3][3];
 
@@ -522,58 +475,7 @@ inline bool find_extrema_in_dog_sub(float** dog,
         /* If the translation of the keypoint is big, move the keypoint
          * and re-iterate the computation. Otherwise we are all set.
          */
-
-        // sycl::ext::oneapi::experimental::printf("PRINT FROM EXTREMUM");
-        // EVEN THIS FAILS -- seems like these accesses are the source of problems look into!!!!
-        // if(it.get_global_linear_id() == 815415)
-
-        // if(out[0] != 'H')
-        // {
-        //     out[0]++; // next uppercase char started as A
-        //     // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
-        //     sycl::ext::oneapi::experimental::printf("\nPRINT FROM EXTREMUM global_linear = %d\n",
-        //                                             it.get_global_linear_id());
-        //     sycl::ext::oneapi::experimental::printf(
-        //       "PRINT FROM EXTREMUM d = (%f, %f, %f) -- n = (%d, %d, %d)", d.x(), d.y(), d.z(), n.x(), n.y(),
-        //       n.z());
-        // }
-
-        // if(out[0] != 'H')
-        // {
-        //     out[0]++; // next uppercase char started as A
-        // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
-
-        // sycl::ext::oneapi::experimental::printf("\n\t\tPRE refine called with ---- d = (%f, %f, %f) -- n = (%d,
-        // %d, "
-        //                                         "%d) -- Globla_linearized_id = %d ----- w=%d -- h=%d --
-        //                                         max_z=%d", d.x(), d.y(), d.z(), n.x(), n.y(), n.z(),
-        //                                         it.get_global_linear_id(),
-        //                                         width,
-        //                                         height,
-        //                                         it.get_global_range(0));
-        // }
-
-        // THIS IS THE PROBLEM CHILD FOR SOME REASON!!!
         const int retval = f.refine(d, n, width, height, maxlevel, iter == MAX_ITERATIONS, it.get_global_linear_id());
-
-        // if(out[0] != 'H')
-        // {
-        // out[0]++; // next uppercase char started as A
-        // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
-        // sycl::ext::oneapi::experimental::printf("\n\t\tAFTER refine called with -- d = (%f, %f, %f) -- n = (%d,
-        // %d, "
-        //                                         "%d) -- Globla_linearized_id = %d iter = %d -- w=%d - h=%d\n",
-        //                                         d.x(),
-        //                                         d.y(),
-        //                                         d.z(),
-        //                                         n.x(),
-        //                                         n.y(),
-        //                                         n.z(),
-        //                                         it.get_global_linear_id(),
-        //                                         iter,
-        //                                         width,
-        //                                         height);
-        // }
 
         if(retval == 1)
         {
@@ -615,8 +517,11 @@ inline bool find_extrema_in_dog_sub(float** dog,
     }
 
     /* accept-reject extremum */
-    // if( fabsf(contr) < (d_consts.threshold*2.0f) )
+#if USE_SCALBNF
     if(fabsf(contr) < scalbnf(d_consts->threshold, 1))
+#else
+    if(fabsf(contr) < (d_consts.threshold * 2.0f))
+#endif
     {
         return false;
     }
