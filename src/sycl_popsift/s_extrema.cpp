@@ -45,18 +45,12 @@ typedef struct float3
     float x, y, z;
 } float3;
 
-// template<int HEIGHT>
+// template<int HEIGHT> // did not do anything
 // Must take care here as sub-group will not be 32 in all cases like a warp in cuda
 // should also make the blocks based on sub-group multiplier(idk what the name was) preference of the device used
-// static inline uint32_t extrema_count(unsigned int indicator, int* extrema_counter, sycl::nd_item<3>& it)
 // Not sure why indicator was not bool ??
 static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
 {
-    // uint32_t mask = popsift::ballot(indicator); // bitfield of warps with results
-    // int ct = __popc(mask); // horizontal reduce
-
-    // Just do a reduce here instead
-
     // sub_group is undergoing change and not recomended to use but seems most fitting in this case
     sycl::sub_group sub_group = it.get_sub_group();
 
@@ -74,24 +68,6 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
     // int ct = sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
     int ct = sycl::reduce_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
 #endif
-    // if(it.get_group(2) == 0 && it.get_group(1) == 0 && it.get_local_id(2) == 3)
-    // {
-    //     sycl::ext::oneapi::experimental::printf("Number of sub_groups in work_group= %d\n",
-    //                                             sub_group.get_group_range().size());
-    //     sycl::ext::oneapi::experimental::printf("Sub group size = %d\n", sub_group.get_local_range().size());
-    // }
-
-    // if(ct > 0 && sub_group.leader())
-    // {
-    //     sycl::ext::oneapi::experimental::printf(
-    //       "\n\tct = %d -- block(%zu, %zu, %zu) -- %d == sub-group linear id in work-group",
-    //       ct,
-    //       it.get_group(2),
-    //       it.get_group(1),
-    //       it.get_group(0),
-    //       sub_group.get_group_linear_id());
-    // }
-
     int write_index;
     if(sub_group.leader()) // is always work-item with local_id 0 in the sub_group
     {
@@ -99,8 +75,8 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
         // see page 540 (560 in pdf) // using memory_order_relaxed which any device should support
 
         // The atomic add returns the old value in extrema_coutner before the addition which is considered the base
-        // As each thread uses this and adds to it's own counter (write_index) how many of the threads in the sub-group
-        // before it had it's indicator to true
+        // As each thread uses this and adds to it's own counter (write_index) how many of the threads in the
+        // sub-group before it had it's indicator to true
         write_index = sycl::atomic_ref<int,
                                        sycl::memory_order_relaxed,
                                        sycl::memory_scope_device,
@@ -108,40 +84,14 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
     }
 
     // work-item 0 broadcassts to all other same as leader work-item
-    // every one now get's the base value that they can add to
+    // everyone now get's the base value that they can add to
     write_index = sycl::group_broadcast(sub_group, write_index, 0);
 
-    if(it.get_group(2) == 37 && it.get_group(1) == 126 && it.get_group(0) == 2 && sub_group.get_group_linear_id() == 14)
-    {
-        sycl::ext::oneapi::experimental::printf("\nmask=%zu, ct=%d, thread_mask = %d, AND_mask = %d, "
-                                                "population_count=%d, for work-item_id=%d, write_index = %d",
-                                                mask,
-                                                ct,
-                                                ((1 << sub_group.get_local_id()[0]) - 1),
-                                                (mask & ((1 << sub_group.get_local_id()[0]) - 1)),
-                                                sycl::popcount(mask & ((1 << sub_group.get_local_id()[0]) - 1)),
-                                                sub_group.get_local_id()[0],
-                                                write_index);
-    }
+    // Adds the sum of set bits in mask that has sub_grop local id lower than the current (exclusive)
+    //  this provides the 0 result and every result up to ct
+    write_index += sycl::popcount(mask & ((1 << sub_group.get_local_id()[0]) - 1)); // breaks if USE_MASK != 1
 
-    // int write_index;
-    // if(threadIdx.x == 0)
-    // {
-    //     // atomicAdd returns the old value, we consider this the based
-    //     // index for this thread's write operation
-    //     write_index = atomicAdd(extrema_counter, ct);
-    // }
-    // // broadcast from thread 0 to all threads in warp
-    // // write_index = popsift::shuffle(write_index, 0);
-    // write_index = sycl::group_broadcast(it.get_group(), write_index, 0); // work-item 0 broadcasts to all in
-    // sub-group
-    //
-    // // this thread's offset: count only bits below the bit of the own
-    // // thread index; this provides the 0 result and every result up to ct
-    // write_index += __popc(mask & ((1 << threadIdx.x) - 1));
-    //
-    // return write_index;
-    return 0;
+    return write_index;
 }
 
 static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, uint32_t mask)
@@ -332,8 +282,8 @@ class ModeFunctions<Config::RefineInOctave>
             return 1;
         }
         // sycl::ext::oneapi::experimental::printf(
-        //   "\n\t\tINSIDE REFINE ------------- d = (%f, %f, %f) -- n = (%d, %d, %d) -- t = (%d, %d, %d), global_id =
-        //   %d", d.x(), d.y(), d.z(), n.x(), n.y(), n.z(), t.x(), t.y(), t.z(), global_id);
+        //   "\n\t\tINSIDE REFINE ------------- d = (%f, %f, %f) -- n = (%d, %d, %d) -- t = (%d, %d, %d), global_id
+        //   = %d", d.x(), d.y(), d.z(), n.x(), n.y(), n.z(), t.x(), t.y(), t.z(), global_id);
 
         // mine
         // return 1;
@@ -473,7 +423,8 @@ inline bool find_extrema_in_dog_sub(float** dog,
 #define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
 #define READ_DOG(x, y, z)                                                                                              \
     dog[CLAMP(z, 0, it.get_global_range(0) + 1)][CLAMP(x, 0, width - 1) + CLAMP(y, 0, height - 1) * width]
-    // #define READ_DOG(x, y, z) dog[z][CLAMP(x, 0, 1279) + CLAMP(y, 0, 851) * 1280] // Testing with hardcoded w and h
+    // #define READ_DOG(x, y, z) dog[z][CLAMP(x, 0, 1279) + CLAMP(y, 0, 851) * 1280] // Testing with hardcoded w and
+    // h
 
 #endif
 
@@ -586,7 +537,8 @@ inline bool find_extrema_in_dog_sub(float** dog,
         //     sycl::ext::oneapi::experimental::printf("\nPRINT FROM EXTREMUM global_linear = %d\n",
         //                                             it.get_global_linear_id());
         //     sycl::ext::oneapi::experimental::printf(
-        //       "PRINT FROM EXTREMUM d = (%f, %f, %f) -- n = (%d, %d, %d)", d.x(), d.y(), d.z(), n.x(), n.y(), n.z());
+        //       "PRINT FROM EXTREMUM d = (%f, %f, %f) -- n = (%d, %d, %d)", d.x(), d.y(), d.z(), n.x(), n.y(),
+        //       n.z());
         // }
 
         // if(out[0] != 'H')
@@ -594,14 +546,10 @@ inline bool find_extrema_in_dog_sub(float** dog,
         //     out[0]++; // next uppercase char started as A
         // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
 
-        // sycl::ext::oneapi::experimental::printf("\n\t\tPRE refine called with ---- d = (%f, %f, %f) -- n = (%d, %d, "
-        //                                         "%d) -- Globla_linearized_id = %d ----- w=%d -- h=%d -- max_z=%d",
-        //                                         d.x(),
-        //                                         d.y(),
-        //                                         d.z(),
-        //                                         n.x(),
-        //                                         n.y(),
-        //                                         n.z(),
+        // sycl::ext::oneapi::experimental::printf("\n\t\tPRE refine called with ---- d = (%f, %f, %f) -- n = (%d,
+        // %d, "
+        //                                         "%d) -- Globla_linearized_id = %d ----- w=%d -- h=%d --
+        //                                         max_z=%d", d.x(), d.y(), d.z(), n.x(), n.y(), n.z(),
         //                                         it.get_global_linear_id(),
         //                                         width,
         //                                         height,
@@ -615,7 +563,8 @@ inline bool find_extrema_in_dog_sub(float** dog,
         // {
         // out[0]++; // next uppercase char started as A
         // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
-        // sycl::ext::oneapi::experimental::printf("\n\t\tAFTER refine called with -- d = (%f, %f, %f) -- n = (%d, %d, "
+        // sycl::ext::oneapi::experimental::printf("\n\t\tAFTER refine called with -- d = (%f, %f, %f) -- n = (%d,
+        // %d, "
         //                                         "%d) -- Globla_linearized_id = %d iter = %d -- w=%d - h=%d\n",
         //                                         d.x(),
         //                                         d.y(),
@@ -807,7 +756,8 @@ class find_extrema_in_dog
         //         if(ct >= number_of_blocks - 1)
         //         {
         //             int num_ext = atomicMin(&dct.ext_ct[octave], d_consts.max_extrema);
-        //             // printf( "Block %d,%d,%d num ext %d\n", blockIdx.x, blockIdx.y, blockIdx.z, dct.ext_ct[octave]
+        //             // printf( "Block %d,%d,%d num ext %d\n", blockIdx.x, blockIdx.y, blockIdx.z,
+        //             dct.ext_ct[octave]
         //             );
         //         }
         //     }
