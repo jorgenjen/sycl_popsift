@@ -8,6 +8,7 @@
 #include "sycl_popsift/sift_constants.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <sstream>
 #include <vector>
 
@@ -54,22 +55,6 @@ Pyramid::Pyramid(const Config& config,
         _octaves.emplace_back(Q);
     }
 
-    _d_extrema_num_blocks = popsift::common_sycl::malloc_devT<int>(
-      _num_octaves, __FILE__, __LINE__, "Global octave barrier allocation failed", Q);
-
-    memset(&_hct, 0, sizeof(ExtremaCounters));
-
-    _dct = popsift::common_sycl::malloc_devT<ExtremaCounters>(
-      1, __FILE__, __LINE__, "Device Extrema counter allocation failed", Q);
-    Q.memset(_dct, 0, sizeof(ExtremaCounters));
-
-    // memset(&hbuf, 0, sizeof(ExtremaBuffers));
-    // memset(&dbuf_shadow, 0, sizeof(ExtremaBuffers));
-    //
-    // _d_extrema_num_blocks = popsift::cuda::malloc_devT<int>(_num_octaves,
-    // __FILE__, __LINE__);
-    //
-
     int w = width;
     int h = height;
     for(int o = 0; o < _num_octaves; o++)
@@ -80,77 +65,76 @@ Pyramid::Pyramid(const Config& config,
         h = ceilf(h / 2.0f);
     }
 
-    // int sz = _num_octaves * h_consts.max_extrema;
-    // _dobuf = popsift::sycl_helpers::malloc_devT<DevBuffers>(
-    //   sz, __FILE__, __LINE__, "Devcie Orientation buffer allocation failed", _device_queue);
+    memset(&_hct, 0, sizeof(ExtremaCounters)); // might have a puprpose on the host side
 
-    // _dobuf = cuda::malloc_devT<DevBuffers>(
-    //   sz, __FILE__, __LINE__, "Devcie Orientation buffer allocation failed", _device_queue);
-    // DOBUF
+    // NOTE: Not sure if we want to have the custom error message for each malloc not sure if it gives any usefull
+    // information and it might slightly slow us down...
 
-    // int sz = _num_octaves * h_consts.max_extrema;
-    // try
-    // {
-    //     _dobuf = sycl::malloc_device<DevBuffers>(1, Q);
-    // }
-    // catch(const sycl::exception& e)
-    // {
-    //     std::stringstream ss;
-    //     ss << "Devcie Orientation buffer allocation failed" << e.what();
-    //     POP_FATAL(ss.str());
-    // }
-    //
-    // _dobuf->i_ext_dat[0] = popsift::cuda::malloc_devT<InitialExtremum>(sz, __FILE__, __LINE__, ");
-    // _dobuf->i_ext_off[0] = popsift::cuda::malloc_devT<int>(sz, __FILE__, __LINE__);
-    // for(int o = 1; o < _num_octaves; o++)
-    // {
-    //     _dobuf.i_ext_dat[o] = dobuf_shadow.i_ext_dat[0] + (o * h_consts.max_extrema);
-    //     dobuf.i_ext_off[o] = dobuf_shadow.i_ext_off[0] + (o * h_consts.max_extrema);
-    // }
+    _dct = popsift::common_sycl::malloc_devT<ExtremaCounters>(
+      1, __FILE__, __LINE__, "Device Extrema counter allocation failed", Q);
+    Q.memset(_dct, 0, sizeof(ExtremaCounters));
 
-    //
+    _d_extrema_num_blocks = popsift::common_sycl::malloc_devT<int>(
+      _num_octaves, __FILE__, __LINE__, "Global octave barrier allocation failed", Q);
 
-    // int sz = _num_octaves * h_consts.max_extrema;
-    // dobuf_shadow.i_ext_dat[0] = popsift::cuda::malloc_devT<InitialExtremum>(sz, __FILE__, __LINE__);
-    // dobuf_shadow.i_ext_off[0] = popsift::cuda::malloc_devT<int>(sz, __FILE__, __LINE__);
-    // for(int o = 1; o < _num_octaves; o++)
-    // {
-    //     dobuf_shadow.i_ext_dat[o] = dobuf_shadow.i_ext_dat[0] + (o * h_consts.max_extrema);
-    //     dobuf_shadow.i_ext_off[o] = dobuf_shadow.i_ext_off[0] + (o * h_consts.max_extrema);
-    // }
-    // for(int o = _num_octaves; o < MAX_OCTAVES; o++)
-    // {
-    //     dobuf_shadow.i_ext_dat[o] = nullptr;
-    //     dobuf_shadow.i_ext_off[o] = nullptr;
-    // }
-    //
-    // sz = h_consts.max_extrema;
-    // dobuf_shadow.extrema = popsift::cuda::malloc_devT<Extremum>(sz, __FILE__,
-    // __LINE__); dobuf_shadow.features =
-    // popsift::cuda::malloc_devT<Feature>(sz, __FILE__, __LINE__);
-    // hbuf.ext_allocated = sz;
-    // dbuf_shadow.ext_allocated = sz;
-    //
-    // sz = max(2 * h_consts.max_extrema, h_consts.max_orientations);
-    // hbuf.desc = popsift::cuda::malloc_hstT<Descriptor>(sz, __FILE__,
-    // __LINE__); dbuf_shadow.desc = popsift::cuda::malloc_devT<Descriptor>(sz,
-    // __FILE__, __LINE__); dobuf_shadow.feat_to_ext_map =
-    // popsift::cuda::malloc_devT<int>(sz, __FILE__, __LINE__);
+    // don't see the purpose of dobuf_shadow, so not using it untill I see a purpose for it (I probs will in future :D)
+    // I think it's mainly for some memory optimizations in cuda but might be wrong!
+
+    int sz = _num_octaves * h_consts.max_extrema; // h_consts.max_extrema is 100 000 by default
+    _dobuf = popsift::common_sycl::malloc_devT<DevBuffers>(
+      1, __FILE__, __LINE__, "Allocating device DevBuffers struct failed", Q);
+
+    // For 7 octaves case the total memory useage for this array is 196MB
+    _dobuf->i_ext_dat[0] = popsift::common_sycl::malloc_devT<InitialExtremum>(
+      sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", Q);
+
+    // For 7 octaves case the total memory useage for this array is 2.8MB
+    _dobuf->i_ext_off[0] = popsift::common_sycl::malloc_devT<int>(
+      sz, __FILE__, __LINE__, "Device extremum offset array allocation failed", Q);
+
+    // All octaves in one contigous memory segment that has 100k each in default case
+    // loop sets poitners to appropriate 0 positions per octave
+    for(int o = 1; o < _num_octaves; o++)
+    {
+        _dobuf->i_ext_dat[o] = _dobuf->i_ext_dat[0] + (o * h_consts.max_extrema);
+        _dobuf->i_ext_off[o] = _dobuf->i_ext_off[0] + (o * h_consts.max_extrema);
+    }
+    // set remaining to nullptr
+    for(int o = _num_octaves; o < MAX_OCTAVES; o++)
+    {
+        _dobuf->i_ext_dat[o] = nullptr;
+        _dobuf->i_ext_off[o] = nullptr;
+    }
+
+    sz = h_consts.max_extrema; // setting to 100 000 in default case octave num invariant
+    _dobuf->extrema =
+      popsift::common_sycl::malloc_devT<Extremum>(sz, __FILE__, __LINE__, "Device Extremum array allocation failed", Q);
+    _dobuf->features =
+      popsift::common_sycl::malloc_devT<Feature>(sz, __FILE__, __LINE__, "Device Feature array allocation failed", Q);
+    // hbuf.ext_allocated = sz; // don't know the purpose of this boy yet
+    // dbuf_shadow.ext_allocated = sz; // don't know puppose of this boy yet either
+
+    sz = std::max(2 * h_consts.max_extrema, h_consts.max_orientations);
+    // hbuf.desc = popsift::cuda::malloc_hstT<Descriptor>(sz, __FILE__, __LINE__);
+    // dbuf_shadow.desc = popsift::cuda::malloc_devT<Descriptor>(sz, __FILE__, __LINE__);
+    _dobuf->feat_to_ext_map =
+      popsift::common_sycl::malloc_devT<int>(sz, __FILE__, __LINE__, "Device feat_to_ext_map allocation failed", Q);
     // hbuf.ori_allocated = sz;
     // dbuf_shadow.ori_allocated = sz;
-    //
-    // cudaMemcpyToSymbol(dbuf, &dbuf_shadow, sizeof(ExtremaBuffers), 0,
-    // cudaMemcpyHostToDevice); cudaMemcpyToSymbol(dobuf, &dobuf_shadow,
-    // sizeof(DevBuffers), 0, cudaMemcpyHostToDevice);
-    //
-    // cudaStreamCreate(&_download_stream);
 }
 
 Pyramid::~Pyramid()
 {
     // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
+    printf("Destroying the Pyramid!\n");
     sycl::free(_d_extrema_num_blocks, _device_queue);
     sycl::free(_dct, _device_queue);
+
+    sycl::free(_dobuf->i_ext_dat[0], _device_queue);
+    sycl::free(_dobuf->i_ext_off[0], _device_queue);
+    sycl::free(_dobuf->features, _device_queue);
+    sycl::free(_dobuf->extrema, _device_queue);
+    sycl::free(_dobuf->feat_to_ext_map, _device_queue);
     sycl::free(_dobuf, _device_queue);
 }
 

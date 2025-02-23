@@ -22,7 +22,7 @@ using namespace std;
 namespace popsift {
 
 // thread_local ConstInfo h_consts;
-ConstInfo h_consts;
+ConstInfo h_consts; // Do I want this one to be global or refactor??? TODO: Decide!
 // ConstInfo* d_consts = nullptr;
 // __device__ __constant__ ConstInfo d_consts;
 

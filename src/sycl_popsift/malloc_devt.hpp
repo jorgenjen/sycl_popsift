@@ -9,7 +9,7 @@
 namespace popsift::common_sycl {
 
 template<class T>
-T* malloc_devT(int num, const char* file, int line, const char* message, sycl::queue Q)
+T* malloc_devT(int num, const char* file, int line, const char* error_message, sycl::queue Q)
 {
     T* ptr;
     try
@@ -20,7 +20,7 @@ T* malloc_devT(int num, const char* file, int line, const char* message, sycl::q
     catch(const sycl::exception& e)
     {
         std::stringstream ss;
-        ss << message << e.what();
+        ss << error_message << e.what();
         std::string error_msg = ss.str(); // seems to be required to have given message show up
         POP_FATAL_FL(ss.str(), file, line);
     }

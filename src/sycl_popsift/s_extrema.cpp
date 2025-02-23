@@ -595,7 +595,7 @@ class find_extrema_in_dog
         // Don't think the tamplate argument does anything
         // uint32_t write_index = extrema_count<HEIGHT>(indicator, &dct.ext_ct[octave]);
         uint32_t write_index = extrema_count(indicator, &dct->ext_ct[octave], it);
-        //
+
         //     InitialExtremum* d_extrema = dobuf.i_ext_dat[octave];
         //     int* d_ext_off = dobuf.i_ext_off[octave];
         //
