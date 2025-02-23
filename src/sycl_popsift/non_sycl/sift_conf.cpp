@@ -7,7 +7,7 @@
  */
 #include "sift_conf.hpp"
 
-#include "../common/debug_macros.hpp"
+#include "sycl_popsift/common/debug_macros.hpp"
 
 #include <iostream>
 

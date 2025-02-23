@@ -1,9 +1,9 @@
-
 #include "sycl_popsift/sift_pyramid.hpp"
 
 #include "sycl/usm.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
+#include "sycl_popsift/malloc_devt.hpp"
 #include "sycl_popsift/s_image.hpp" // not sure if needed to include here aswell clean up #includes at some point
 #include "sycl_popsift/sift_constants.hpp"
 
@@ -12,6 +12,24 @@
 #include <vector>
 
 namespace popsift {
+
+// T* malloc_devT(int num, sycl::queue& Q)
+// template<class T>
+// T* malloc_devT(int num, const char* file, int line, sycl::queue Q)
+// {
+//     T* ptr;
+//     try
+//     {
+//         ptr = sycl::malloc_device<T>(num, Q);
+//     }
+//     catch(const sycl::exception& e)
+//     {
+//         std::stringstream ss;
+//         ss << "Memory allocation failed" << e.what();
+//         POP_FATAL_FL(ss.str(), file, line);
+//     }
+//     return ptr;
+// }
 
 Pyramid::Pyramid(const Config& config,
                  int width,
@@ -36,46 +54,13 @@ Pyramid::Pyramid(const Config& config,
         _octaves.emplace_back(Q);
     }
 
-    // _octaves = &(new Octave(Q))[_num_octaves];
-
-    int w = width;
-    int h = height;
-
-    // Don't understand how this works as a octave global barrier as of yet
-    try
-    {
-        _d_extrema_num_blocks = sycl::malloc_device<int>(_num_octaves, Q);
-    }
-    catch(const sycl::exception& e)
-    {
-        std::stringstream ss;
-        ss << "Octave memory allocation failed" << e.what();
-        POP_FATAL(ss.str());
-        // std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-    }
-
-    // IMPORTANT: do next!!
-    // TODO: IMPORTANT -> Implement the constructor to pyramid
-
-    // NOT SURE IF I want them to be global like in POPSIFT or if
-    // I want them to be an attribute of the pyramid calss
-    // memset(&hct, 0, sizeof(ExtremaCounters));
-    // cudaMemcpyToSymbol(dct, &hct, sizeof(ExtremaCounters), 0,
-    // cudaMemcpyHostToDevice);
+    _d_extrema_num_blocks = popsift::common_sycl::malloc_devT<int>(
+      _num_octaves, __FILE__, __LINE__, "Global octave barrier allocation failed", Q);
 
     memset(&_hct, 0, sizeof(ExtremaCounters));
 
-    try
-    {
-        _dct = sycl::malloc_device<ExtremaCounters>(1, Q);
-    }
-    catch(const sycl::exception& e)
-    {
-        std::stringstream ss;
-        ss << "Octave memory allocation failed" << e.what();
-        POP_FATAL(ss.str());
-        // std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-    }
+    _dct = popsift::common_sycl::malloc_devT<ExtremaCounters>(
+      1, __FILE__, __LINE__, "Device Extrema counter allocation failed", Q);
     Q.memset(_dct, 0, sizeof(ExtremaCounters));
 
     // memset(&hbuf, 0, sizeof(ExtremaBuffers));
@@ -84,6 +69,9 @@ Pyramid::Pyramid(const Config& config,
     // _d_extrema_num_blocks = popsift::cuda::malloc_devT<int>(_num_octaves,
     // __FILE__, __LINE__);
     //
+
+    int w = width;
+    int h = height;
     for(int o = 0; o < _num_octaves; o++)
     {
         _octaves[o].debugSetOctave(o);
@@ -92,16 +80,43 @@ Pyramid::Pyramid(const Config& config,
         h = ceilf(h / 2.0f);
     }
 
-    //
     // int sz = _num_octaves * h_consts.max_extrema;
-    // dobuf_shadow.i_ext_dat[0] =
-    // popsift::cuda::malloc_devT<InitialExtremum>(sz, __FILE__, __LINE__);
-    // dobuf_shadow.i_ext_off[0] = popsift::cuda::malloc_devT<int>(sz, __FILE__,
-    // __LINE__); for(int o = 1; o < _num_octaves; o++)
+    // _dobuf = popsift::sycl_helpers::malloc_devT<DevBuffers>(
+    //   sz, __FILE__, __LINE__, "Devcie Orientation buffer allocation failed", _device_queue);
+
+    // _dobuf = cuda::malloc_devT<DevBuffers>(
+    //   sz, __FILE__, __LINE__, "Devcie Orientation buffer allocation failed", _device_queue);
+    // DOBUF
+
+    // int sz = _num_octaves * h_consts.max_extrema;
+    // try
     // {
-    //     dobuf_shadow.i_ext_dat[o] = dobuf_shadow.i_ext_dat[0] + (o *
-    //     h_consts.max_extrema); dobuf_shadow.i_ext_off[o] =
-    //     dobuf_shadow.i_ext_off[0] + (o * h_consts.max_extrema);
+    //     _dobuf = sycl::malloc_device<DevBuffers>(1, Q);
+    // }
+    // catch(const sycl::exception& e)
+    // {
+    //     std::stringstream ss;
+    //     ss << "Devcie Orientation buffer allocation failed" << e.what();
+    //     POP_FATAL(ss.str());
+    // }
+    //
+    // _dobuf->i_ext_dat[0] = popsift::cuda::malloc_devT<InitialExtremum>(sz, __FILE__, __LINE__, ");
+    // _dobuf->i_ext_off[0] = popsift::cuda::malloc_devT<int>(sz, __FILE__, __LINE__);
+    // for(int o = 1; o < _num_octaves; o++)
+    // {
+    //     _dobuf.i_ext_dat[o] = dobuf_shadow.i_ext_dat[0] + (o * h_consts.max_extrema);
+    //     dobuf.i_ext_off[o] = dobuf_shadow.i_ext_off[0] + (o * h_consts.max_extrema);
+    // }
+
+    //
+
+    // int sz = _num_octaves * h_consts.max_extrema;
+    // dobuf_shadow.i_ext_dat[0] = popsift::cuda::malloc_devT<InitialExtremum>(sz, __FILE__, __LINE__);
+    // dobuf_shadow.i_ext_off[0] = popsift::cuda::malloc_devT<int>(sz, __FILE__, __LINE__);
+    // for(int o = 1; o < _num_octaves; o++)
+    // {
+    //     dobuf_shadow.i_ext_dat[o] = dobuf_shadow.i_ext_dat[0] + (o * h_consts.max_extrema);
+    //     dobuf_shadow.i_ext_off[o] = dobuf_shadow.i_ext_off[0] + (o * h_consts.max_extrema);
     // }
     // for(int o = _num_octaves; o < MAX_OCTAVES; o++)
     // {
@@ -136,6 +151,7 @@ Pyramid::~Pyramid()
     // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
     sycl::free(_d_extrema_num_blocks, _device_queue);
     sycl::free(_dct, _device_queue);
+    sycl::free(_dobuf, _device_queue);
 }
 
 std::vector<sycl::event> Pyramid::step1(const Config& conf,

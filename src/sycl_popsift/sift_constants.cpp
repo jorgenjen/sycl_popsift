@@ -7,9 +7,9 @@
  */
 #include "sift_constants.hpp"
 
-#include "common/debug_macros.hpp"
 #include "sycl/queue.hpp"
 #include "sycl/usm.hpp"
+#include "sycl_popsift/common/debug_macros.hpp"
 
 // #include <cuda_runtime.h>
 

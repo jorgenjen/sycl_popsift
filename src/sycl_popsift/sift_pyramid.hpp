@@ -9,10 +9,12 @@
 
 // #include "features.h"
 // #include "sift_constants.h"
+#include "sycl_popsift/features.h"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/s_image.hpp"
 #include "sycl_popsift/sift_constants.hpp"
+#include "sycl_popsift/sift_extremum.h"
 #include "sycl_popsift/sift_octave.hpp"
 
 #include <iostream>
@@ -42,13 +44,14 @@ struct ExtremaCounters
 //     int ori_allocated;
 // };
 //
-// struct DevBuffers {
-//     InitialExtremum *i_ext_dat[MAX_OCTAVES];
-//     int *i_ext_off[MAX_OCTAVES];
-//     int *feat_to_ext_map;
-//     Extremum *extrema;
-//     Feature *features;
-// };
+struct DevBuffers
+{
+    InitialExtremum* i_ext_dat[MAX_OCTAVES];
+    int* i_ext_off[MAX_OCTAVES];
+    int* feat_to_ext_map;
+    Extremum* extrema;
+    Feature* features;
+};
 
 // extern thread_local ExtremaCounters hct;
 // extern __device__ ExtremaCounters dct;
@@ -81,6 +84,9 @@ class Pyramid
     // Global memory not supported by sycl
     ExtremaCounters _hct;  // host // not sure if we want to have this global like h_consts and h_gauss
     ExtremaCounters* _dct; // device
+
+    DevBuffers* _dobuf;        // device
+    DevBuffers* _dobuf_shadow; // device
 
     /* the download of converted descriptors should be asynchronous */
     // cudaStream_t _download_stream;

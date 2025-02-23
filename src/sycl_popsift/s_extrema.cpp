@@ -9,7 +9,8 @@
 #include "s_solve.h"
 #include "sift_extremum.h"
 // #include "common/clamp.h"
-#include "common/debug_macros.hpp"
+#include "sycl_popsift/common/debug_macros.hpp"
+
 // #include "s_solve.h" # Need this one later on
 #include "sift_constants.hpp"
 #include "sift_pyramid.hpp"
@@ -483,12 +484,6 @@ inline bool find_extrema_in_dog_sub(float** dog,
         }
     } while(iter < MAX_ITERATIONS); /* go to next iter */
 
-    // if(it.get_global_linear_id() == 0)
-    // {
-    //     // out << "\tHelllo hello inside inline function in kernell!!!!" << sycl::endl;
-    //     sycl::ext::oneapi::experimental::printf("\nPRINT FROM EXTREMUM\n");
-    // }
-
     if(d.x() >= 1.5f || d.y() >= 1.5f || d.z() >= 1.5f)
     {
         // excessive pixel movement in at least dimension, reject
@@ -504,8 +499,11 @@ inline bool find_extrema_in_dog_sub(float** dog,
         return false;
     }
 
-    // float contr   = v + 0.5f * (D.x() * d.x() + D.y() * d.y() + D.z() * d.z());
+#if USE_SCALBNF
     const float contr = v + scalbnf(D.x() * d.x() + D.y() * d.y() + D.z() * d.z(), -1);
+#else
+    float contr = v + 0.5f * (D.x() * d.x() + D.y() * d.y() + D.z() * d.z());
+#endif
     const float tr = DD.x() + DD.y();
     const float det = DD.x() * DD.y() - DX.x() * DX.x();
     const float edgeval = tr * tr / det;
@@ -590,42 +588,9 @@ class find_extrema_in_dog
     {
         InitialExtremum ec;
         ec.ignore = false;
-        // if(it.get_global_linear_id() == 0)
-        // {
-        //     sycl::ext::oneapi::experimental::printf("PRINT IN find extrema in dog kernel!!\n");
-        // }
 
-        // not sure if it needs it seems like inline functions have access to local
-        // could be a special case with it being available always in device code
-        // or that inline is inlined :D and hence has access
         bool indicator = find_extrema_in_dog_sub<sift_mode>(
           dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, ec, it, d_consts);
-
-        // if(it.get_local_id(0) == 0 && it.get_local_id(1) == 0 && it.get_local_id(0) == 0)
-        // if(it.get_group(2) == 5 && it.get_group(1) == 3)
-        // {
-        //     sycl::id<3> i = it.get_local_id();
-        //     sycl::ext::oneapi::experimental::printf("local_id (%zu, %zu, %zu)", i[2], i[1], i[0]);
-        // }
-
-        // if(it.get_global_linear_id() == 1628073)
-        // if(it.get_global_id(2) == 640 && it.get_global_id(1) == 221 && it.get_global_id(0) == 0)
-        if(it.get_global_linear_id() == 960017)
-        {
-            sycl::ext::oneapi::experimental::printf("Initial extremum at pos(%d, %d %d): xpos=%f ypos=%f -- lpos=%d "
-                                                    "sigma=%f cell=%d write_index=%d indicator=%d\n",
-                                                    it.get_global_id(2),
-                                                    it.get_global_id(1),
-                                                    it.get_global_id(0),
-                                                    ec.xpos,
-                                                    ec.ypos,
-                                                    ec.lpos,
-                                                    ec.sigma,
-                                                    ec.cell,
-                                                    // ec.ignore,
-                                                    ec.write_index,
-                                                    indicator);
-        }
 
         // Don't think the tamplate argument does anything
         // uint32_t write_index = extrema_count<HEIGHT>(indicator, &dct.ext_ct[octave]);

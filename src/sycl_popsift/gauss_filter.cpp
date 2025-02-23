@@ -7,7 +7,7 @@
  */
 #include "gauss_filter.hpp"
 
-#include "common/debug_macros.hpp"
+#include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 
 #include <sycl/sycl.hpp>

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/debug_macros.hpp"
 #include "common/sync_queue.h"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
@@ -10,11 +11,15 @@
 #include <sycl/sycl.hpp>
 
 #include <future>
+#include <sstream>
 #include <thread>
 
 namespace popsift {
 class Image;
 class Pyramid;
+
+// template<class T>
+// T* malloc_devT(int num, const char* file, int line, sycl::queue Q);
 
 };
 

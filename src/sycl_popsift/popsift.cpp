@@ -1,6 +1,6 @@
 #include "sycl_popsift/popsift.hpp"
 
-#include "common/debug_macros.hpp"
+#include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
@@ -19,6 +19,23 @@ using std::cout;
 using std::endl;
 using std::max;
 using std::min;
+
+// template<class T>
+// T* malloc_devT(int num, const char* file, int line, sycl::queue Q)
+// {
+//     T* ptr;
+//     try
+//     {
+//         ptr = sycl::malloc_device<T>(num, Q);
+//     }
+//     catch(const sycl::exception& e)
+//     {
+//         std::stringstream ss;
+//         ss << "Memory allocation failed" << e.what();
+//         POP_FATAL_FL(ss.str(), file, line);
+//     }
+//     return ptr;
+// }
 
 PopSift::PopSift(const popsift::Config& config)
 {
