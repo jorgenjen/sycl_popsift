@@ -110,7 +110,8 @@ static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, 
 #define DOG(dx, dy, dz) dog[z + dz][CLAMP(x + dx, width - 1) + CLAMP(y + dy, height - 1) * width]
 
 #else
-// Full clamping // Probs better of using sycl::clamp here
+// Full clamping // Probs better of using sycl::clamp here but I as not able to when trying
+// will probably be replaced by bindless image in best version anyays :D
 #define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
 #define DOG(dx, dy, dz) dog[z + dz][CLAMP(x + dx, 0, width - 1) + CLAMP(y + dy, 0, height - 1) * width]
 
@@ -556,6 +557,8 @@ class find_extrema_in_dog
     const int grid_width;
     const popsift::ConstInfo* d_consts;
     ExtremaCounters* dct;
+    DevBuffers* dobuf;
+    int max_extrema;
 
   public:
     find_extrema_in_dog(float** dog,
@@ -569,7 +572,9 @@ class find_extrema_in_dog
                         const float h_grid_divider,
                         const int grid_width,
                         const popsift::ConstInfo* d_consts,
-                        ExtremaCounters* dct)
+                        ExtremaCounters* dct,
+                        DevBuffers* dobuf,
+                        int max_extrema)
       : dog(dog)
       , octave(octave)
       , width(width)
@@ -582,6 +587,8 @@ class find_extrema_in_dog
       , grid_width(grid_width)
       , d_consts(d_consts)
       , dct(dct)
+      , dobuf(dobuf)
+      , max_extrema(max_extrema)
     {}
 
     inline void operator()(sycl::nd_item<3> it) const
@@ -596,38 +603,47 @@ class find_extrema_in_dog
         // uint32_t write_index = extrema_count<HEIGHT>(indicator, &dct.ext_ct[octave]);
         uint32_t write_index = extrema_count(indicator, &dct->ext_ct[octave], it);
 
-        //     InitialExtremum* d_extrema = dobuf.i_ext_dat[octave];
-        //     int* d_ext_off = dobuf.i_ext_off[octave];
-        //
-        //     if(indicator && write_index < d_consts.max_extrema)
-        //     {
-        //         ec.write_index = write_index;
-        //         // store the initial extremum in an array
-        //         d_extrema[write_index] = ec;
-        //
-        //         // index for indirect access to d_extrema, to enable
-        //         // access after filtering some initial extrema
-        //         d_ext_off[write_index] = write_index;
-        //     }
-        //
-        //     // without syncthreads, (0,0) threads may precede some calls to extrema_count()
-        //     // in non-(0,0) threads and increase barrier count too early
-        //     // __syncthreads();
-        //     sycl::group_barrier(it.get_group()); // from book -- barrier on the group same as __syncthreads();
-        //                                          // can also be done for sub-groups by passing that group like
-        //                                          __syncwarp()
-        //
-        //     if(threadIdx.x == 0 && threadIdx.y == 0)
-        //     {
-        //         int ct = atomicAdd(d_number_of_blocks, 1);
-        //         if(ct >= number_of_blocks - 1)
-        //         {
-        //             int num_ext = atomicMin(&dct.ext_ct[octave], d_consts.max_extrema);
-        //             // printf( "Block %d,%d,%d num ext %d\n", blockIdx.x, blockIdx.y, blockIdx.z,
-        //             dct.ext_ct[octave]
-        //             );
-        //         }
-        //     }
+        InitialExtremum* d_extrema = dobuf->i_ext_dat[octave];
+        int* d_ext_off = dobuf->i_ext_off[octave];
+
+        if(indicator && write_index < max_extrema)
+        {
+            ec.write_index = write_index;
+            // store the initial extremum in an array
+            d_extrema[write_index] = ec;
+
+            // index for indirect access to d_extrema, to enable
+            // access after filtering some initial extrema
+            d_ext_off[write_index] = write_index; // not sure how this is usefull... yet...
+        }
+
+        // without syncthreads, (0,0) threads may precede some calls to extrema_count()
+        // in non-(0,0) threads and increase barrier count too early
+        // work-group barrier
+        sycl::group_barrier(it.get_group()); // from book -- barrier on the group same as __syncthreads();
+                                             // can also be done for sub-groups by passing that group like __syncwarp
+
+        // We only want one of the threads in a work-group to execute this code
+        if(it.get_local_linear_id() == 0) // work-item 0 in work-group
+        {
+            int ct = sycl::atomic_ref<int,
+                                      sycl::memory_order_relaxed,
+                                      sycl::memory_scope_device,
+                                      sycl::access::address_space::global_space>(*d_number_of_blocks)++;
+            if(ct >= number_of_blocks - 1)
+            {
+                // Final 0 work-item that executes this code, so num_extrema count is finished computing and we ensure
+                // it is not larger than the max if it is, it's set to the max value
+                sycl::atomic_ref<int,
+                                 sycl::memory_order_relaxed,
+                                 sycl::memory_scope_device,
+                                 sycl::access::address_space::global_space>(dct->ext_ct[octave])
+                  .fetch_min(max_extrema);
+
+                sycl::ext::oneapi::experimental::printf(
+                  "\n\t Octave: %d extrema_count = %d", octave, dct->ext_ct[octave]);
+            }
+        }
     }
 };
 
@@ -667,6 +683,8 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
         //   3};
 
         // Based on the fact that sub-group is along nd_range[2]:
+        // NOTE: should probably change this to be based on the device prefered sub-group multiplier
+        // currently same as cuda
         sycl::range local{1, HEIGHT, LOCAL_X};
         sycl::range global{
           (size_t)_levels - 3, (size_t)grid_divide(height, local.get(1)), (size_t)grid_divide(width, local.get(0))};
@@ -713,7 +731,9 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                                                                                          oct_obj.getHGridDivider(),
                                                                                          conf.getFilterGridSize(),
                                                                                          _d_consts,
-                                                                                         _dct));
+                                                                                         _dct,
+                                                                                         _dobuf,
+                                                                                         _d_consts->max_extrema));
                 });
                 break;
         }
