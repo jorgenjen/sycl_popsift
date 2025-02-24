@@ -33,13 +33,16 @@
 namespace popsift {
 #define LOCAL_X 32
 
+#define SUB_GROUP_COUNTING 0
+
+#if SUB_GROUP_COUNTING
 // template<int HEIGHT> // did not do anything
 // Must take care here as sub-group will not be 32 in all cases like a warp in cuda
 // should also make the blocks based on sub-group multiplier(idk what the name was) preference of the device used
 // Not sure why indicator was not bool ??
 static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
 {
-    // sub_group is undergoing change and not recomended to use but seems most fitting in this case
+    // sub_grousp is undergoing change and not recomended to use but seems most fitting in this case
     sycl::sub_group sub_group = it.get_sub_group();
 
 #define USE_MASK 1
@@ -102,6 +105,60 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
 
     return write_index;
 }
+#else
+// Do the counting for the whole work-group will be less efficient but hopefully work correctly
+// eventhoug I  believe that it is my system causing the sub-group not to work
+static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
+{
+    sycl::group<3> work_group = it.get_group();
+    int local_linear = it.get_local_linear_id();
+    // reduce over the whole work group
+    // int ct = sycl::reduce_over_group(work_group, indicator ? 1 : 0, sycl::plus<>());
+    // Doing exclusive as in popsift but I find it a bit odd as the final result of the final work_gruop will not be
+    // returned as a write_index
+    int ct = sycl::exclusive_scan_over_group(work_group, indicator ? 1 : 0, sycl::plus<>());
+
+    int last_work_item = it.get_local_range(0) * it.get_local_range(1) * it.get_local_range(2) - 1;
+    int write_index;
+
+#define every_body_add 1
+
+#if every_body_add
+
+    write_index = sycl::
+      atomic_ref<int, sycl::memory_order_relaxed, sycl::memory_scope_device, sycl::access::address_space::global_space>(
+        *extrema_counter) += (indicator ? 1 : 0);
+#else
+    // I would assume that there is no need to have a barrier here
+    if(local_linear == last_work_item) // only last has the complete value
+    {
+        // Need to add it's own value to the exclusive result making it inclusive for the atmoic add
+        // Returns the base which is the value before tha this add was done(old value)
+        write_index = sycl::atomic_ref<int,
+                                       sycl::memory_order_relaxed,
+                                       sycl::memory_scope_device,
+                                       sycl::access::address_space::global_space>(*extrema_counter) +=
+          (ct + (indicator ? 1 : 0));
+
+        if(it.get_group_linear_id() == 13558)
+        // if(ct > 1)
+        {
+            // sycl::ext::oneapi::experimental::printf("group_linear = %d", it.get_group_linear_id());
+            sycl::ext::oneapi::experimental::printf(
+              "work-item id in work-group %d == %d -- ct = %d  --- indicator = %d\n",
+              local_linear,
+              last_work_item,
+              ct,
+              indicator ? 1 : 0);
+        }
+    }
+
+    write_index = sycl::group_broadcast(work_group, write_index, last_work_item); // last broadcasts
+#endif
+    return write_index + ct;
+}
+
+#endif
 
 static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, uint32_t mask)
 {
@@ -770,24 +827,27 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
 
         _device_queue.wait();
 
-        _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, max_extrema = _d_consts->max_extrema]() {
-            sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
-            // For all octaves dct->ext_ct[octave] is 8 times what it should be for sub-group of 8 hance every thread in
-            // sub-group must be doing the atomic add but I don't know how to make it stop doing that
-
-            if(octave == 0)
-            {
-                for(int i = 0; i < max_extrema; ++i)
-                {
-                    if(dobuf->i_ext_off[octave][i] != 0)
-                    {
-                        // Illustrates that the write index jumps by 8 so there are 7 0 in between that has been skipped
-                        // due to the error with sub_group adding for each work-item (no clue why that is...)
-                        sycl::ext::oneapi::experimental::printf("\n\t write_index = %d ", dobuf->i_ext_off[octave][i]);
-                    }
-                }
-            }
-        });
+        // _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, max_extrema = _d_consts->max_extrema]() {
+        //     sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
+        //     // For all octaves dct->ext_ct[octave] is 8 times what it should be for sub-group of 8 hance every thread
+        //     in
+        //     // sub-group must be doing the atomic add but I don't know how to make it stop doing that
+        //
+        //     if(octave == 0)
+        //     {
+        //         for(int i = 0; i < max_extrema; ++i)
+        //         {
+        //             if(dobuf->i_ext_off[octave][i] != 0)
+        //             {
+        //                 // Illustrates that the write index jumps by 8 so there are 7 0 in between that has been
+        //                 skipped
+        //                 // due to the error with sub_group adding for each work-item (no clue why that is...)
+        //                 sycl::ext::oneapi::experimental::printf("\n\t write_index = %d ",
+        //                 dobuf->i_ext_off[octave][i]);
+        //             }
+        //         }
+        //     }
+        // });
     }
 
     _device_queue.wait();
