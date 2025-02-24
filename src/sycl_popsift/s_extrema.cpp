@@ -62,13 +62,34 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
         // SHould probably query first to ensure the memory scope and order is supported by the device
         // see page 540 (560 in pdf) // using memory_order_relaxed which any device should support
 
+        // BUG: Seems to run for all work-items in sub-group and not only one as required hence resulting in adding the
+        // ct value 8 times causing the end value to be 8 times greater than it should be
+        //      Can see that this is the case as it prints for all sub_group.get_group_linear_id so [0-8] in my
+
         // The atomic add returns the old value in extrema_coutner before the addition which is considered the base
         // As each thread uses this and adds to it's own counter (write_index) how many of the threads in the
         // sub-group before it had it's indicator to true
-        write_index = sycl::atomic_ref<int,
-                                       sycl::memory_order_relaxed,
-                                       sycl::memory_scope_device,
-                                       sycl::access::address_space::global_space>(*extrema_counter) += ct;
+        if(sub_group.get_local_linear_id() == 0) // should be same as leader()
+        {
+            write_index = sycl::atomic_ref<int,
+                                           sycl::memory_order_relaxed,
+                                           sycl::memory_scope_device,
+                                           sycl::access::address_space::global_space>(*extrema_counter) += ct;
+
+            // if(sub_group.get_group_linear_id() == 89 &&
+            if(it.get_group_linear_id() == 20000 && it.get_global_range(2) == 1280)
+            {
+                // Why in tha lordy lordy does this print when it prints out that sub_group.get_local_linear_id == [1-7]
+                // the value is printed corectly but this code should only run when it is 0... must be something wrong
+                // with my system  I guess I don't understand this
+                sycl::ext::oneapi::experimental::printf(
+                  "\n\t HOYY:: Sub_group.get_local_id()[0] = %d = %d -- ct = %d, write_index = %d",
+                  sub_group.get_local_linear_id(),
+                  sub_group.get_local_id()[0],
+                  ct,
+                  write_index);
+            }
+        }
     }
 
     // work-item 0 broadcassts to all other same as leader work-item
@@ -641,7 +662,7 @@ class find_extrema_in_dog
                   .fetch_min(max_extrema);
 
                 sycl::ext::oneapi::experimental::printf(
-                  "\n\t Octave: %d extrema_count = %d", octave, dct->ext_ct[octave]);
+                  "\n\t Octave: %d extrema_count = %d\n", octave, dct->ext_ct[octave]);
             }
         }
     }
@@ -653,8 +674,8 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
 
     for(int octave = 0; octave < _num_octaves; octave++)
     {
-        if(octave > 0)
-            break;
+        // if(octave > 0)
+        //     break;
         Octave& oct_obj = _octaves[octave];
 
         // int* extrema_num_blocks = getNumberOfBlocks(octave); // not ready for this :C
@@ -702,8 +723,8 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                global[1],
                global[2],
                (_levels - 3),
-               grid_divide_cuda(width, local[0]),
                grid_divide_cuda(height, local[1]),
+               grid_divide_cuda(width, local[2]),
                work_group_count);
 
         // Buffer for debugging
@@ -747,14 +768,27 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                 break;
         }
 
-        // cuda::event_record(oct_obj.getEventExtremaDone(), oct_str, __FILE__, __LINE__);
-    }
-    _device_queue.wait();
+        _device_queue.wait();
 
-    // Can dodge the implicit capture of this by doing this :D
-    _device_queue.single_task([dct = _dct]() {
-        sycl::ext::oneapi::experimental::printf("Number of extremas in octave 0 = %d\n", dct->ext_ct[0]);
-    });
+        _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, max_extrema = _d_consts->max_extrema]() {
+            sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
+            // For all octaves dct->ext_ct[octave] is 8 times what it should be for sub-group of 8 hance every thread in
+            // sub-group must be doing the atomic add but I don't know how to make it stop doing that
+
+            if(octave == 0)
+            {
+                for(int i = 0; i < max_extrema; ++i)
+                {
+                    if(dobuf->i_ext_off[octave][i] != 0)
+                    {
+                        // Illustrates that the write index jumps by 8 so there are 7 0 in between that has been skipped
+                        // due to the error with sub_group adding for each work-item (no clue why that is...)
+                        sycl::ext::oneapi::experimental::printf("\n\t write_index = %d ", dobuf->i_ext_off[octave][i]);
+                    }
+                }
+            }
+        });
+    }
 
     _device_queue.wait();
     // fflush(stderr);
