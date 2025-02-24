@@ -125,9 +125,15 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
 
 #if every_body_add
 
-    write_index = sycl::
-      atomic_ref<int, sycl::memory_order_relaxed, sycl::memory_scope_device, sycl::access::address_space::global_space>(
-        *extrema_counter) += (indicator ? 1 : 0);
+    // write_index = sycl::
+    //   atomic_ref<int, sycl::memory_order_relaxed, sycl::memory_scope_device,
+    //   sycl::access::address_space::global_space>(
+    //     *extrema_counter) += (indicator ? 1 : 0);
+    write_index = sycl::atomic_ref<int,
+                                   sycl::memory_order_seq_cst,
+                                   sycl::memory_scope_device,
+                                   sycl::access::address_space::global_space>(*extrema_counter)
+                    .fetch_add(indicator ? 1 : 0);
 #else
     // I would assume that there is no need to have a barrier here
     if(local_linear == last_work_item) // only last has the complete value
@@ -686,6 +692,7 @@ class find_extrema_in_dog
 
         if(indicator && write_index < max_extrema)
         {
+            sycl::ext::oneapi::experimental::printf("indicator = %d -- write_index = %d\n", indicator, write_index);
             ec.write_index = write_index;
             // store the initial extremum in an array
             d_extrema[write_index] = ec;
@@ -731,8 +738,8 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
 
     for(int octave = 0; octave < _num_octaves; octave++)
     {
-        // if(octave > 0)
-        //     break;
+        if(octave > 0)
+            break;
         Octave& oct_obj = _octaves[octave];
 
         // int* extrema_num_blocks = getNumberOfBlocks(octave); // not ready for this :C
@@ -827,27 +834,27 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
 
         _device_queue.wait();
 
-        // _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, max_extrema = _d_consts->max_extrema]() {
-        //     sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
-        //     // For all octaves dct->ext_ct[octave] is 8 times what it should be for sub-group of 8 hance every thread
-        //     in
-        //     // sub-group must be doing the atomic add but I don't know how to make it stop doing that
-        //
-        //     if(octave == 0)
-        //     {
-        //         for(int i = 0; i < max_extrema; ++i)
-        //         {
-        //             if(dobuf->i_ext_off[octave][i] != 0)
-        //             {
-        //                 // Illustrates that the write index jumps by 8 so there are 7 0 in between that has been
-        //                 skipped
-        //                 // due to the error with sub_group adding for each work-item (no clue why that is...)
-        //                 sycl::ext::oneapi::experimental::printf("\n\t write_index = %d ",
-        //                 dobuf->i_ext_off[octave][i]);
-        //             }
-        //         }
-        //     }
-        // });
+#if true
+        _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, max_extrema = _d_consts->max_extrema]() {
+            sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
+            // For all octaves dct->ext_ct[octave] is 8 times what it should be for sub-group of 8 hance every thread
+            // in sub-group must be doing the atomic add but I don't know how to make it stop doing that
+
+            if(octave == 0)
+            {
+                for(int i = 0; i < 600; ++i)
+                {
+                    // if(dobuf->i_ext_off[octave][i] != 0)
+                    // {
+                    // Illustrates that the write index jumps by 8 so there are 7 0 in between that has been
+                    // skipped due to the error with sub_group adding for each work-item (no clue why that is...)
+                    sycl::ext::oneapi::experimental::printf(
+                      "\n\t write_index = %d == %d ", dobuf->i_ext_off[octave][i], i);
+                    // }
+                }
+            }
+        });
+#endif
     }
 
     _device_queue.wait();
