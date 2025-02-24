@@ -682,6 +682,8 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
         //   (size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1)), (size_t)_levels -
         //   3};
 
+        fprintf(stderr, "\tWidht=%d, height=%d", width, height);
+
         // Based on the fact that sub-group is along nd_range[2]:
         // NOTE: should probably change this to be based on the device prefered sub-group multiplier
         // currently same as cuda
@@ -689,13 +691,20 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
         sycl::range global{
           (size_t)_levels - 3, (size_t)grid_divide(height, local.get(1)), (size_t)grid_divide(width, local.get(0))};
 
-        printf("\nFIND EXTREMA: Local(%zu, %zu, %zu) --- --- Global(%zu, %zu, %zu)\n\n",
+        int work_group_count = grid_divide_cuda(height, local[1]) * grid_divide_cuda(width, local[2]) * (_levels - 3);
+
+        printf("\nFIND EXTREMA: Local(%zu, %zu, %zu) --- --- Global(%zu, %zu, %zu) work_group(%d, %d, %d) "
+               "Work_group_count = %d\n\n",
                local[0],
                local[1],
                local[2],
                global[0],
                global[1],
-               global[2]);
+               global[2],
+               (_levels - 3),
+               grid_divide_cuda(width, local[0]),
+               grid_divide_cuda(height, local[1]),
+               work_group_count);
 
         // Buffer for debugging
         switch(conf.getSiftMode())
@@ -726,7 +735,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                                                                                          height,
                                                                                          _levels - 1,
                                                                                          num_blocks,
-                                                                                         global.get(0) * global.get(1),
+                                                                                         work_group_count,
                                                                                          oct_obj.getWGridDivider(),
                                                                                          oct_obj.getHGridDivider(),
                                                                                          conf.getFilterGridSize(),
@@ -740,6 +749,13 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
 
         // cuda::event_record(oct_obj.getEventExtremaDone(), oct_str, __FILE__, __LINE__);
     }
+    _device_queue.wait();
+
+    // Can dodge the implicit capture of this by doing this :D
+    _device_queue.single_task([dct = _dct]() {
+        sycl::ext::oneapi::experimental::printf("Number of extremas in octave 0 = %d\n", dct->ext_ct[0]);
+    });
+
     _device_queue.wait();
     // fflush(stderr);
     // fflush(stdout);
