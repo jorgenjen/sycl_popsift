@@ -108,6 +108,26 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
 #else
 // Do the counting for the whole work-group will be less efficient but hopefully work correctly
 // eventhoug I  believe that it is my system causing the sub-group not to work
+#define every_body_add 1
+#if every_body_add
+
+static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
+{
+    sycl::group<3> work_group = it.get_group();
+    int local_linear = it.get_local_linear_id();
+
+    // int write_index = sycl::
+    //   atomic_ref<int, sycl::memory_order_relaxed, sycl::memory_scope_device,
+    //   sycl::access::address_space::global_space>(
+    //     *extrema_counter) += (indicator ? 1 : 0);
+    int write_index = sycl::atomic_ref<int,
+                                       sycl::memory_order_seq_cst,
+                                       sycl::memory_scope_device,
+                                       sycl::access::address_space::global_space>(*extrema_counter)
+                        .fetch_add(indicator ? 1 : 0);
+    return write_index;
+}
+#else
 static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
 {
     sycl::group<3> work_group = it.get_group();
@@ -121,20 +141,6 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
     int last_work_item = it.get_local_range(0) * it.get_local_range(1) * it.get_local_range(2) - 1;
     int write_index;
 
-#define every_body_add 1
-
-#if every_body_add
-
-    // write_index = sycl::
-    //   atomic_ref<int, sycl::memory_order_relaxed, sycl::memory_scope_device,
-    //   sycl::access::address_space::global_space>(
-    //     *extrema_counter) += (indicator ? 1 : 0);
-    write_index = sycl::atomic_ref<int,
-                                   sycl::memory_order_seq_cst,
-                                   sycl::memory_scope_device,
-                                   sycl::access::address_space::global_space>(*extrema_counter)
-                    .fetch_add(indicator ? 1 : 0);
-#else
     // I would assume that there is no need to have a barrier here
     if(local_linear == last_work_item) // only last has the complete value
     {
@@ -160,10 +166,10 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
     }
 
     write_index = sycl::group_broadcast(work_group, write_index, last_work_item); // last broadcasts
-#endif
     return write_index + ct;
 }
 
+#endif
 #endif
 
 static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, uint32_t mask)
