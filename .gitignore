@@ -2,8 +2,6 @@ build
 .cache/clangd/index
 not_in_use_cmake
 src/tmp
-compile_run.sh
-redo_build_cmake.sh
 local_build
 tmp_imgs
 compile_commands.json
