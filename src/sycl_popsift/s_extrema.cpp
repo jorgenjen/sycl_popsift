@@ -134,8 +134,7 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
     int local_linear = it.get_local_linear_id();
     // reduce over the whole work group
     // int ct = sycl::reduce_over_group(work_group, indicator ? 1 : 0, sycl::plus<>());
-    // Doing exclusive as in popsift but I find it a bit odd as the final result of the final work_gruop will not be
-    // returned as a write_index
+    // Final result is the count but we don't use it as write-index since it is zero based -- note to self
     int ct = sycl::exclusive_scan_over_group(work_group, indicator ? 1 : 0, sycl::plus<>());
 
     int last_work_item = it.get_local_range(0) * it.get_local_range(1) * it.get_local_range(2) - 1;
@@ -394,14 +393,14 @@ inline bool find_extrema_in_dog_sub(float** dog,
                                     float w_grid_divider,
                                     float h_grid_divider,
                                     int grid_width,
-                                    InitialExtremum& ec,
+                                    InitialExtremum* ec,
                                     sycl::nd_item<3>& it,
                                     const popsift::ConstInfo* d_consts)
 {
-    ec.xpos = 0.0f;
-    ec.ypos = 0.0f;
-    ec.lpos = 0;
-    ec.sigma = 0.0f;
+    ec->xpos = 0.0f;
+    ec->ypos = 0.0f;
+    ec->lpos = 0;
+    ec->sigma = 0.0f;
 
     /*
      * First consideration: extrema cannot be found on any outermost edge,
@@ -621,11 +620,11 @@ inline bool find_extrema_in_dog_sub(float** dog,
         return false;
     }
 
-    ec.xpos = xn;
-    ec.ypos = yn;
-    ec.lpos = (int)roundf(sn);
-    ec.sigma = d_consts->sigma0 * pow(d_consts->sigma_k, sn); // * 2;
-    ec.cell = floorf(yn / h_grid_divider) * grid_width + floorf(xn / w_grid_divider);
+    ec->xpos = xn;
+    ec->ypos = yn;
+    ec->lpos = (int)roundf(sn);
+    ec->sigma = d_consts->sigma0 * pow(d_consts->sigma_k, sn); // * 2;
+    ec->cell = floorf(yn / h_grid_divider) * grid_width + floorf(xn / w_grid_divider);
     // const float sigma_k = powf(2.0f, 1.0f / levels );
 
     return true;
@@ -687,7 +686,20 @@ class find_extrema_in_dog
         ec.ignore = false;
 
         bool indicator = find_extrema_in_dog_sub<sift_mode>(
-          dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, ec, it, d_consts);
+          dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, &ec, it, d_consts);
+
+        // if(indicator)
+        // {
+        //     sycl::ext::oneapi::experimental::printf("\n\t xpos = %f ypos = %f -- lpos = %d -- sigma = %f  -- cell =
+        //     %d",
+        //                                             ec.xpos,
+        //                                             ec.ypos,
+        //                                             ec.lpos,
+        //                                             ec.sigma,
+        //                                             ec.cell);
+        // }
+
+        // if (indicator
 
         // Don't think the tamplate argument does anything
         // uint32_t write_index = extrema_count<HEIGHT>(indicator, &dct.ext_ct[octave]);
@@ -698,10 +710,19 @@ class find_extrema_in_dog
 
         if(indicator && write_index < max_extrema)
         {
-            sycl::ext::oneapi::experimental::printf("indicator = %d -- write_index = %d\n", indicator, write_index);
+            // sycl::ext::oneapi::experimental::printf(
+            //   "\n\t\t xpos = %f ypos = %f -- lpos = %d -- sigma = %f  -- cell = % d ",
+            //   ec.xpos,
+            //   ec.ypos,
+            //   ec.lpos,
+            //   ec.sigma,
+            //   ec.cell);
+            // sycl::ext::oneapi::experimental::printf("indicator = %d -- write_index = %d\n", indicator, write_index);
             ec.write_index = write_index;
             // store the initial extremum in an array
             d_extrema[write_index] = ec;
+            // if(write_index == 0)
+            //     sycl::ext::oneapi::experimental::printf("ec --> xpos = %f  ypos = %f", ec.xpos, ec.ypos);
 
             // index for indirect access to d_extrema, to enable
             // access after filtering some initial extrema
@@ -840,7 +861,8 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
 
         _device_queue.wait();
 
-#if true
+#if false // seems to print similar value (float differences) to the cuda version from the few samples I've compared and
+          // the number of extrema is exactly the same for each octave
         _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, max_extrema = _d_consts->max_extrema]() {
             sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
             // For all octaves dct->ext_ct[octave] is 8 times what it should be for sub-group of 8 hance every thread
@@ -850,13 +872,19 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
             {
                 for(int i = 0; i < 600; ++i)
                 {
-                    // if(dobuf->i_ext_off[octave][i] != 0)
-                    // {
-                    // Illustrates that the write index jumps by 8 so there are 7 0 in between that has been
-                    // skipped due to the error with sub_group adding for each work-item (no clue why that is...)
+                    auto dat = &dobuf->i_ext_dat[octave][i];
                     sycl::ext::oneapi::experimental::printf(
-                      "\n\t write_index = %d == %d ", dobuf->i_ext_off[octave][i], i);
-                    // }
+                      "\n\t write_index = %d == %d  ---- xpos = %f ypos = %f -- lpos = %d -- sigma = %f  -- cell = %d "
+                      "ignore = %d write_index = %d",
+                      dobuf->i_ext_off[octave][i],
+                      i,
+                      dat->xpos,
+                      dat->ypos,
+                      dat->lpos,
+                      dat->sigma,
+                      dat->cell,
+                      dat->ignore,
+                      dat->write_index);
                 }
             }
         });
