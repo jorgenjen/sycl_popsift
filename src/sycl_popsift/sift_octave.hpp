@@ -79,6 +79,7 @@ class Octave
 
   public:
     std::vector<sycl::event> _level_complete_events;
+    sycl::event _extrema_done_event;
     // Octave();
     Octave() = delete;
     Octave(sycl::queue& Q);

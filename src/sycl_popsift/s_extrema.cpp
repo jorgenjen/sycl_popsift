@@ -765,8 +765,6 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
 
     for(int octave = 0; octave < _num_octaves; octave++)
     {
-        if(octave > 0)
-            break;
         Octave& oct_obj = _octaves[octave];
 
         // int* extrema_num_blocks = getNumberOfBlocks(octave); // not ready for this :C
@@ -838,7 +836,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                 break;
             default:
                 printf("RefineInOctave type popsift default\n");
-                _device_queue.submit([&](sycl::handler& cgh) {
+                oct_obj._extrema_done_event = _device_queue.submit([&](sycl::handler& cgh) {
                     cgh.depends_on({dependencies[octave], d_consts_write});
                     cgh.parallel_for(sycl::nd_range{global, local},
                                      find_extrema_in_dog<HEIGHT, Config::RefineInOctave>(oct_obj.getDogArray(),

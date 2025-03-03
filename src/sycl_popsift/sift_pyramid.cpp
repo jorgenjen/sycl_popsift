@@ -153,7 +153,7 @@ void Pyramid::step2(const Config& conf, std::vector<sycl::event> dependencies, s
 {
     find_extrema(conf, dependencies, d_consts_write);
 
-    // orientation( conf );
+    orientation(conf);
     //
     // descriptors( conf );
 }
@@ -182,5 +182,7 @@ void Pyramid::resetDimensions(const Config& conf, int width, int height)
 }
 
 int* Pyramid::getNumberOfBlocks(int octave) { return &_d_extrema_num_blocks[octave]; }
+
+sycl::event Pyramid::readDescCountersFromDevice() { return _device_queue.memcpy(&_hct, _dct, sizeof(ExtremaCounters)); }
 
 } // namespace popsift

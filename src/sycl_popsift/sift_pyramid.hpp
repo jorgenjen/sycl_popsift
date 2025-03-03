@@ -160,7 +160,7 @@ class Pyramid
 
     void descriptors(const Config& conf);
 
-    void readDescCountersFromDevice();
+    sycl::event readDescCountersFromDevice();
     // void readDescCountersFromDevice(cudaStream_t s);
     void writeDescCountersToDevice();
     // void writeDescCountersToDevice(cudaStream_t s);
