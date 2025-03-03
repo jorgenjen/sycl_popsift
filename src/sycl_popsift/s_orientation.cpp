@@ -66,6 +66,20 @@ inline void get_gradient(
     theta = atan2f(dy, dx);     // Inverse tangent of dy/dx
 }
 
+/*
+ * Histogram smoothing helper
+ */
+// inline static float smoothe(const float* const src, const int bin)
+inline static float smoothe(const sycl::local_accessor<float, 1> src, const int bin)
+{ // removed template as it did nothing
+    const int prev = (bin == 0) ? ORI_NBINS - 1 : bin - 1;
+    const int next = (bin == ORI_NBINS - 1) ? 0 : bin + 1;
+
+    const float f = (src[prev] + src[bin] + src[next]) / 3.0f;
+
+    return f;
+}
+
 class ori_par
 {
   private:
@@ -206,6 +220,68 @@ class ori_par
             }
         }
 
+        sycl::group_barrier(it.get_group());
+
+#ifdef WITH_VLFEAT_SMOOTHING
+        for(int i = 0; i < 3; i++)
+        {
+            sm_hist[it.get_local_id(1) + 0] = smoothe(hist, it.get_local_id(1) + 0);
+            sm_hist[it.get_local_id(1) + 32] = smoothe(hist, it.get_local_id(1) + 32);
+            sycl::group_barrier(it.get_group());
+            hist[it.get_local_id(1) + 0] = smoothe(sm_hist, it.get_local_id(1) + 0);
+            hist[it.get_local_id(1) + 32] = smoothe(sm_hist, it.get_local_id(1) + 32);
+            sycl::group_barrier(it.get_group());
+        }
+
+        sm_hist[it.get_local_id(1) + 0] = hist[it.get_local_id(1) + 0];
+        sm_hist[it.get_local_id(1) + 32] = hist[it.get_local_id(1) + 32];
+        sycl::group_barrier(it.get_group());
+#else  // not WITH_VLFEAT_SMOOTHING
+       // TODO: Implement this version aswell
+        for(int bin = threadIdx.x; bin < ORI_NBINS; bin += blockDim.x)
+        {
+            int prev2 = bin - 2;
+            int prev1 = bin - 1;
+            int next1 = bin + 1;
+            int next2 = bin + 2;
+            if(prev2 < 0)
+                prev2 += ORI_NBINS;
+            if(prev1 < 0)
+                prev1 += ORI_NBINS;
+            if(next1 >= ORI_NBINS)
+                next1 -= ORI_NBINS;
+            if(next2 >= ORI_NBINS)
+                next2 -= ORI_NBINS;
+            sm_hist[bin] = (hist[prev2] + hist[next2] + (hist[prev1] + hist[next1]) * 4.0f + hist[bin] * 6.0f) / 16.0f;
+        }
+        __syncthreads();
+#endif // not WITH_VLFEAT_SMOOTHING
+
+        // sub-cell refinement of the histogram cell index, yielding the angle
+        // not necessary to initialize, every cell is computed
+
+        for(int bin = it.get_local_id(1); sycl::any_of_group(it.get_group(), bin < ORI_NBINS);
+            bin += it.get_local_range(1))
+        {
+            const int prev = bin == 0 ? ORI_NBINS - 1 : bin - 1;
+            const int next = bin == ORI_NBINS - 1 ? 0 : bin + 1;
+
+            bool predicate = (bin < ORI_NBINS) && (sm_hist[bin] > max(sm_hist[prev], sm_hist[next]));
+
+            const float num = predicate ? 3.0f * sm_hist[prev] - 4.0f * sm_hist[bin] + 1.0f * sm_hist[next] : 0.0f;
+            // const float num  = predicate ?   2.0f * sm_hist[prev]
+            //                                - 4.0f * sm_hist[bin]
+            //                                + 2.0f * sm_hist[next]
+            //                              : 0.0f;
+            const float denB = predicate ? 2.0f * (sm_hist[prev] - 2.0f * sm_hist[bin] + sm_hist[next]) : 1.0f;
+
+            const float newbin = popsift::divide<HALF_PRECISION>(num, denB);
+
+            predicate = (predicate && newbin >= 0.0f && newbin <= 2.0f);
+
+            refined_angle[bin] = predicate ? prev + newbin : -1;
+            yval[bin] = predicate ? -(num * num) / (4.0f * denB) + sm_hist[prev] : -INFINITY;
+        }
         sycl::group_barrier(it.get_group());
     }
 };
