@@ -10,11 +10,13 @@
 #include "sycl/group_barrier.hpp"
 #include "sycl/kernel_bundle_enums.hpp"
 #include "sycl/memory_enums.hpp"
+#include "sycl/vector.hpp"
 #include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/common/debug_macros.hpp"
 // #include "common/excl_blk_prefix_sum.h"
 // #include "common/warp_bitonic_sort.h"
 // #include "s_gradiant.h"
+#include "sycl_popsift/common/warp_bitonic_sort.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
@@ -180,8 +182,8 @@ class ori_par
             // Why does it need to run if any
             if(i < loops)
             {
-                // This might make it not safe after all and I might need clamping
-                // TODO: Verify wether or not that is the case ^
+                // Current threads x and y position in image at the level
+                // Still safe and no need to clamp
                 int yy = i / wx + ymin;
                 int xx = i % wx + xmin;
 
@@ -283,6 +285,11 @@ class ori_par
             yval[bin] = predicate ? -(num * num) / (4.0f * denB) + sm_hist[prev] : -INFINITY;
         }
         sycl::group_barrier(it.get_group());
+
+        sycl::vec<int, 2> best_index(it.get_local_id(1), it.get_local_id(1) + 32);
+
+        // BitonicSort
+        BitonicSort::Warp32<float> sorter(yval, it);
     }
 };
 
