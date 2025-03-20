@@ -21,6 +21,18 @@ add_library(sycl_popsift
 # TODO: Figure out if it should be STATIC, SHARED or not set like in popsift (aka using BUILD_SHARED_LIBS to do
 # do it differntly for MSVC and shared libs
 
+
+
+target_link_libraries(sycl_popsift
+                      PUBLIC
+                      Threads::Threads
+                      sycl ${SYCL_FLAGS}
+)
+
+target_compile_options(sycl_popsift PUBLIC ${SYCL_FLAGS})
+
+
+
 add_sycl_to_target(TARGET sycl_popsift SOURCES
   sycl_popsift/popsift.cpp sycl_popsift/popsift.hpp
   sycl_popsift/s_image.cpp sycl_popsift/s_image.hpp
@@ -37,10 +49,11 @@ add_sycl_to_target(TARGET sycl_popsift SOURCES
 )
 
 
-target_link_libraries(sycl_popsift
-                      PUBLIC
-                      Threads::Threads
-                    )
+
+
+# Add flag for GPU
+# set_target_properties(sycl_popsift PROPERTIES COMPILE_FLAGS ${HARDWARE_FLAGS})
+# set_target_properties(sycl_popsift PROPERTIES LINK_FLAGS ${HARDWARE_FLAGS})
 
 # build directory containing the automatically generated files
 set(popsift_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")

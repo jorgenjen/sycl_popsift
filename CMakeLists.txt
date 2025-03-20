@@ -7,28 +7,30 @@ if (CMAKE_HOST_WIN32)
   include (Platform/Windows-Clang)
 else()
   # CMake 3.23.5 is the minimum recommended for IntelLLVM on Linux
-  cmake_minimum_required(VERSION 3.23.5)
+  # cmake_minimum_required(VERSION 3.23.5)
+  cmake_minimum_required(VERSION 3.22.1) # To have version on ifi machine might not work
   set(CMAKE_CXX_COMPILER icpx)
 endif()
 
-#
-# if(UNIX)
-#     # Direct CMake to use icpx rather than the default C++ compiler/linker
-#     set(CMAKE_CXX_COMPILER icpx)
-# else() # Windows
-#     # Force CMake to use icx-cl rather than the default C++ compiler/linker 
-#     # (needed on Windows only)
-#     include (CMakeForceCompiler)
-#     CMAKE_FORCE_CXX_COMPILER (icx-cl IntelDPCPP) # Should probably change this to IntelSYCL if possible
-#     include (Platform/Windows-Clang)
-# endif()
+
+# Set flags to make CUDA work (Might need different versions for different architectures -- test)
+set(HARDWARE_FLAGS "-fsycl -fsycl-targets=nvptx64-nvidia-cuda")
 
 
 project(sycl_popSift VERSION 1.0.0 LANGUAGES CXX)
 
 # Recommended over IntelDPCPP according to intel docs it might be deprecated in the future 
 find_package(IntelSYCL REQUIRED) # should de added after project definition
-# IntelSYCL -- should be  this but doeos not work need to fix isntall
+
+
+# Must be set below find package as it overwrites SYCL_FLAGS
+# TODO: Set based on a flag so that it can be compiled to different architectures and not just nvidia
+# Or use other flags like in codeplay compiler information to have them optional based on architecture
+set(SYCL_FLAGS "-fsycl"
+      "-fsycl-targets=nvptx64-nvidia-cuda"
+      "-fsycl-unnamed-lambda"
+      "-Wno-linker-warnings")
+
 
 
 # FROM DOCS:
@@ -119,7 +121,8 @@ find_package(Threads REQUIRED)
 # Set the required C++ standard for SYCL
 set(CMAKE_CXX_STANDARD 17) # Use 17 or higher, depending on your SYCL implementation
 set(CMAKE_CXX_STANDARD_REQUIRED ON) # Enforce the standard
-set(CMAKE_CXX_EXTENSIONS OFF)       # Disable compiler-specific extensions
+set(CMAKE_CXX_EXTENSIONS ON)       # Disable compiler-specific extensions (Do we need this on for cuda?)
+
 
 
 add_subdirectory(src)
