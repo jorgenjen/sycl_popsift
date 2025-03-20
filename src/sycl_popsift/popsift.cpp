@@ -1,5 +1,7 @@
 #include "sycl_popsift/popsift.hpp"
 
+#include "sycl/device.hpp"
+#include "sycl/device_selector.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
@@ -20,27 +22,34 @@ using std::endl;
 using std::max;
 using std::min;
 
-// template<class T>
-// T* malloc_devT(int num, const char* file, int line, sycl::queue Q)
-// {
-//     T* ptr;
-//     try
-//     {
-//         ptr = sycl::malloc_device<T>(num, Q);
-//     }
-//     catch(const sycl::exception& e)
-//     {
-//         std::stringstream ss;
-//         ss << "Memory allocation failed" << e.what();
-//         POP_FATAL_FL(ss.str(), file, line);
-//     }
-//     return ptr;
-// }
-
 PopSift::PopSift(const popsift::Config& config)
 {
-    // should use the confige here to configure but requires that you have the
-    // pyramid and all that
+    // Choose devcie that the queue should be binded to
+    if(config.getCpuOnly())
+    {
+        cout << "Restricted to running on cpu only!" << endl;
+        _device_queue = sycl::queue(sycl::cpu_selector_v);
+    }
+    else
+    {
+        // Seems like this is not needed and is selected in the cmake file so probably need that to have a flag to
+        // choose the arcitecture you want to compile for
+        bool GPU_is_available = false;
+
+        try
+        {
+            sycl::device testForGPU(sycl::gpu_selector_v);
+            // Will throw an expection if it's not available and hence remain false
+            GPU_is_available = true;
+        }
+        catch(sycl::exception const& ex)
+        {
+            // Not sure if we want to print out the exception aswell as it could be of no surprise
+            // but could be usefull if it is unexpected...
+            cout << "No GPU found falling back to CPU... Exception thrown: " << ex.what() << endl;
+        }
+        _device_queue = GPU_is_available ? sycl::queue(sycl::gpu_selector_v) : sycl::queue(sycl::default_selector_v);
+    }
 
     configure(config);
 
@@ -57,6 +66,8 @@ PopSift::PopSift(const popsift::Config& config)
     // and they alter using the queue
     _pipe._unused.push(new popsift::Image(_device_queue));
     _pipe._unused.push(new popsift::Image(_device_queue));
+
+    std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
 
     // TODO(jorgejen): Setup these threads.
     _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
@@ -258,6 +269,7 @@ SiftJob* PopSift::enqueue(int w, int h, const unsigned char* imageData)
 
 void PopSift::uploadImages()
 {
+    fprintf(stderr, "\n\n\t\tHOY HOY HOY\n");
     SiftJob* job;
     while((job = _pipe._queue_stage1.pull()) != nullptr)
     {
@@ -270,8 +282,10 @@ void PopSift::uploadImages()
 
         // cout << "Updated w=" << job->_w << " and h=" << job->_h << endl;
         // copy image to device
+        fprintf(stderr, "\n\n\t\tROUND TWO -> HOY HOY HOY\n");
         job->setImg(img, _device_queue, _config.getUpscaleFactor());
 
+        fprintf(stderr, "\n\n\tMMR THREE -> HOY HOY HOY\n");
         // job->setImg( img );
         _pipe._queue_stage2.push(job);
     }
@@ -309,8 +323,8 @@ void PopSift::extractDownloadLoop()
 
         // DO THE JOB!!!
 
-        std::vector<sycl::event> dependencies =
-          p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+        // std::vector<sycl::event> dependencies =
+        // p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
         // FUFULL THE PROMISE
 
@@ -318,11 +332,11 @@ void PopSift::extractDownloadLoop()
         job->printJob();
 
         // uploaded input image no longer needed, release for reuse
-        p._unused.push(img);
+        // p._unused.push(img);
 
-        p._pyramid->step2(_config, dependencies, _d_consts_write);
+        // p._pyramid->step2(_config, dependencies, _d_consts_write);
 
-        _device_queue.wait();
+        // _device_queue.wait();
         fflush(stdout);
         fflush(stderr);
         job->jobDone(5);
@@ -369,12 +383,16 @@ void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFac
     int scaled_w = _w;
     int scaled_h = _h;
     get_scale_factor(&scaled_w, &scaled_h, upscaleFactor);
+
     img->resetDimensions(_w, _h, scaled_w, scaled_h);
     // img->load(_imageData);
     // img->load_divide(_imageData);
     // img->load_divide_point(_imageData, scaled_w);
     // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
-    _img_transfer_event = img->load_linear(_imageData, scaled_w);
+    fprintf(stderr, "\n\n\t\tBEFORE Load Linear\n");
+    // _img_transfer_event = img->load_linear(_imageData, scaled_w);
+    _img_transfer_event = img->load_divide_point(_imageData, scaled_w);
+    fprintf(stderr, "\n\n\t\tAFTER Load Linear\n");
     _img = img;
 }
 

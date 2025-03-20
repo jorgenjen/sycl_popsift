@@ -37,6 +37,7 @@ Config::Config()
   , _normalization_mode(getNormModeDefault())
   , _normalization_multiplier(0)
   , _print_gauss_tables(false)
+  , _cpu_only(false) // To turn of gpu can be handy for debugging
 {
     int currentDev;
     // cudaDeviceProp currentProp;
@@ -181,6 +182,7 @@ void Config::setThreshold(float v) { _threshold = v; }
 void Config::setPrintGaussTables() { _print_gauss_tables = true; }
 void Config::setFilterMaxExtrema(int ext) { _filter_max_extrema = ext; }
 void Config::setFilterGridSize(int sz) { _filter_grid_size = sz; }
+void Config::setCpuOnly() { _cpu_only = true; }
 
 void Config::setInitialBlur(float blur)
 {
