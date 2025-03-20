@@ -18,8 +18,13 @@ void Octave::alloc_arrays()
     try
     {
         // _intm_array = sycl::malloc_device<float*>(_levels, _device_queue);
-        _data_array = sycl::malloc_device<float*>(_levels, _device_queue);
-        _dog_array = sycl::malloc_device<float*>(_levels - 1, _device_queue);
+        // _data_array = sycl::malloc_device<float*>(_levels, _device_queue);
+        // _dog_array = sycl::malloc_device<float*>(_levels - 1, _device_queue);
+        // _intermediate = sycl::malloc_device<float>(_w * _h, _device_queue);
+
+        // NOTE: Not sure if I want these to be shared or find a way to only have them on host look deeper into it
+        _data_array = sycl::malloc_shared<float*>(_levels, _device_queue);
+        _dog_array = sycl::malloc_shared<float*>(_levels - 1, _device_queue);
         _intermediate = sycl::malloc_device<float>(_w * _h, _device_queue);
         // if(!_intm_array || !_data_array)
         if(!_data_array || !_intermediate) // should be caught by catch
@@ -35,6 +40,7 @@ void Octave::alloc_arrays()
         // std::cerr << "Memory allocation failed: " << e.what() << std::endl;
     }
 
+    // fprintf(stderr, "After first try block\n");
     try
     {
         // Allocate the _levels in the octave
@@ -63,6 +69,7 @@ void Octave::alloc_arrays()
         POP_FATAL(ss.str());
         // std::cerr << "Memory allocation failed: " << e.what() << std::endl;
     }
+    // fprintf(stderr, "After second try block\n");
 }
 
 // Assumes _levels can't change affter malloc have been done
@@ -113,6 +120,7 @@ void Octave::alloc(const Config& conf, int width, int height, int levels)
 
     // could store them all in one malloc (single float array) but might be less readable
     // and don't think there is much performance penalty from doing it this way...
+    // fprintf(stderr, "Before alloc_arrays \n");
     alloc_arrays();
 
     // alloc_data_planes();

@@ -254,7 +254,7 @@ bool Config::equal(const Config& other) const
     COMPARE_AND_LOG(_normalization_multiplier);
 
     // return true;
-    std::cout << "Before the return and only one fucked up" << std::endl;
+    // std::cout << "Before the return and only one fucked up" << std::endl;
 
     return return_val;
 

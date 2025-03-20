@@ -215,7 +215,10 @@ bool PopSift::private_init(int w, int h)
         return true;
     }
 
+    fprintf(stderr, "Before pyramid cration\n");
     p._pyramid = new popsift::Pyramid(_config, w, h, _device_queue, _d_gauss, _d_consts);
+
+    fprintf(stderr, "After pyramid cration\n");
 
     return true;
 }
@@ -223,6 +226,7 @@ bool PopSift::private_init(int w, int h)
 // Don't see a purpose of returning true here as popsift did hence making it void
 void PopSift::private_uninit()
 {
+    fprintf(stderr, "priv unint\n");
     Pipe& p = _pipe;
 
     delete p._pyramid;
@@ -269,7 +273,6 @@ SiftJob* PopSift::enqueue(int w, int h, const unsigned char* imageData)
 
 void PopSift::uploadImages()
 {
-    fprintf(stderr, "\n\n\t\tHOY HOY HOY\n");
     SiftJob* job;
     while((job = _pipe._queue_stage1.pull()) != nullptr)
     {
@@ -282,10 +285,8 @@ void PopSift::uploadImages()
 
         // cout << "Updated w=" << job->_w << " and h=" << job->_h << endl;
         // copy image to device
-        fprintf(stderr, "\n\n\t\tROUND TWO -> HOY HOY HOY\n");
         job->setImg(img, _device_queue, _config.getUpscaleFactor());
 
-        fprintf(stderr, "\n\n\tMMR THREE -> HOY HOY HOY\n");
         // job->setImg( img );
         _pipe._queue_stage2.push(job);
     }
@@ -317,19 +318,22 @@ void PopSift::extractDownloadLoop()
         // std::cout << "the job is --> ";
         job->printJob();
 
+        fprintf(stderr, "Before priv init\n");
         private_init(img->getWidth(), img->getHeight());
+
+        fprintf(stderr, "After priv init");
 
         // img->print_region(4, 4, 20, 20);
 
         // DO THE JOB!!!
 
         // std::vector<sycl::event> dependencies =
-        // p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+        p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
         // FUFULL THE PROMISE
 
         cout << "Jobby: -- " << endl;
-        job->printJob();
+        // job->printJob();
 
         // uploaded input image no longer needed, release for reuse
         // p._unused.push(img);
@@ -389,10 +393,8 @@ void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFac
     // img->load_divide(_imageData);
     // img->load_divide_point(_imageData, scaled_w);
     // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
-    fprintf(stderr, "\n\n\t\tBEFORE Load Linear\n");
     // _img_transfer_event = img->load_linear(_imageData, scaled_w);
     _img_transfer_event = img->load_divide_point(_imageData, scaled_w);
-    fprintf(stderr, "\n\n\t\tAFTER Load Linear\n");
     _img = img;
 }
 

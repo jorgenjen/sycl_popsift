@@ -25,19 +25,22 @@ class Horiz
   private:
     float* src;
     float* dst_data;
-    const float* filter;
-    const int span;
+    // const float* filter;
+    // const int span;
     const int width;
     const int height; // not sure if height was needed here (verify)
+    popsift::GaussInfo* d_gauss;
 
   public:
-    Horiz(float* src, float* dst_data, const float* filter, const int span, const int width, const int height)
+    // Horiz(float* src, float* dst_data, const float* filter, const int span, const int width, const int height)
+    Horiz(float* src, float* dst_data, const int width, const int height, popsift::GaussInfo* d_gauss)
       : src(src)
       , dst_data(dst_data)
-      , filter(filter)
-      , span(span)
+      // , filter(filter)
+      // , span(span)
       , width(width)
       , height(height)
+      , d_gauss(d_gauss)
     {}
 
     // Not sure if inlining makes this worse or better...
@@ -47,6 +50,8 @@ class Horiz
         int x = it.get_global_id(0);
         int y = it.get_global_id(1);
 
+        const float* filter = &d_gauss->dd.filter[0];
+        const int span = d_gauss->dd.span[0];
         // could have two different kernels one with this and one without
         // depending on if it is perfectly divisible by 128 but might not be worth it... Test
 
@@ -176,27 +181,34 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
 
     // Grid divide is different from cuda due to the way nd_range kerneels
     // work in sycl but serves the same purpose
-    sycl::range local{128, 1};
-    sycl::range global{(size_t)grid_divide(width, local[0]), (size_t)height};
+    // sycl::range local{128, 1};
+    // sycl::range global{(size_t)grid_divide(width, local[0]), (size_t)height};
 
-    const float* filter = &_d_gauss->dd.filter[0];
-    const int span = _d_gauss->dd.span[0];
+    // Need to be flipped due to the way sycl works
+    sycl::range local{1, 128};
+    sycl::range global{(size_t)height, (size_t)grid_divide(width, local[0])};
+    // fprintf(stderr, "You are the problem next few lines\n");
+    // const float* filter = &_d_gauss->dd.filter[0];
+    // const int span = _d_gauss->dd.span[0];
+    // fprintf(stderr, "the problem you were not hmm\n");
 
+    fprintf(stderr, "before the kernel invocation\n");
     if(global[0] == width)
     {
         // width % 128 = 0 and hence we don't need if check in kernel
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
           dependencies,
-          absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+          absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), width, height, _d_gauss));
     }
     else
     {
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
           dependencies,
-          absoluteSource::Horiz<1>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+          absoluteSource::Horiz<1>(base->getInput(), oct_obj.getIntermediate(), width, height, _d_gauss));
     }
+    fprintf(stderr, "After the kernel invocation\n");
 }
 
 // Should only be called wiht a level > 0
@@ -231,7 +243,7 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(prev_level_write);
         cgh.parallel_for(sycl::nd_range{global, local},
-                         absoluteSource::Horiz<1>(prev_level, cur_intm, filter, span, width, height));
+                         absoluteSource::Horiz<1>(prev_level, cur_intm, width, height, _d_gauss));
     });
 
     // fprintf(stderr, "\nAFTER BEFORE WAIT!!!\n");

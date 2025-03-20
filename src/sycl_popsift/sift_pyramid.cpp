@@ -49,17 +49,20 @@ Pyramid::Pyramid(const Config& config,
     // _octaves = new Octave[_num_octaves];
     // Could not find a way to use C array so using vector
 
+    fprintf(stderr, "Before emplace back and reserve\n");
     _octaves.reserve(_num_octaves);
     for(int i = 0; i < _num_octaves; ++i)
     {
         _octaves.emplace_back(Q);
     }
+    fprintf(stderr, "After emplace back and reserve\n");
 
     int w = width;
     int h = height;
     for(int o = 0; o < _num_octaves; o++)
     {
         _octaves[o].debugSetOctave(o);
+
         _octaves[o].alloc(config, w, h, _levels);
         w = ceilf(w / 2.0f);
         h = ceilf(h / 2.0f);
@@ -72,6 +75,7 @@ Pyramid::Pyramid(const Config& config,
 
     _dct = popsift::common_sycl::malloc_devT<ExtremaCounters>(
       1, __FILE__, __LINE__, "Device Extrema counter allocation failed", Q);
+    fprintf(stderr, "After using malloc_devT\n");
     Q.memset(_dct, 0, sizeof(ExtremaCounters));
 
     _d_extrema_num_blocks = popsift::common_sycl::malloc_devT<int>(
@@ -81,13 +85,20 @@ Pyramid::Pyramid(const Config& config,
     // I think it's mainly for some memory optimizations in cuda but might be wrong!
 
     int sz = _num_octaves * h_consts.max_extrema; // h_consts.max_extrema is 100 000 by default
-    _dobuf = popsift::common_sycl::malloc_devT<DevBuffers>(
+    // _dobuf = popsift::common_sycl::malloc_devT<DevBuffers>(
+    //   1, __FILE__, __LINE__, "Allocating device DevBuffers struct failed", Q);
+
+    // TODO: Rethink structure of memory not sure if we actually want to use shared here as it results in a large
+    // penalty in terms of performance (potentially)
+    _dobuf = popsift::common_sycl::malloc_sharedT<DevBuffers>(
       1, __FILE__, __LINE__, "Allocating device DevBuffers struct failed", Q);
 
+    fprintf(stderr, "Before i_ext_dat\n");
     // For 7 octaves case the total memory useage for this array is 196MB
     _dobuf->i_ext_dat[0] = popsift::common_sycl::malloc_devT<InitialExtremum>(
       sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", Q);
 
+    fprintf(stderr, "after i_ext_dat\n");
     // For 7 octaves case the total memory useage for this array is 2.8MB
     _dobuf->i_ext_off[0] = popsift::common_sycl::malloc_devT<int>(
       sz, __FILE__, __LINE__, "Device extremum offset array allocation failed", Q);
