@@ -10,7 +10,9 @@
 #include "gauss_filter.hpp"
 #include "sift_constants.hpp"
 #include "sift_pyramid.hpp"
+#include "sycl/kernel_bundle_enums.hpp"
 #include "sycl/nd_range.hpp"
+#include "sycl/usm.hpp"
 
 #include <cmath>
 
@@ -47,6 +49,8 @@ class Horiz
     // might remove function calls but not sure exactly
     inline void operator()(sycl::nd_item<2> it) const
     {
+        sycl::ext::oneapi::experimental::printf("This runs in the kernel so invocation is fine");
+        return;
         int x = it.get_global_id(0);
         int y = it.get_global_id(1);
 
@@ -94,6 +98,28 @@ class Horiz
         out += (val * g);
 
         dst_data[x + y * width] = out;
+    };
+};
+
+class simple_test
+{
+  private:
+    float* src;
+
+  public:
+    simple_test(float* src)
+      : src(src)
+    {}
+
+    inline void operator()(sycl::nd_item<2> it) const
+    {
+        /* sycl::ext::oneapi::experimental::printf("local range: %d", */
+        /*                                         it.get_local_range(1)); */
+        int x = it.get_local_id(1);
+        int y = it.get_local_id(0);
+
+        int w_idx = it.get_global_linear_id();
+        src[w_idx] = x + y * it.get_local_range(1);
     };
 };
 
@@ -192,14 +218,33 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
     // const int span = _d_gauss->dd.span[0];
     // fprintf(stderr, "the problem you were not hmm\n");
 
-    fprintf(stderr, "before the kernel invocation\n");
-    if(global[0] == width)
+    float* my_data = sycl::malloc_device<float>(2048, _device_queue);
+
+    if(global[1] == width)
     {
+        fprintf(stderr, "before the kernel invocation\n");
         // width % 128 = 0 and hence we don't need if check in kernel
-        return _device_queue.parallel_for(
-          sycl::nd_range{global, local},
-          dependencies,
-          absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), width, height, _d_gauss));
+        // return _device_queue.parallel_for(
+        //   sycl::nd_range{global, local},
+        //   dependencies,
+        //   absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), width, height, _d_gauss));
+
+        return _device_queue.submit([&](sycl::handler& cgh) {
+            // cgh.depends_on(dependencies);
+            // auto inputImg = base->getInput();
+            // auto intermediate = oct_obj.getIntermediate();
+
+            // cgh.parallel_for(sycl::nd_range{global, local},
+            //                  absoluteSource::Horiz<0>(nullptr, nullptr, width, height, nullptr));
+
+            sycl::range local_t{2, 32};
+            sycl::range global_t{16, 64};
+
+            // cgh.parallel_for(sycl::nd_range{global_t, local_t}, absoluteSource::simple_test(my_data));
+
+            // absoluteSource::Horiz<0>(inputImg, intermediate, width, height, _d_gauss));
+            fprintf(stderr, "AFTER KERNEL\n");
+        });
     }
     else
     {

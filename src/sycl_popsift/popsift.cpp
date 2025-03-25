@@ -332,7 +332,11 @@ void PopSift::extractDownloadLoop()
 
         // FUFULL THE PROMISE
 
+        //
+        _device_queue.wait();
         cout << "Jobby: -- " << endl;
+
+        // idk why this does not work
         // job->printJob();
 
         // uploaded input image no longer needed, release for reuse

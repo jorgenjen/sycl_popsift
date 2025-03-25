@@ -213,6 +213,7 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
                     fprintf(stderr, "Before first horiz\n");
                     sycl::event horiz = horiz_from_input_image(conf, base_img, {d_gauss_write, img_transfer});
                     fprintf(stderr, "Completed first horiz\n");
+                    return {horiz};
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
                 }
                 else

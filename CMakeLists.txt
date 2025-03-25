@@ -14,7 +14,7 @@ endif()
 
 
 # Set flags to make CUDA work (Might need different versions for different architectures -- test)
-set(HARDWARE_FLAGS "-fsycl -fsycl-targets=nvptx64-nvidia-cuda")
+# set(HARDWARE_FLAGS "-fsycl -fsycl-targets=nvptx64-nvidia-cuda")
 
 
 project(sycl_popSift VERSION 1.0.0 LANGUAGES CXX)
@@ -29,6 +29,7 @@ find_package(IntelSYCL REQUIRED) # should de added after project definition
 set(SYCL_FLAGS "-fsycl"
       "-fsycl-targets=nvptx64-nvidia-cuda"
       "-fsycl-unnamed-lambda"
+      "--offload-arch=sm_89"
       "-Wno-linker-warnings")
 
 
@@ -75,7 +76,7 @@ option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 
 # TODO: Seems to be beneficial for performance (keeping for now)
 message(STATUS "Building with -fPIC (Position Independent Code)")
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON) # Could this be the reason it does not work...
 
 # TODO: Figure out if I should supprt visual studio (MSVC) -- Currently just doing -fPIC (shared libs  I guess)
 

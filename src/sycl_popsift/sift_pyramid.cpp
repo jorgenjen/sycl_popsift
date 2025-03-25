@@ -32,12 +32,8 @@ namespace popsift {
 //     return ptr;
 // }
 
-Pyramid::Pyramid(const Config& config,
-                 int width,
-                 int height,
-                 sycl::queue& Q,
-                 popsift::GaussInfo* d_gauss,
-                 popsift::ConstInfo* d_consts)
+Pyramid::Pyramid(
+  const Config& config, int width, int height, sycl::queue Q, popsift::GaussInfo* d_gauss, popsift::ConstInfo* d_consts)
   : _num_octaves(config.octaves)
   , _levels(config.levels + 3)
   , _assume_initial_blur(config.hasInitialBlur())

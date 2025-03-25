@@ -100,7 +100,7 @@ class Pyramid
 
   public:
     Pyramid(
-      const Config& config, int w, int h, sycl::queue& Q, popsift::GaussInfo* d_gauss, popsift::ConstInfo* d_consts);
+      const Config& config, int w, int h, sycl::queue Q, popsift::GaussInfo* d_gauss, popsift::ConstInfo* d_consts);
     ~Pyramid();
 
     void resetDimensions(const Config& conf, int width, int height);
