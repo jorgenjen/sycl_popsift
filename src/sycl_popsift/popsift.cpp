@@ -3,6 +3,7 @@
 #include "sycl/device.hpp"
 #include "sycl/device_selector.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
+#include "sycl_popsift/common/queue_manager.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
@@ -24,6 +25,9 @@ using std::min;
 
 PopSift::PopSift(const popsift::Config& config)
 {
+    // popsift::QueueManager* qm = popsift::QueueManager::getInstance();
+    _queue_manager = popsift::QueueManager::getInstance();
+
     // Choose devcie that the queue should be binded to
     if(config.getCpuOnly())
     {
@@ -64,10 +68,14 @@ PopSift::PopSift(const popsift::Config& config)
 
     // Push two images as we use two one to load in data and other to compute
     // and they alter using the queue
-    _pipe._unused.push(new popsift::Image(_device_queue));
-    _pipe._unused.push(new popsift::Image(_device_queue));
+    // _pipe._unused.push(new popsift::Image(_device_queue));
+    // _pipe._unused.push(new popsift::Image(_device_queue));
+    _pipe._unused.push(new popsift::Image());
+    _pipe._unused.push(new popsift::Image());
 
-    std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
+    // std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
+    std::cout << "Running on other queue: "
+              << _queue_manager->_device_queue.get_device().get_info<sycl::info::device::name>() << endl;
 
     // TODO(jorgejen): Setup these threads.
     _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
@@ -283,10 +291,21 @@ void PopSift::uploadImages()
         // USING firend class so breaking encapsulateion... (should change this)
         // private_apply_scale_factor(&job->_w, &job->_h);
 
+        _queue_manager->_device_queue.single_task(
+          [=]() { sycl::ext::oneapi::experimental::printf("\n\t\tJust wanted to say hello from mr GPU/CPU\n\n"); });
+
+        _queue_manager->_device_queue.single_task([=]() {
+            sycl::ext::oneapi::experimental::printf("\n\t\tHello hei hei from le gpu we talk this thime around\n\n");
+        });
+
         // cout << "Updated w=" << job->_w << " and h=" << job->_h << endl;
         // copy image to device
         job->setImg(img, _device_queue, _config.getUpscaleFactor());
 
+        fprintf(stderr, "\nAfter setImg\n");
+        _queue_manager->_device_queue.wait();
+
+        // _device_queue.wait();
         // job->setImg( img );
         _pipe._queue_stage2.push(job);
     }
@@ -397,8 +416,8 @@ void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFac
     // img->load_divide(_imageData);
     // img->load_divide_point(_imageData, scaled_w);
     // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
-    // _img_transfer_event = img->load_linear(_imageData, scaled_w);
-    _img_transfer_event = img->load_divide_point(_imageData, scaled_w);
+    _img_transfer_event = img->load_linear(_imageData, scaled_w);
+    // _img_transfer_event = img->load_divide_point(_imageData, scaled_w);
     _img = img;
 }
 

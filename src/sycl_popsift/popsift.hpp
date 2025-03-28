@@ -2,6 +2,7 @@
 
 #include "common/debug_macros.hpp"
 #include "common/sync_queue.h"
+#include "sycl_popsift/common/queue_manager.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/s_image.hpp"
@@ -17,6 +18,7 @@
 namespace popsift {
 class Image;
 class Pyramid;
+class QueueManager;
 
 // template<class T>
 // T* malloc_devT(int num, const char* file, int line, sycl::queue Q);
@@ -152,6 +154,8 @@ class PopSift
     int _h;
     // sycl::buffer<unsigned char, 2> _imageData;
     sycl::queue _device_queue;
+    popsift::QueueManager* _queue_manager;
+
     popsift::GaussInfo* _d_gauss = nullptr;
     popsift::ConstInfo* _d_consts = nullptr;
 

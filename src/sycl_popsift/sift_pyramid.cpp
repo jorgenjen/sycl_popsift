@@ -152,15 +152,15 @@ std::vector<sycl::event> Pyramid::step1(const Config& conf,
 {
     // TODO: Implement the reset -- far down the line need to find extrema first
     // reset_extrema_mgmt();
-    return build_pyramid(conf, img, d_gauss_write, img_transfer);
+    // return build_pyramid(conf, img, d_gauss_write, img_transfer);
 }
 
 // could probably pass the dependencies as a reference...
 void Pyramid::step2(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write)
 {
-    find_extrema(conf, dependencies, d_consts_write);
+    // find_extrema(conf, dependencies, d_consts_write);
 
-    orientation(conf);
+    // orientation(conf);
     //
     // descriptors( conf );
 }

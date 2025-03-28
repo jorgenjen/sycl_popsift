@@ -1,30 +1,32 @@
 #include "s_image.hpp"
 
+#include "sycl_popsift/common/queue_manager.hpp"
+
 #include <sycl/sycl.hpp>
 
 #include <iostream>
 
 namespace popsift {
 
-Image::Image(sycl::queue& q)
+Image::Image()
   : _w(0)
   , _h(0)
   , _max_w(0)
   , _max_h(0)
-  , _device_queue(q)
+  , _queue_manager(popsift::QueueManager::getInstance())
 {}
 
-Image::Image(int w, int h, sycl::queue& q)
+Image::Image(int w, int h)
   : _w(w)
   , _h(h)
   , _max_w(w)
   , _max_h(h)
-  , _device_queue(q)
+  , _queue_manager(popsift::QueueManager::getInstance())
 {
     // allocate( w, h );
     // need to allocate malloc_device
     // _device_img = sycl::malloc_device<unsigned char>(w * h, q);
-    _device_img = sycl::malloc_device<float>(w * h, q);
+    _device_img = sycl::malloc_device<float>(w * h, _queue_manager->_device_queue);
     if(_device_img == nullptr)
         std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
                   << std::endl;
@@ -35,7 +37,7 @@ Image::~Image()
     if(_max_w == 0)
         return;
 
-    sycl::free(_device_img, _device_queue);
+    sycl::free(_device_img, _queue_manager->_device_queue);
     // destroyTexture( );
     // _input_image_d.freeDev( );
     // _input_image_h.freeHost( popsift::CudaAllocated );
@@ -50,7 +52,7 @@ void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
         _max_w = _w = w;
         _max_h = _h = h;
         // allocate( w, h );
-        _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _device_queue);
+        _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _queue_manager->_device_queue);
         if(_device_img == nullptr)
             std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
                       << std::endl;
@@ -73,22 +75,22 @@ void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
     // larger than current segment hence need to free and remalloc
 
     // TODO: See if sycl has realloc -- could not find it
-    sycl::free(_device_img, _device_queue);
+    sycl::free(_device_img, _queue_manager->_device_queue);
 
     _max_w = _w = w;
     _max_h = _h = h;
-    _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _device_queue);
+    _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _queue_manager->_device_queue);
     if(_device_img == nullptr)
         std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
                   << std::endl;
 }
 
-sycl::event Image::load(void* input) { return _device_queue.memcpy(_device_img, input, _w * _h); }
+sycl::event Image::load(void* input) { return _queue_manager->_device_queue.memcpy(_device_img, input, _w * _h); }
 
 // directly making it normalized
 sycl::event Image::load_divide(unsigned char* input)
 {
-    return _device_queue.submit([&](sycl::handler& cgh) {
+    return _queue_manager->_device_queue.submit([&](sycl::handler& cgh) {
         auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
         std::cout << "widht and height in load_divide" << _w << " - " << _h << std::endl;
         cgh.parallel_for(sycl::range<1>(_w * _h), [=](sycl::id<1> idx) {
@@ -112,7 +114,7 @@ sycl::event Image::load_divide(unsigned char* input)
 // in the odd cases
 sycl::event Image::load_divide_point(unsigned char* input, const int& scaled_w)
 {
-    return _device_queue.submit([&](sycl::handler& cgh) {
+    return _queue_manager->_device_queue.submit([&](sycl::handler& cgh) {
         auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
         auto width = _w;
         int step = scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
@@ -138,7 +140,7 @@ sycl::event Image::load_divide_point(unsigned char* input, const int& scaled_w)
 // should mby look into storing image in local memory for this  but kernel will propbably not be used in final anyways
 sycl::event Image::load_divide_linear(unsigned char* input, const int& scaled_w)
 {
-    return _device_queue.submit([&](sycl::handler& cgh) {
+    return _queue_manager->_device_queue.submit([&](sycl::handler& cgh) {
         auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
         auto width = _w;
         auto height = _h;
@@ -170,7 +172,7 @@ sycl::event Image::load_divide_linear(unsigned char* input, const int& scaled_w)
 
 sycl::event Image::load_linear(unsigned char* input, const int& scaled_w)
 {
-    return _device_queue.submit([&](sycl::handler& cgh) {
+    return _queue_manager->_device_queue.submit([&](sycl::handler& cgh) {
         auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
         auto width = _w;
         auto height = _h;
@@ -201,7 +203,10 @@ sycl::event Image::load_linear(unsigned char* input, const int& scaled_w)
 }
 
 // only for printing and debugging
-sycl::event Image::host_move(void* output) { return _device_queue.memcpy(output, _device_img, _w * _h); };
+sycl::event Image::host_move(void* output)
+{
+    return _queue_manager->_device_queue.memcpy(output, _device_img, _w * _h);
+};
 
 // only for printing and debugging -- quite inefficient
 void Image::print_region(int start_x, int start_y, int end_x, int end_y)
