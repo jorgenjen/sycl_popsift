@@ -22,50 +22,43 @@ using std::endl;
 using std::max;
 using std::min;
 
+inline void PopSift::initQueue()
+{
+#ifndef CPU_ONLY
+    try
+    {
+        // If there is no GPU it will throw exception and use CPU in catch
+        sycl::device dev = sycl::device{sycl::gpu_selector_v};
+        _device_queue = sycl::queue(sycl::context{dev}, dev);
+    }
+    catch(sycl::exception const& ex)
+    {
+        cout << "No GPU found falling back to CPU... Exception thrown: " << ex.what() << endl;
+
+        sycl::device dev = sycl::device{sycl::cpu_selector_v};
+        _device_queue = sycl::queue(sycl::context{dev}, dev);
+    }
+#else
+    fprintf(stderr, "Running in CPU_ONLY mode\n");
+    sycl::device dev = sycl::device{sycl::cpu_selector_v};
+    _device_queue = sycl::queue(sycl::context{dev}, dev);
+#endif
+}
+
+// std::shared_ptr<sycl::queue> create_queue(sycl::context ctx, sycl::device
+// dev) { dev) {
+//   return std::make_shared<sycl::queue>(ctx, dev);
+// }
+
 PopSift::PopSift(const popsift::Config& config)
 {
-    // Choose devcie that the queue should be binded to
-    if(config.getCpuOnly())
-    {
-        cout << "Restricted to running on cpu only!" << endl;
-        _device_queue = sycl::queue(sycl::cpu_selector_v);
-    }
-    else
-    {
-        // Seems like this is not needed and is selected in the cmake file so probably need that to have a flag to
-        // choose the arcitecture you want to compile for
-        bool GPU_is_available = false;
-
-        try
-        {
-            sycl::device testForGPU(sycl::gpu_selector_v);
-            // Will throw an expection if it's not available and hence remain false
-            GPU_is_available = true;
-        }
-        catch(sycl::exception const& ex)
-        {
-            // Not sure if we want to print out the exception aswell as it could be of no surprise
-            // but could be usefull if it is unexpected...
-            cout << "No GPU found falling back to CPU... Exception thrown: " << ex.what() << endl;
-        }
-        _device_queue = GPU_is_available ? sycl::queue(sycl::gpu_selector_v) : sycl::queue(sycl::default_selector_v);
-    }
-
+    initQueue();
     configure(config);
-
-    // Set the static memer pointers to nullptr
-    // _d_gauss = nullptr;
-
-    // sycl::queue _device_queue;
-    // sycl::buffer<unsigned char, 2> _imageData(imageData, sycl::range<2>(_w,
-    // _h));
-
-    // cout << "PopSift constructor" << endl;
 
     // Push two images as we use two one to load in data and other to compute
     // and they alter using the queue
-    _pipe._unused.push(new popsift::Image(_device_queue));
-    _pipe._unused.push(new popsift::Image(_device_queue));
+    _pipe._unused.push(new popsift::Image(_device_queue.get_context(), _device_queue.get_device()));
+    _pipe._unused.push(new popsift::Image(_device_queue.get_context(), _device_queue.get_device()));
 
     std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
 
@@ -121,16 +114,23 @@ void PopSift::uninit()
     // else
     //     std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
 
+    fprintf(stderr, "popsift uninit start\n");
+    _device_queue.wait();
+    fprintf(stderr, "popsift uninit after wait() -- _d_gauss ptr: %p\n ", _d_gauss);
+
     if(_d_gauss != nullptr)
         sycl::free(_d_gauss, _device_queue);
     else
         std::cout << "_d_gauss was a nullptr hennce not freeing" << std::endl;
+
+    fprintf(stderr, "After free _d_gauss");
 
     if(_d_consts != nullptr)
         sycl::free(_d_consts, _device_queue);
     else
         std::cout << "_d_consts was a nullptr hennce not freeing" << std::endl;
 
+    fprintf(stderr, "popsift uninit end\n");
     _pipe.uninit();
 
     _isInit = false;
@@ -139,13 +139,18 @@ void PopSift::uninit()
 // Apply configuration should reside here
 bool PopSift::applyConfiguration(bool force)
 {
-    // TODO: Figure out why on second image it returns mismatch on octaves when they in fact are the same
-    // so something seems to be wrong here. Once figured out revert the equal function back to the commented out one
     if(force || (_config != _shadow_config))
     {
-        // cout << "\n\n\t\tApplying configuration nuuuuuu!!\n\n" << endl;
-        // for re ren we need to free and re malloc or change the size or not malloc again if it is already malloced
+        // TODO: Mby change the constants and filter to be tied to a class and not have host local
+        // and one that writes to a attribute of a class very odd way of doing it should be changesd
+
+        // WARNING: Currently copying  queue (which I believe should be fine but from experiments NOT the case) but does
+        // seem to not alter the context hence should be fine but as stated above should be refactored
+
+        // for re run we need to free and re malloc or change the size or not malloc again if it is already malloced
+        fprintf(stderr, "Current _d_gauss ptr %p\n", _d_gauss);
         _d_gauss_write = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue, &_d_gauss);
+        fprintf(stderr, "Current after init_filter _d_gauss ptr %p\n", _d_gauss);
         // _d_gauss_write.wait(); // tmp -- should not be needed as it's passed as a dependency
 
         _d_consts_write = popsift::init_constants(_config.sigma,
@@ -216,7 +221,8 @@ bool PopSift::private_init(int w, int h)
     }
 
     fprintf(stderr, "Before pyramid cration\n");
-    p._pyramid = new popsift::Pyramid(_config, w, h, _device_queue, _d_gauss, _d_consts);
+    p._pyramid =
+      new popsift::Pyramid(_config, w, h, _device_queue.get_context(), _device_queue.get_device(), _d_gauss, _d_consts);
 
     fprintf(stderr, "After pyramid cration\n");
 
@@ -285,7 +291,8 @@ void PopSift::uploadImages()
 
         // cout << "Updated w=" << job->_w << " and h=" << job->_h << endl;
         // copy image to device
-        job->setImg(img, _device_queue, _config.getUpscaleFactor());
+        job->setImg(img, _config.getUpscaleFactor());
+        fprintf(stderr, "After setImg");
 
         // job->setImg( img );
         _pipe._queue_stage2.push(job);
@@ -321,7 +328,7 @@ void PopSift::extractDownloadLoop()
         fprintf(stderr, "Before priv init\n");
         private_init(img->getWidth(), img->getHeight());
 
-        fprintf(stderr, "After priv init");
+        fprintf(stderr, "After priv init\n");
 
         // img->print_region(4, 4, 20, 20);
 
@@ -375,7 +382,11 @@ SiftJob::SiftJob(int w, int h, const unsigned char* imageData)
     }
 }
 
-SiftJob::~SiftJob() { free(_imageData); }
+SiftJob::~SiftJob()
+{
+    fprintf(stderr, "Freeing _imageData\n");
+    free(_imageData);
+}
 
 // To fufill promise temporary promise solution while I don't have a
 // featuresBase object to return
@@ -386,7 +397,7 @@ void SiftJob::printJob() { std::printf("Width: %d -- height: %d\n", _w, _h); }
 
 int SiftJob::getHost() { return _f.get(); }
 
-void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFactor)
+void SiftJob::setImg(popsift::Image* img, const float& upscaleFactor)
 {
     int scaled_w = _w;
     int scaled_h = _h;

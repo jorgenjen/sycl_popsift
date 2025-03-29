@@ -96,11 +96,11 @@ endif()
 # popsift-demo
 #############################################################
 
-add_executable(popsift-demo  main.cpp pgmread.cpp pgmread.h)
+add_executable(popsift-demo  main.cpp)
 
 # set_property(TARGET popsift-demo PROPERTY CXX_STANDARD 11)
 
-add_sycl_to_target(TARGET popsift-demo SOURCES main.cpp pgmread.cpp pgmread.h)
+# add_sycl_to_target(TARGET popsift-demo SOURCES main.cpp pgmread.cpp pgmread.h)
 
 target_compile_options(popsift-demo PRIVATE ${PD_COMPILE_OPTIONS} )
 target_include_directories(popsift-demo PUBLIC PopSift::popsift ${PD_INCLUDE_DIRS})

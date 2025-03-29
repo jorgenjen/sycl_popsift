@@ -6,25 +6,25 @@
 
 namespace popsift {
 
-Image::Image(sycl::queue& q)
+Image::Image(sycl::context ctx, sycl::device dev)
   : _w(0)
   , _h(0)
   , _max_w(0)
   , _max_h(0)
-  , _device_queue(q)
+  , _device_queue(sycl::queue(ctx, dev))
 {}
 
-Image::Image(int w, int h, sycl::queue& q)
+Image::Image(int w, int h, sycl::context ctx, sycl::device dev)
   : _w(w)
   , _h(h)
   , _max_w(w)
   , _max_h(h)
-  , _device_queue(q)
+  , _device_queue(sycl::queue(ctx, dev))
 {
     // allocate( w, h );
     // need to allocate malloc_device
     // _device_img = sycl::malloc_device<unsigned char>(w * h, q);
-    _device_img = sycl::malloc_device<float>(w * h, q);
+    _device_img = sycl::malloc_device<float>(w * h, _device_queue);
     if(_device_img == nullptr)
         std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
                   << std::endl;

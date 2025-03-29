@@ -10,10 +10,10 @@ struct Image
 {
     Image() = delete;
 
-    Image(sycl::queue& q);
+    Image(sycl::context ctx, sycl::device dev);
 
     /** Create a device-sided buffer of the given dimensions */
-    Image(int w, int h, sycl::queue& q);
+    Image(int w, int h, sycl::context ctx, sycl::device dev);
 
     ~Image();
 
@@ -43,7 +43,7 @@ struct Image
     int _init_w; // Host image widht -- could be differnet due to apply scale factor done early
     int _init_h; // host image height
 
-    sycl::queue& _device_queue; // reference to the queue
+    sycl::queue _device_queue;
 
     // TODO: Test sycl image that is said to utlizie texture memory when availabe
     // also look into codeplays extension of sycl with bindless images and see if

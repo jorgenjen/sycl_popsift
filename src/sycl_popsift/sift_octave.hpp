@@ -35,7 +35,7 @@ class Octave
     int _levels{};
     int _gauss_group{};
 
-    sycl::queue& _device_queue; // reference to  of device queue
+    sycl::queue _device_queue; // reference to  of device queue
 
     // Intermediate
     // TODO: change to only use a float* _intm_data (or whatever) as we only need one!!!
@@ -82,7 +82,7 @@ class Octave
     sycl::event _extrema_done_event;
     // Octave();
     Octave() = delete;
-    Octave(sycl::queue& Q);
+    Octave(sycl::context ctx, sycl::device dev);
     ~Octave() { this->free_arrays(); }
     // ~Octave();
 

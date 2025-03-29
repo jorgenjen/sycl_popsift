@@ -14,31 +14,18 @@
 
 namespace popsift {
 
-// T* malloc_devT(int num, sycl::queue& Q)
-// template<class T>
-// T* malloc_devT(int num, const char* file, int line, sycl::queue Q)
-// {
-//     T* ptr;
-//     try
-//     {
-//         ptr = sycl::malloc_device<T>(num, Q);
-//     }
-//     catch(const sycl::exception& e)
-//     {
-//         std::stringstream ss;
-//         ss << "Memory allocation failed" << e.what();
-//         POP_FATAL_FL(ss.str(), file, line);
-//     }
-//     return ptr;
-// }
-
-Pyramid::Pyramid(
-  const Config& config, int width, int height, sycl::queue Q, popsift::GaussInfo* d_gauss, popsift::ConstInfo* d_consts)
+Pyramid::Pyramid(const Config& config,
+                 int width,
+                 int height,
+                 sycl::context ctx,
+                 sycl::device dev,
+                 popsift::GaussInfo* d_gauss,
+                 popsift::ConstInfo* d_consts)
   : _num_octaves(config.octaves)
   , _levels(config.levels + 3)
   , _assume_initial_blur(config.hasInitialBlur())
   , _initial_blur(config.getInitialBlur())
-  , _device_queue(Q)
+  , _device_queue(sycl::queue(ctx, dev))
   , _d_gauss(d_gauss)
   , _d_consts(d_consts)
 {
@@ -49,7 +36,7 @@ Pyramid::Pyramid(
     _octaves.reserve(_num_octaves);
     for(int i = 0; i < _num_octaves; ++i)
     {
-        _octaves.emplace_back(Q);
+        _octaves.emplace_back(_device_queue.get_context(), _device_queue.get_device());
     }
     fprintf(stderr, "After emplace back and reserve\n");
 
@@ -70,12 +57,12 @@ Pyramid::Pyramid(
     // information and it might slightly slow us down...
 
     _dct = popsift::common_sycl::malloc_devT<ExtremaCounters>(
-      1, __FILE__, __LINE__, "Device Extrema counter allocation failed", Q);
+      1, __FILE__, __LINE__, "Device Extrema counter allocation failed", _device_queue);
     fprintf(stderr, "After using malloc_devT\n");
-    Q.memset(_dct, 0, sizeof(ExtremaCounters));
+    _device_queue.memset(_dct, 0, sizeof(ExtremaCounters));
 
     _d_extrema_num_blocks = popsift::common_sycl::malloc_devT<int>(
-      _num_octaves, __FILE__, __LINE__, "Global octave barrier allocation failed", Q);
+      _num_octaves, __FILE__, __LINE__, "Global octave barrier allocation failed", _device_queue);
 
     // don't see the purpose of dobuf_shadow, so not using it untill I see a purpose for it (I probs will in future :D)
     // I think it's mainly for some memory optimizations in cuda but might be wrong!
@@ -87,17 +74,17 @@ Pyramid::Pyramid(
     // TODO: Rethink structure of memory not sure if we actually want to use shared here as it results in a large
     // penalty in terms of performance (potentially)
     _dobuf = popsift::common_sycl::malloc_sharedT<DevBuffers>(
-      1, __FILE__, __LINE__, "Allocating device DevBuffers struct failed", Q);
+      1, __FILE__, __LINE__, "Allocating device DevBuffers struct failed", _device_queue);
 
     fprintf(stderr, "Before i_ext_dat\n");
     // For 7 octaves case the total memory useage for this array is 196MB
     _dobuf->i_ext_dat[0] = popsift::common_sycl::malloc_devT<InitialExtremum>(
-      sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", Q);
+      sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", _device_queue);
 
     fprintf(stderr, "after i_ext_dat\n");
     // For 7 octaves case the total memory useage for this array is 2.8MB
     _dobuf->i_ext_off[0] = popsift::common_sycl::malloc_devT<int>(
-      sz, __FILE__, __LINE__, "Device extremum offset array allocation failed", Q);
+      sz, __FILE__, __LINE__, "Device extremum offset array allocation failed", _device_queue);
 
     // All octaves in one contigous memory segment that has 100k each in default case
     // loop sets poitners to appropriate 0 positions per octave
@@ -114,18 +101,18 @@ Pyramid::Pyramid(
     }
 
     sz = h_consts.max_extrema; // setting to 100 000 in default case octave num invariant
-    _dobuf->extrema =
-      popsift::common_sycl::malloc_devT<Extremum>(sz, __FILE__, __LINE__, "Device Extremum array allocation failed", Q);
-    _dobuf->features =
-      popsift::common_sycl::malloc_devT<Feature>(sz, __FILE__, __LINE__, "Device Feature array allocation failed", Q);
+    _dobuf->extrema = popsift::common_sycl::malloc_devT<Extremum>(
+      sz, __FILE__, __LINE__, "Device Extremum array allocation failed", _device_queue);
+    _dobuf->features = popsift::common_sycl::malloc_devT<Feature>(
+      sz, __FILE__, __LINE__, "Device Feature array allocation failed", _device_queue);
     // hbuf.ext_allocated = sz; // don't know the purpose of this boy yet
     // dbuf_shadow.ext_allocated = sz; // don't know puppose of this boy yet either
 
     sz = std::max(2 * h_consts.max_extrema, h_consts.max_orientations);
     // hbuf.desc = popsift::cuda::malloc_hstT<Descriptor>(sz, __FILE__, __LINE__);
     // dbuf_shadow.desc = popsift::cuda::malloc_devT<Descriptor>(sz, __FILE__, __LINE__);
-    _dobuf->feat_to_ext_map =
-      popsift::common_sycl::malloc_devT<int>(sz, __FILE__, __LINE__, "Device feat_to_ext_map allocation failed", Q);
+    _dobuf->feat_to_ext_map = popsift::common_sycl::malloc_devT<int>(
+      sz, __FILE__, __LINE__, "Device feat_to_ext_map allocation failed", _device_queue);
     // hbuf.ori_allocated = sz;
     // dbuf_shadow.ori_allocated = sz;
 }
@@ -133,7 +120,7 @@ Pyramid::Pyramid(
 Pyramid::~Pyramid()
 {
     // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
-    printf("Destroying the Pyramid!\n");
+    fprintf(stderr, "Destroying the Pyramid!\n");
     sycl::free(_d_extrema_num_blocks, _device_queue);
     sycl::free(_dct, _device_queue);
 
@@ -152,16 +139,18 @@ std::vector<sycl::event> Pyramid::step1(const Config& conf,
 {
     // TODO: Implement the reset -- far down the line need to find extrema first
     // reset_extrema_mgmt();
-    return build_pyramid(conf, img, d_gauss_write, img_transfer);
+    // return build_pyramid(conf, img, d_gauss_write, img_transfer);
+    // return sycl::event;
+    return {sycl::event()};
 }
 
 // could probably pass the dependencies as a reference...
 void Pyramid::step2(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write)
 {
-    find_extrema(conf, dependencies, d_consts_write);
+    // find_extrema(conf, dependencies, d_consts_write);
 
-    orientation(conf);
-    //
+    // orientation(conf);
+
     // descriptors( conf );
 }
 

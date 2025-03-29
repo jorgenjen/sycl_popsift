@@ -7,8 +7,8 @@
 
 namespace popsift {
 
-Octave::Octave(sycl::queue& Q)
-  : _device_queue(Q)
+Octave::Octave(sycl::context ctx, sycl::device dev)
+  : _device_queue(sycl::queue(ctx, dev))
 {}
 
 // Octave::~Octave() { free_arrays(); }
