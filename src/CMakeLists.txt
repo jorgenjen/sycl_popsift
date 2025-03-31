@@ -7,7 +7,7 @@ add_library(sycl_popsift
             # sycl_popsift/s_pyramid_build_aa.cpp
             sycl_popsift/sift_constants.cpp sycl_popsift/sift_constants.hpp
             sycl_popsift/sift_octave.cpp sycl_popsift/sift_octave.hpp
-            sycl_popsift/gauss_filter.cpp sycl_popsift/gauss_filter.cpp
+            sycl_popsift/gauss_filter.cpp sycl_popsift/gauss_filter.hpp
             # sycl_popsift/s_extrema.cpp 
             # sycl_popsift/s_orientation.cpp 
             sycl_popsift/malloc_devt.hpp

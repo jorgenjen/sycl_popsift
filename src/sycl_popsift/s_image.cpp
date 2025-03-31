@@ -49,6 +49,12 @@ void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
         // First time instantiating
         _max_w = _w = w;
         _max_h = _h = h;
+
+        _device_src_img = sycl::malloc_device<unsigned char>(w * h, _device_queue);
+        if(_device_src_img == nullptr)
+            std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
+                      << std::endl;
+
         // allocate( w, h );
         _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _device_queue);
         if(_device_img == nullptr)
@@ -168,13 +174,49 @@ sycl::event Image::load_divide_linear(unsigned char* input, const int& scaled_w)
     });
 }
 
-sycl::event Image::load_linear(unsigned char* input, const int& scaled_w)
+// sycl::event Image::load_linear(unsigned char* input, const int& scaled_w)
+// {
+//     return _device_queue.submit([&](sycl::handler& cgh) {
+//         auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
+//         auto width = _w;
+//         auto height = _h;
+//         int step = scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
+//         cgh.parallel_for(sycl::range<2>(width, height), [=](sycl::id<2> idx) {
+//             auto in_pos = idx[0] + idx[1] * width;
+//
+//             auto in_pos_right = idx[0] == width - 1 ? in_pos : in_pos + 1;
+//             auto in_pos_down = idx[1] == height - 1 ? in_pos : in_pos + width;
+//             auto in_pos_down_right = (idx[0] == width - 1 && idx[1] == height - 1) ? in_pos
+//                                      : idx[0] == width - 1                         ? in_pos + width
+//                                      : idx[1] == height - 1                        ? in_pos + 1
+//                                                                                    : in_pos + width + 1; // default
+//                                                                                    case
+//
+//             float pixel = static_cast<float>(input[in_pos]);
+//             float pixel_right = static_cast<float>(input[in_pos_right]);
+//             float pixel_down = static_cast<float>(input[in_pos_down]);
+//             float pixel_down_right = static_cast<float>(input[in_pos_down_right]);
+//
+//             auto pos = idx[0] * step + idx[1] * step * scaled_w; // position in potentially upscaled image
+//
+//             img[pos] = pixel;
+//             img[pos + 1] = (pixel + pixel_right) / 2;
+//             img[pos + scaled_w] = (pixel + pixel_down) / 2;
+//             img[pos + scaled_w + 1] = (pixel + pixel_down + pixel_right + pixel_down_right) / 4;
+//         });
+//     });
+// }
+
+sycl::event Image::load_linear(const int& scaled_w)
 {
     return _device_queue.submit([&](sycl::handler& cgh) {
-        auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
+        auto img = _device_img; // needed to avoid implicitly capturing this which
+                                // is not allowed
+        auto input = _device_src_img;
         auto width = _w;
         auto height = _h;
         int step = scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
+        fprintf(stderr, "\n\tLoad linear before cuda kernel\n");
         cgh.parallel_for(sycl::range<2>(width, height), [=](sycl::id<2> idx) {
             auto in_pos = idx[0] + idx[1] * width;
 

@@ -228,6 +228,8 @@ int main(int argc, char** argv)
         jobs.push(job);
     }
 
+    PopSift.allMainThread();
+
     while(!jobs.empty())
     {
         SiftJob* job = jobs.front();

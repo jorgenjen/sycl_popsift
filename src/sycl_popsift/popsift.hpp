@@ -130,6 +130,8 @@ class PopSift
 
     SiftJob* enqueue(int w, int h, const unsigned char* imageData);
 
+    void allMainThread();
+
   private:
     void printDim();
     void printDevice();
@@ -146,6 +148,7 @@ class PopSift
     void uploadImages();
 
     inline void initQueue();
+    sycl::event init_gauss_filter();
 
     // destructor
     // ~PopSift();
@@ -154,8 +157,11 @@ class PopSift
     int _w;
     int _h;
     // sycl::buffer<unsigned char, 2> _imageData;
-    sycl::queue _device_queue;
+    // sycl::queue _device_queue;
+    std::shared_ptr<sycl::queue> _device_queue;
+
     popsift::GaussInfo* _d_gauss = nullptr;
+    popsift::GaussInfo _h_gauss{}; // initialize it so we can pass it's address
     popsift::ConstInfo* _d_consts = nullptr;
 
     sycl::event _d_gauss_write;

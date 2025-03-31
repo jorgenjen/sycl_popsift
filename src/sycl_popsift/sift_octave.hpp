@@ -35,7 +35,7 @@ class Octave
     int _levels{};
     int _gauss_group{};
 
-    sycl::queue _device_queue; // reference to  of device queue
+    sycl::queue _device_queue;
 
     // Intermediate
     // TODO: change to only use a float* _intm_data (or whatever) as we only need one!!!
