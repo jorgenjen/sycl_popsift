@@ -66,8 +66,8 @@ PopSift::PopSift(const popsift::Config& config)
     std::cout << "Running on: " << _device_queue->get_device().get_info<sycl::info::device::name>() << endl;
 
     // TODO(jorgejen): Setup these threads.
-    // _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
-    // _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
+    _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
+    _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
 
     // NOTE: Currently not supporting extraction and config like that
     // _pipe._thread_stage1.reset( new std::thread( &PopSift::uploadImages, this
@@ -329,7 +329,6 @@ void PopSift::uploadImages()
 
         // job->setImg( img );
         _pipe._queue_stage2.push(job);
-        break;
     }
     // Push nullptr to stage2 queue to make that one terminates aswell
     // safe to do as we know know no more jobs will be pushed to stage 1 queue
@@ -343,20 +342,20 @@ void PopSift::extractDownloadLoop()
     applyConfiguration(true); // Applies configuration is only run once as
                               // the thread is started
 
-    fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
-    _d_gauss_write.wait();
-
-    // _device_queue
-    //   ->submit([&](sycl::handler& cgh) {
-    //       popsift::GaussInfo* gauss = _d_gauss;
-    //       cgh.single_task([=]() {
-    //           sycl::ext::oneapi::experimental::printf("\n\t\t_d_gauss.required_filter_stages = %d\n\n",
-    //                                                   gauss->required_filter_stages);
-    //       });
-    //   })
-    //   .wait();
-
-    fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
+    // fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
+    // _d_gauss_write.wait();
+    //
+    // // _device_queue
+    // //   ->submit([&](sycl::handler& cgh) {
+    // //       popsift::GaussInfo* gauss = _d_gauss;
+    // //       cgh.single_task([=]() {
+    // //           sycl::ext::oneapi::experimental::printf("\n\t\t_d_gauss.required_filter_stages = %d\n\n",
+    // //                                                   gauss->required_filter_stages);
+    // //       });
+    // //   })
+    // //   .wait();
+    //
+    // fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
 
     // std::cout << "Starting download loop thread" << std::endl;
     Pipe& p = _pipe;
@@ -396,7 +395,7 @@ void PopSift::extractDownloadLoop()
         // job->printJob();
 
         // uploaded input image no longer needed, release for reuse
-        // p._unused.push(img);
+        p._unused.push(img);
 
         // p._pyramid->step2(_config, dependencies, _d_consts_write);
 
@@ -472,21 +471,17 @@ popsift::Image* SiftJob::getImg() { return _img; }
 
 void PopSift::Pipe::uninit()
 {
-    // Not using threads currently
-    // _queue_stage1.push(nullptr);
-    // if(_thread_stage2 != nullptr)
-    // {
-    //     _thread_stage2->join();
-    //     _thread_stage2.reset(nullptr);
-    // }
-    // if(_thread_stage1 != nullptr)
-    // {
-    //     // should not really ever run as for stage2 to be nullptr
-    //     // stage1 has to have already become nullptr hence not needed
-    //     // as far as I understand...
-    //     _thread_stage1->join();
-    //     _thread_stage1.reset(nullptr);
-    // }
+    _queue_stage1.push(nullptr);
+    if(_thread_stage2 != nullptr)
+    {
+        _thread_stage2->join();
+        _thread_stage2.reset(nullptr);
+    }
+    if(_thread_stage1 != nullptr)
+    {
+        _thread_stage1->join();
+        _thread_stage1.reset(nullptr);
+    }
 
     while(!_unused.empty())
     {
@@ -521,6 +516,7 @@ sycl::event PopSift::init_gauss_filter()
 
 void PopSift::allMainThread()
 {
+    fprintf(stderr, "RUNNING ALLMAINTHREAD\n");
     uploadImages();
     extractDownloadLoop();
     _device_queue->wait();

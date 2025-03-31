@@ -228,7 +228,7 @@ int main(int argc, char** argv)
         jobs.push(job);
     }
 
-    PopSift.allMainThread();
+    // PopSift.allMainThread();
 
     while(!jobs.empty())
     {
