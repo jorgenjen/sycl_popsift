@@ -10,10 +10,11 @@ struct Image
 {
     Image() = delete;
 
-    Image(sycl::context ctx, sycl::device dev);
+    // Image(sycl::context ctx, sycl::device dev);
+    Image(sycl::queue Q);
 
     /** Create a device-sided buffer of the given dimensions */
-    Image(int w, int h, sycl::context ctx, sycl::device dev);
+    Image(int w, int h, sycl::queue Q);
 
     ~Image();
 
@@ -23,9 +24,12 @@ struct Image
     sycl::event copy_src_dev(unsigned char* input) { return _device_queue.memcpy(_device_src_img, input, _w * _h); }
 
     sycl::event load(void* input);
+    // Need to fix these thre similar to th way I did load_liear by using the copy_src_dev before and use that value in
+    // funciton
     sycl::event load_divide(unsigned char* input);
     sycl::event load_divide_point(unsigned char* input, const int& scaled_w);
     sycl::event load_divide_linear(unsigned char* input, const int& scaled_w);
+
     sycl::event load_linear(const int& scaled_w);
 
     inline int getWidth() const { return _w; }

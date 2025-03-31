@@ -48,21 +48,22 @@ static void parseargs(int argc, char** argv, popsift::Config* config, std::strin
 
           ("input-file,i", value<std::string>(&inputFile)->required(), "Input file");
     }
-    options_description modes("Modes");
-    {
-        modes.add_options()("cpu-only",
-                            boost::program_options::bool_switch()->notifier([&](bool a) {
-                                if(a)
-                                    config->setCpuOnly();
-                            }),
-                            "Use CPU only no accelerators.");
-    }
+    // options_description modes("Modes");
+    // {
+    //     modes.add_options()("cpu-only",
+    //                         boost::program_options::bool_switch()->notifier([&](bool a) {
+    //                             if(a)
+    //                                 config->setCpuOnly();
+    //                         }),
+    //                         "Use CPU only no accelerators.");
+    // }
 
     options_description all("Allowed options");
 
     // currently just options
     /* all.add(options).add(parameters).add(modes).add(informational); */
-    all.add(options).add(modes);
+    // all.add(options).add(modes);
+    all.add(options);
     variables_map vm;
 
     try
@@ -227,8 +228,6 @@ int main(int argc, char** argv)
         SiftJob* job = process_image(currFile, PopSift);
         jobs.push(job);
     }
-
-    // PopSift.allMainThread();
 
     while(!jobs.empty())
     {

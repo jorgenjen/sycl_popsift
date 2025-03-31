@@ -29,22 +29,22 @@ inline void PopSift::initQueue()
     {
         // If there is no GPU it will throw exception and use CPU in catch
         sycl::device dev = sycl::device{sycl::gpu_selector_v};
-        // _device_queue = sycl::queue(sycl::context{dev}, dev);
-        _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
+        _device_queue = sycl::queue(sycl::context{dev}, dev);
+        // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
     }
     catch(sycl::exception const& ex)
     {
         cout << "No GPU found falling back to CPU... Exception thrown: " << ex.what() << endl;
 
         sycl::device dev = sycl::device{sycl::cpu_selector_v};
-        // _device_queue = sycl::queue(sycl::context{dev}, dev);
-        _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
+        _device_queue = sycl::queue(sycl::context{dev}, dev);
+        // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
     }
 #else
     fprintf(stderr, "Running in CPU_ONLY mode\n");
     sycl::device dev = sycl::device{sycl::cpu_selector_v};
-    // _device_queue = sycl::queue(sycl::context{dev}, dev);
-    _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
+    _device_queue = sycl::queue(sycl::context{dev}, dev);
+    // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
 #endif
 }
 
@@ -60,10 +60,10 @@ PopSift::PopSift(const popsift::Config& config)
 
     // Push two images as we use two one to load in data and other to compute
     // and they alter using the queue
-    _pipe._unused.push(new popsift::Image(_device_queue->get_context(), _device_queue->get_device()));
-    _pipe._unused.push(new popsift::Image(_device_queue->get_context(), _device_queue->get_device()));
+    _pipe._unused.push(new popsift::Image(_device_queue));
+    _pipe._unused.push(new popsift::Image(_device_queue));
 
-    std::cout << "Running on: " << _device_queue->get_device().get_info<sycl::info::device::name>() << endl;
+    std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
 
     // TODO(jorgejen): Setup these threads.
     _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
@@ -93,9 +93,7 @@ bool PopSift::configure(const popsift::Config& config, bool /*force*/)
         return false;
     }
 
-    // std::cout << "Before config" << std::endl;
     _config = config;
-    // std::cout << "AFTER config" << std::endl;
     _config.levels = max(2, config.levels);
 
     return true;
@@ -118,18 +116,18 @@ void PopSift::uninit()
     //     std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
 
     fprintf(stderr, "popsift uninit start\n");
-    _device_queue->wait();
+    _device_queue.wait();
     fprintf(stderr, "popsift uninit after wait() -- _d_gauss ptr: %p\n ", _d_gauss);
 
     if(_d_gauss != nullptr)
-        sycl::free(_d_gauss, *_device_queue);
+        sycl::free(_d_gauss, _device_queue);
     else
         std::cout << "_d_gauss was a nullptr hennce not freeing" << std::endl;
 
     fprintf(stderr, "After free _d_gauss");
 
     if(_d_consts != nullptr)
-        sycl::free(_d_consts, *_device_queue);
+        sycl::free(_d_consts, _device_queue);
     else
         std::cout << "_d_consts was a nullptr hennce not freeing" << std::endl;
 
@@ -151,38 +149,16 @@ bool PopSift::applyConfiguration(bool force)
         // seem to not alter the context hence should be fine but as stated above should be refactored
 
         // for re run we need to free and re malloc or change the size or not malloc again if it is already malloced
-        // fprintf(stderr, "Current _d_gauss ptr %p\n", _d_gauss);
-
-        // std::cout << "Queue context: "
-        //           << _queues->_device_queue.get_context().get_info<sycl::info::context::reference_count>() <<
-        //           std::endl
-        //           << std::endl;
-
-        // _d_gauss_write = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue, &_d_gauss);
         _d_gauss_write = init_gauss_filter();
-
-        // init_gauss_filter();
-        fprintf(stderr, "\n\nCurrent after init_filter _d_gauss ptr %p\n", _d_gauss);
-        // _d_gauss_write.wait(); // tmp -- should not be needed as it's passed as a dependency
-
-        // _d_consts_write = popsift::init_constants(_config.sigma,
-        //                                           _config.levels,
-        //                                           _config.getPeakThreshold(),
-        //                                           _config._edge_limit,
-        //                                           _config.getMaxExtrema(),
-        //                                           _config.getNormalizationMultiplier(),
-        //                                           _device_queue,
-        //                                           &_d_consts);
-        // _d_consts_write = sycl::event();
-
+        _d_consts_write = init_constants();
         fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
         _d_gauss_write.wait();
 
         fprintf(
-          stderr, "Queue context: %d\n", _device_queue->get_context().get_info<sycl::info::context::reference_count>());
+          stderr, "Queue context: %d\n", _device_queue.get_context().get_info<sycl::info::context::reference_count>());
 
         _device_queue
-          ->submit([&](sycl::handler& cgh) {
+          .submit([&](sycl::handler& cgh) {
               popsift::GaussInfo* gauss = _d_gauss;
               cgh.single_task([=]() {
                   sycl::ext::oneapi::experimental::printf("\n\t\t_d_gauss.required_filter_stages = %d\n\n",
@@ -254,8 +230,8 @@ bool PopSift::private_init(int w, int h)
     }
 
     fprintf(stderr, "Before pyramid cration\n");
-    p._pyramid = new popsift::Pyramid(
-      _config, w, h, _device_queue->get_context(), _device_queue->get_device(), _d_gauss, _d_consts);
+    p._pyramid =
+      new popsift::Pyramid(_config, w, h, _device_queue.get_context(), _device_queue.get_device(), _d_gauss, _d_consts);
 
     fprintf(stderr, "After pyramid cration\n");
 
@@ -282,7 +258,7 @@ void PopSift::printDevice()
             // queue q& = _device_queue;
 
             std::cout << "Selected device in PopSift method using SYCL: "
-                      << _device_queue->get_device().get_info<sycl::info::device::name>() << "\n";
+                      << _device_queue.get_device().get_info<sycl::info::device::name>() << "\n";
         }
         catch(const sycl::exception& e)
         {
@@ -388,7 +364,7 @@ void PopSift::extractDownloadLoop()
         // FUFULL THE PROMISE
 
         //
-        _device_queue->wait();
+        _device_queue.wait();
         cout << "Jobby: -- " << endl;
 
         // idk why this does not work
@@ -493,7 +469,8 @@ void PopSift::Pipe::uninit()
 sycl::event PopSift::init_gauss_filter()
 {
     fprintf(stderr, "In init_gauss_filter()\n");
-    // Get gauss filter stored on host
+
+    // Crate gauss filter store it on host
     popsift::init_filter(_config, &_h_gauss);
 
     fprintf(stderr, "AT bottom off init_gauss_filter()\n");
@@ -501,85 +478,42 @@ sycl::event PopSift::init_gauss_filter()
     try
     {
         if(_d_gauss == nullptr)
-            _d_gauss = sycl::malloc_device<popsift::GaussInfo>(1, *_device_queue);
+            _d_gauss = sycl::malloc_device<popsift::GaussInfo>(1, _device_queue);
         else
             std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl;
     }
     catch(const sycl::exception& e)
     {
         std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-        // Here, d_consts was never assigned, so there's no need to free it
     }
 
-    return _device_queue->memcpy(_d_gauss, &_h_gauss, sizeof(popsift::GaussInfo));
+    return _device_queue.memcpy(_d_gauss, &_h_gauss, sizeof(popsift::GaussInfo));
 }
 
-void PopSift::allMainThread()
+sycl::event PopSift::init_constants()
 {
-    fprintf(stderr, "RUNNING ALLMAINTHREAD\n");
-    uploadImages();
-    extractDownloadLoop();
-    _device_queue->wait();
+    fprintf(stderr, "in init contsatns\n");
+
+    popsift::init_constants(_config.sigma,
+                            _config.levels,
+                            _config.getPeakThreshold(),
+                            _config._edge_limit,
+                            _config.getMaxExtrema(),
+                            _config.getNormalizationMultiplier(),
+                            &_h_consts);
+
+    // Transfer constants to device
+    try
+    {
+        if(_d_consts == nullptr)
+            _d_consts = sycl::malloc_device<popsift::ConstInfo>(1, _device_queue);
+        else
+            std::cout << "\n\n\t\t_d_consts is set -- no malloc needed\n\n" << std::endl;
+    }
+    catch(const sycl::exception& e)
+    {
+        std::cerr << "Memory allocation failed: " << e.what() << std::endl;
+    }
+
+    return _device_queue.memcpy(_d_consts, &_h_consts, sizeof(popsift::ConstInfo));
 }
-
-// Helper function for development
-// ranges are inclusive on 0th dimension and exclusive on 1th dimension
-// void PopSift::printImageRegion(sycl::range<2> horiz, sycl::range<2> vert)
-// {
-//   // print out the first 10 bytes of the image
-//   using namespace sycl;
-//
-//   // wait for all previous enqued task to end before doing the print to show
-//   desired data _device_queue.wait();
-//
-//   host_accessor<unsigned char, 2, access::mode::read> h_acc(_imageData);
-//
-//   if (vert.get(0) > _w && vert.get(0) < 0 ||
-//       vert.get(1) > _w && vert.get(1) < 0 ||
-//       vert.get(0) >= vert.get(1)
-//   )
-//   {
-//     std::cout << "Image region is not legal" << std::endl;
-//   }
-//
-//   std::cout << "Image region: horiz = (" << horiz.get(0) << " -> " <<
-//   horiz.get(1)
-//             << ") vert = (" << vert.get(0) << " -> " << vert.get(1) << ")" <<
-//             std::endl;
-//   // using range in a odd way (I know :D)
-//   for (int i = vert.get(0); i < vert.get(1); ++i)
-//   {
-//     for (int j = horiz.get(0); j < horiz.get(1); ++j)
-//     {
-//          std::printf("%03u ", h_acc[j][i]);
-//     }
-//        std::cout << std::endl;
-//   }
-// }
-
-// void PopSift::modifyImage()
-// {
-//   using namespace sycl;
-//   try {
-//
-//     std::cout << "Selected device in PopSift method (modifyImage) using SYCL:
-//     "
-//       << _device_queue.get_device().get_info<info::device::name>()
-//       << "\n";
-//   } catch (const sycl::exception& e) {
-//     std::cout << "Exception caught: " << e.what() << std::endl;
-//   }
-//
-//   // Modify the image
-//   std::cout << "Modifyig image now" << std::endl;
-//
-//   _device_queue.submit([&](handler& cgh) {
-//     printf("w=%d  -- h=%d", _w, _h);
-//
-//     accessor img(_imageData, cgh, read_write);
-//     cgh.parallel_for(range<2>(_w, _h), [=](id<2> idx) {
-//       img[idx] = img[idx] - 1;
-//     });
-//   });
-//
-// }

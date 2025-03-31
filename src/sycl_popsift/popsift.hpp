@@ -149,6 +149,7 @@ class PopSift
 
     inline void initQueue();
     sycl::event init_gauss_filter();
+    sycl::event init_constants();
 
     // destructor
     // ~PopSift();
@@ -157,12 +158,13 @@ class PopSift
     int _w;
     int _h;
     // sycl::buffer<unsigned char, 2> _imageData;
-    // sycl::queue _device_queue;
-    std::shared_ptr<sycl::queue> _device_queue;
+    sycl::queue _device_queue;
+    // std::shared_ptr<sycl::queue> _device_queue;
 
     popsift::GaussInfo* _d_gauss = nullptr;
     popsift::GaussInfo _h_gauss{}; // initialize it so we can pass it's address
     popsift::ConstInfo* _d_consts = nullptr;
+    popsift::ConstInfo _h_consts{};
 
     sycl::event _d_gauss_write;
     sycl::event _d_consts_write;

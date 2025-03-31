@@ -6,20 +6,20 @@
 
 namespace popsift {
 
-Image::Image(sycl::context ctx, sycl::device dev)
+Image::Image(sycl::queue Q)
   : _w(0)
   , _h(0)
   , _max_w(0)
   , _max_h(0)
-  , _device_queue(sycl::queue(ctx, dev))
+  , _device_queue(Q)
 {}
 
-Image::Image(int w, int h, sycl::context ctx, sycl::device dev)
+Image::Image(int w, int h, sycl::queue Q)
   : _w(w)
   , _h(h)
   , _max_w(w)
   , _max_h(h)
-  , _device_queue(sycl::queue(ctx, dev))
+  , _device_queue(Q)
 {
     // allocate( w, h );
     // need to allocate malloc_device
@@ -98,8 +98,8 @@ sycl::event Image::load_divide(unsigned char* input)
         auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
         std::cout << "widht and height in load_divide" << _w << " - " << _h << std::endl;
         cgh.parallel_for(sycl::range<1>(_w * _h), [=](sycl::id<1> idx) {
-            // To simulate normalized reads in PopSift -- think I would rather change the kernel in the future to avoid
-            // this as I think that should be equivalent
+            // To simulate normalized reads in PopSift -- think I would rather change the kernel in the future to
+            // avoid this as I think that should be equivalent
             img[idx] = static_cast<float>(input[idx]) / 255.0f;
             // img[idx] = static_cast<float>(input[idx]);
         });
@@ -114,8 +114,8 @@ sycl::event Image::load_divide(unsigned char* input)
 // most of the time it takes prev like my implementation here but every now and then for a column it takes
 // next and I'm not sure why it does that. Subtracting 0.000001 makes it take left all the time hovever it seems like
 // but that makes the interpolation code wrong so can't be used in the cuda kernel.
-// Must also be 0.000001 adding one more zero before the one makes the float to small and it goes back to choosing next
-// in the odd cases
+// Must also be 0.000001 adding one more zero before the one makes the float to small and it goes back to choosing
+// next in the odd cases
 sycl::event Image::load_divide_point(unsigned char* input, const int& scaled_w)
 {
     return _device_queue.submit([&](sycl::handler& cgh) {
