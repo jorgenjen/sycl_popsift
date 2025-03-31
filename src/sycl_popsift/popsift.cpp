@@ -109,16 +109,7 @@ void PopSift::uninit()
         return;
     }
 
-    // Uncommeetn for now not in use an global...
-    // if(popsift::d_consts != nullptr)
-    //     sycl::free(popsift::d_consts, _device_queue);
-    // else
-    //     std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
-
-    fprintf(stderr, "popsift uninit start\n");
-    _device_queue.wait();
-    fprintf(stderr, "popsift uninit after wait() -- _d_gauss ptr: %p\n ", _d_gauss);
-
+    // _h_consts and _h_gauss are on the stack and no need to free
     if(_d_gauss != nullptr)
         sycl::free(_d_gauss, _device_queue);
     else
@@ -358,8 +349,8 @@ void PopSift::extractDownloadLoop()
 
         // DO THE JOB!!!
 
-        // std::vector<sycl::event> dependencies =
-        p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+        std::vector<sycl::event> dependencies =
+          p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
         // FUFULL THE PROMISE
 

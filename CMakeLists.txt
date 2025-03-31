@@ -37,6 +37,7 @@ include(cmake/ConfigureSYCL.cmake)
 
 
 
+# TODO: Make it like this for amd and intel gpu's too so you can toggle on and off cpu only
 if(${ENABLE_CUDA})
   message(STATUS "CUDA enabled")
   set(CPU_ONLY "")

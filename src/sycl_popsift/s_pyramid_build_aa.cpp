@@ -230,7 +230,7 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
         //   absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), width, height, _d_gauss));
 
         return _device_queue.submit([&](sycl::handler& cgh) {
-            // cgh.depends_on(dependencies);
+            cgh.depends_on(dependencies);
             // auto inputImg = base->getInput();
             // auto intermediate = oct_obj.getIntermediate();
 
@@ -240,7 +240,7 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
             sycl::range local_t{2, 32};
             sycl::range global_t{16, 64};
 
-            // cgh.parallel_for(sycl::nd_range{global_t, local_t}, absoluteSource::simple_test(my_data));
+            cgh.parallel_for(sycl::nd_range{global_t, local_t}, absoluteSource::simple_test(my_data));
 
             // absoluteSource::Horiz<0>(inputImg, intermediate, width, height, _d_gauss));
             fprintf(stderr, "AFTER KERNEL\n");

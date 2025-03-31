@@ -201,7 +201,6 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
               << std::endl;
     for(int octave = 0; octave < _num_octaves; octave++)
     {
-        // fprintf(stderr, "BEFORE ACCESS OF octave %d", octave);
         Octave& oct_obj = _octaves[octave];
 
         for(int level = 0; level < _levels; level++)
