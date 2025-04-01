@@ -10,7 +10,7 @@ add_library(sycl_popsift
             sycl_popsift/gauss_filter.cpp sycl_popsift/gauss_filter.hpp
             # sycl_popsift/s_extrema.cpp 
             # sycl_popsift/s_orientation.cpp 
-            sycl_popsift/malloc_devt.hpp
+            # sycl_popsift/malloc_devt.hpp
             sycl_popsift/non_sycl/sift_conf.cpp sycl_popsift/non_sycl/sift_conf.hpp
             # sycl_popsift/common/warp_bitonic_sort.hpp
             sycl_popsift/common/debug_macros.hpp
