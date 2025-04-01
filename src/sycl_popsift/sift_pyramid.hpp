@@ -104,10 +104,11 @@ class Pyramid
     Pyramid(const Config& config,
             int width,
             int height,
-            sycl::context ctx,
-            sycl::device dev,
+            sycl::queue Q,
             popsift::GaussInfo* d_gauss,
-            popsift::ConstInfo* d_consts);
+            popsift::ConstInfo* d_consts,
+            popsift::ConstInfo& h_consts);
+
     ~Pyramid();
 
     void resetDimensions(const Config& conf, int width, int height);

@@ -78,6 +78,7 @@ PopSift::PopSift(const popsift::Config& config)
     //   _pipe._thread_stage2.reset( new std::thread(
     //   &PopSift::matchPrepareLoop, this ));
 }
+
 PopSift::~PopSift()
 {
     if(_isInit)
@@ -221,8 +222,7 @@ bool PopSift::private_init(int w, int h)
     }
 
     fprintf(stderr, "Before pyramid cration\n");
-    p._pyramid =
-      new popsift::Pyramid(_config, w, h, _device_queue.get_context(), _device_queue.get_device(), _d_gauss, _d_consts);
+    p._pyramid = new popsift::Pyramid(_config, w, h, _device_queue, _d_gauss, _d_consts, _h_consts);
 
     fprintf(stderr, "After pyramid cration\n");
 

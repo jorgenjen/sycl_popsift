@@ -82,7 +82,8 @@ class Octave
     sycl::event _extrema_done_event;
     // Octave();
     Octave() = delete;
-    Octave(sycl::context ctx, sycl::device dev);
+    // Octave(sycl::context ctx, sycl::device dev);
+    Octave(sycl::queue Q);
     ~Octave() { this->free_arrays(); }
     // ~Octave();
 
