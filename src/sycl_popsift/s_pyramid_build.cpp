@@ -230,45 +230,38 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
                                                        h,
                                                        w,
                                                        _device_queue);
-                    // int y, x;
-                    // _device_queue.single_task([=]() {
-                    //     sycl::ext::oneapi::experimental::printf(
-                    //       "\n\nMe Octave 0 in range: y(%d -> %d) x(%d -> %d) \n", height - 8, height, width - 8,
-                    //       width);
-                    //     for(int y = height - 8; y < height; ++y)
-                    //     {
-                    //         for(int x = width - 8; x < width; ++x)
-                    //         {
-                    //             sycl::ext::oneapi::experimental::printf("%010.6f ", data[x + y * (width)]);
-                    //         }
-                    //         sycl::ext::oneapi::experimental::printf("\n");
-                    //     }
-                    //     sycl::ext::oneapi::experimental::printf("\n\n");
-                    // });
-                    _device_queue.wait();
-
-                    return {horiz};
+                    // return {horiz};
                 }
                 else
                 {
-                    // fprintf(stderr, "\n\n\nNow I run yes\n\n\n");
-                    // Octave& prev_oct_obj = _octaves[octave - 1];
-                    //
-                    // // ensure event dependency is correct
-                    // oct_obj._level_complete_events[0] =
-                    //   downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
-                    //
-                    // // oct_obj._level_complete_events[0].wait(); // should not be needed
-                    // _device_queue.wait(); // should not be needed
-                    //
-                    // fprintf(stderr, "New octave %d\n", octave);
+                    // return {sycl::event()};
+                    fprintf(stderr, "\n\n\nNow I run yes\n\n\n");
+                    Octave& prev_oct_obj = _octaves[octave - 1];
+
+                    // ensure event dependency is correct
+                    oct_obj._level_complete_events[0] =
+                      downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
+
+                    // oct_obj._level_complete_events[0].wait(); // should not be needed
+                    _device_queue.wait(); // should not be needed
+
+                    fprintf(stderr, "New octave %d\n", octave);
                 }
             }
             else
             {
                 fprintf(stderr, "Level %d\n", level);
+
+                // BUG: Horiz_from_prev_level causes seg fault
+
                 sycl::event horiz =
                   horiz_from_prev_level(octave, level, gaussTableChoice, oct_obj._level_complete_events[level - 1]);
+
+                fprintf(stderr, "in octave %d at level %d -- Before event access %d\n", octave, level, level - 1);
+                // sycl::event mr = oct_obj._level_complete_events[level - 1];
+
+                // fprintf(stderr, "AFTER event access\n");
+                // sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice, sycl::event());
 
                 // fprintf(stderr, "After horiz_from_prev_level\n");
                 // horiz.wait();
@@ -276,9 +269,13 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
                 // Hope horiz is fine to use even though it goes out of scope after the line but should have been
                 // copied by then I think eventough vert_from_interm takes it as reference...
                 // fprintf(stderr, "RIGHT BEFORE FAILURE level=%d -- octave=%d ", level, octave);
-                // oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
+                // sycl::event horiz = sycl::event();
+                oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
 
-                // oct_obj._level_complete_events[level] = sycl::event(); // place holder
+                // oct_obj._level_complete_events[level] =
+                //   _device_queue.single_task([=]() { sycl::ext::oneapi::experimental::printf("Hello in kernel\n"); });
+
+                // sycl::event(); // place holder
                 fprintf(stderr, "After launch with basic event\n");
                 // oct_obj._level_complete_events[level].wait(); // Should not be needed mby for lfetime of event??
                 // fprintf(stderr, "After vert From interm\n");
@@ -288,7 +285,7 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
         }
     }
 
-    fprintf(stderr, "Before return\n");
+    fprintf(stderr, "\n\t\tPYRAMID BUILD BUILT NOW RETURN BEFROE DOGGOS\n");
     return {sycl::event()};
 
     std::vector<sycl::event> make_dog_events;

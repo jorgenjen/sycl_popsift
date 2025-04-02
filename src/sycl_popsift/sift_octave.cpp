@@ -121,7 +121,11 @@ void Octave::alloc(const Config& conf, int width, int height, int levels)
     _w_grid_divider = float(_w) / conf.getFilterGridSize();
     _h_grid_divider = float(_h) / conf.getFilterGridSize();
 
-    _level_complete_events.reserve(levels);
+    fprintf(stderr, "Reserving levels for level_complete_event vector --> %d\n", levels);
+    // BUG: When adding one to resere it does not happen again?
+    _level_complete_events.reserve(levels + 1); // Adding another solves the problem ???
+    // On GPU it works without the +1 so no clue what is going on....
+    // _level_complete_events.reserve(levels);
 
     // TODO: FIGURE out Replacements for these methods
     // most of them are related to textures in CUDA
