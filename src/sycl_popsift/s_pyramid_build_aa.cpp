@@ -321,18 +321,18 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     // const int span = _d_gauss->inc.span[level];
     // fprintf(stderr, "\nThis is fine!!!\n");
 
-    // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
-    //     cgh.depends_on(prev_level_write);
-    //     cgh.parallel_for(sycl::nd_range{global, local},
-    //                      absoluteSource::Horiz<1>(prev_level, cur_intm, _d_gauss, width, height));
-    // });
+    sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
+        cgh.depends_on(prev_level_write);
+        cgh.parallel_for(sycl::nd_range{global, local},
+                         absoluteSource::Horiz<1>(prev_level, cur_intm, _d_gauss, width, height));
+    });
 
     // fprintf(stderr, "\nAFTER BEFORE WAIT!!!\n");
     // e.wait();
     // fprintf(stderr, "\nAFTER WAIT!!! before return LEVEL = %d \n", level);
     // printf("AFTER HORIZ IN 'From prev' -- LEVEL = %d", level);
-    // return e;
-    return sycl::event();
+    return e;
+    // return sycl::event();
 
     // _device_queue.wait();
     // absoluteSource::horiz<<<grid, block, 0, stream>>>(
