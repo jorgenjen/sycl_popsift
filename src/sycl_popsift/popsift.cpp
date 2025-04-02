@@ -355,6 +355,7 @@ void PopSift::extractDownloadLoop()
         // FUFULL THE PROMISE
 
         //
+        fprintf(stderr, "before the wait \n");
         _device_queue.wait();
         cout << "Jobby: -- " << endl;
 

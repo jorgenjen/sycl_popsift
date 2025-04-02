@@ -13,6 +13,7 @@ add_library(sycl_popsift
             # sycl_popsift/malloc_devt.hpp
             sycl_popsift/non_sycl/sift_conf.cpp sycl_popsift/non_sycl/sift_conf.hpp
             # sycl_popsift/common/warp_bitonic_sort.hpp
+            sycl_popsift/common/debug_macros.cpp
             sycl_popsift/common/debug_macros.hpp
             sycl_popsift/common/sync_queue.h
             sycl_popsift/common/assist.h 

@@ -37,8 +37,10 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event p
     float* src_data = prev_oct_obj.getDataArray()[_levels - PREV_LEVEL];
     float* dst_data = oct_obj.getDataArray()[0]; // Level 0 is the subsampled result
 
-    sycl::range local{64, 2};
-    sycl::range global{(size_t)grid_divide(dst_width, local.get(0)), (size_t)grid_divide(dst_height, local.get(1))};
+    // sycl::range local{64, 2};
+    // sycl::range global{(size_t)grid_divide(dst_width, local.get(0)), (size_t)grid_divide(dst_height, local.get(1))};
+    sycl::range local{2, 64};
+    sycl::range global{(size_t)grid_divide(dst_height, local.get(0)), (size_t)grid_divide(dst_width, local.get(1))};
 
     // printf("\n\n\tIN downscale_from_prev_octave GLOBAL(%zu, %zu), OCTAVE=%d\n", global[0], global[1], octave);
 
@@ -67,7 +69,7 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event p
 }
 
 // Seems like a bit of an odd way to make the kernel?
-class make_dog;
+class make_dog; // Dont necessarily need to name it could also just stay anonymous
 
 // Not sure if thes shoould be inline or not...
 // inline void Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event octave_complete)
@@ -78,8 +80,11 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
     const int width = oct_obj.getWidth();
     const int height = oct_obj.getHeight();
 
-    sycl::range local{1024, 1};
-    sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+    // sycl::range local{1024, 1};
+    // sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+
+    sycl::range local{1, 1024};
+    sycl::range global{(size_t)grid_divide(height, local.get(0)), (size_t)grid_divide(width, local.get(1))};
 
     float** data_array = oct_obj.getDataArray();
     float** dog_array = oct_obj.getDogArray();
@@ -150,6 +155,7 @@ sycl::event Pyramid::vert_from_interm(int octave,
                                       GaussTableChoice useInterpolatedGauss,
                                       sycl::event intm_write)
 {
+    fprintf(stderr, "at start of ver_from_interm\n");
     Octave& oct_obj = _octaves[octave];
 
     const int width = oct_obj.getWidth();
@@ -209,39 +215,81 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
             {
                 if(octave == 0)
                 {
-                    fprintf(stderr, "Before first horiz\n");
                     sycl::event horiz = horiz_from_input_image(conf, base_img, {d_gauss_write, img_transfer});
-                    fprintf(stderr, "Completed first horiz\n");
-                    return {horiz};
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+
+                    int w = _octaves[0].getWidth();
+                    int h = _octaves[0].getHeight();
+                    float* data = oct_obj.getDataArray()[level];
+
+                    popsift::sycl_common::print_region(oct_obj.getDataArray()[level],
+                                                       "First octave after vert -- ",
+                                                       w - 8,
+                                                       w,
+                                                       h - 8,
+                                                       h,
+                                                       w,
+                                                       _device_queue);
+                    // int y, x;
+                    // _device_queue.single_task([=]() {
+                    //     sycl::ext::oneapi::experimental::printf(
+                    //       "\n\nMe Octave 0 in range: y(%d -> %d) x(%d -> %d) \n", height - 8, height, width - 8,
+                    //       width);
+                    //     for(int y = height - 8; y < height; ++y)
+                    //     {
+                    //         for(int x = width - 8; x < width; ++x)
+                    //         {
+                    //             sycl::ext::oneapi::experimental::printf("%010.6f ", data[x + y * (width)]);
+                    //         }
+                    //         sycl::ext::oneapi::experimental::printf("\n");
+                    //     }
+                    //     sycl::ext::oneapi::experimental::printf("\n\n");
+                    // });
+                    _device_queue.wait();
+
+                    return {horiz};
                 }
                 else
                 {
-                    // fprintf(stderr, "BEFORE ACCESS OF PREV OCTAVE!!!!! in octave %d", octave);
-                    Octave& prev_oct_obj = _octaves[octave - 1];
-
-                    // fprintf(stderr, "Before downscale to Octave %d", octave);
-                    oct_obj._level_complete_events[0] =
-                      downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
-
-                    oct_obj._level_complete_events[0].wait();
-                    // fprintf(stderr, "AFTER downscale to Octave %d", octave);
+                    // fprintf(stderr, "\n\n\nNow I run yes\n\n\n");
+                    // Octave& prev_oct_obj = _octaves[octave - 1];
+                    //
+                    // // ensure event dependency is correct
+                    // oct_obj._level_complete_events[0] =
+                    //   downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
+                    //
+                    // // oct_obj._level_complete_events[0].wait(); // should not be needed
+                    // _device_queue.wait(); // should not be needed
+                    //
+                    // fprintf(stderr, "New octave %d\n", octave);
                 }
             }
             else
             {
+                fprintf(stderr, "Level %d\n", level);
                 sycl::event horiz =
                   horiz_from_prev_level(octave, level, gaussTableChoice, oct_obj._level_complete_events[level - 1]);
 
+                // fprintf(stderr, "After horiz_from_prev_level\n");
+                // horiz.wait();
+                // _device_queue.wait();
                 // Hope horiz is fine to use even though it goes out of scope after the line but should have been
                 // copied by then I think eventough vert_from_interm takes it as reference...
                 // fprintf(stderr, "RIGHT BEFORE FAILURE level=%d -- octave=%d ", level, octave);
-                oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
-                oct_obj._level_complete_events[level].wait();
+                // oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
+
+                // oct_obj._level_complete_events[level] = sycl::event(); // place holder
+                fprintf(stderr, "After launch with basic event\n");
+                // oct_obj._level_complete_events[level].wait(); // Should not be needed mby for lfetime of event??
+                // fprintf(stderr, "After vert From interm\n");
+
                 // fprintf(stderr, "AFTER WAIT ON EVENT level 1-5");
             }
         }
     }
+
+    fprintf(stderr, "Before return\n");
+    return {sycl::event()};
 
     std::vector<sycl::event> make_dog_events;
     make_dog_events.reserve(_num_octaves);

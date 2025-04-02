@@ -49,8 +49,8 @@ class Horiz
     {
         // sycl::ext::oneapi::experimental::printf("This runs in the kernel so invocation is fine");
         // return;
-        int x = it.get_global_id(0);
-        int y = it.get_global_id(1);
+        int x = it.get_global_id(1);
+        int y = it.get_global_id(0);
 
         const float* filter = &d_gauss->dd.filter[0];
         const int span = d_gauss->dd.span[0];
@@ -99,35 +99,14 @@ class Horiz
     };
 };
 
-class simple_test
-{
-  private:
-    float* src;
-
-  public:
-    simple_test(float* src)
-      : src(src)
-    {}
-
-    inline void operator()(sycl::nd_item<2> it) const
-    {
-        /* sycl::ext::oneapi::experimental::printf("local range: %d", */
-        /*                                         it.get_local_range(1)); */
-        int x = it.get_local_id(1);
-        int y = it.get_local_id(0);
-
-        int w_idx = it.get_global_linear_id();
-        src[w_idx] = x + y * it.get_local_range(1);
-    };
-};
-
 class Vert
 {
   private:
     float* intermediate; // or is it intermediate :D IDK
     float* dst_data;
-    const float* filter;
-    const int span;
+    popsift::GaussInfo* d_gauss;
+    // const float* filter;
+    // const int span;
     const int width;
     const int height;
     const int level;
@@ -135,15 +114,17 @@ class Vert
   public:
     Vert(float* intermediate,
          float* dst_data,
-         const float* filter,
-         const int span,
+         // const float* filter,
+         // const int span,
+         popsift::GaussInfo* d_gauss,
          const int width,
          const int height,
          const int level)
       : intermediate(intermediate)
       , dst_data(dst_data)
-      , filter(filter)
-      , span(span)
+      , d_gauss(d_gauss)
+      // , filter(filter)
+      // , span(span)
       , width(width)
       , height(height)
       , level(level)
@@ -158,8 +139,11 @@ class Vert
     // correct for now and move on
     inline void operator()(sycl::nd_item<2> it) const
     {
-        int x = it.get_global_id(0);
-        int y = it.get_global_id(1);
+        int x = it.get_global_id(1);
+        int y = it.get_global_id(0);
+
+        const int span = d_gauss->inc.span[level];
+        const float* filter = &d_gauss->inc.filter[level * GAUSS_ALIGN];
 
         // This need to be here  I think. Was not in cuda PopSift probs due to textures making it a non issue
         if(x >= width || y >= height)
@@ -301,15 +285,18 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     const int width = oct_obj.getWidth();
     const int height = oct_obj.getHeight();
 
+    fprintf(stderr, "In horiz_from_prev_level_basic\n");
+    fprintf(stderr, "widht = %d -- height = %d\n\n", width, height);
+
     // similar speed: dim3 block( 32,  4 ); dim3 block( 32,  3 ); dim3 block( 32,  2 );
     // (32, 8) most stable good perf on GTX 980 TI -- need to test different for me sycl implementation
 
-    sycl::range local{32, 8}; // coult move inside of submit but probs done by compiler
-                              // and replaced .get(0) with the values inline
-    sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+    // sycl::range local{32, 8}; // coult move inside of submit but probs done by compiler
+    //                           // and replaced .get(0) with the values inline
+    // sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
 
-    // _device_queue.wait();
-    // printf("\nGlobal in horiz from prev level wop wop(%zu, %zu), level=%d:\n", global[0], global[1], level);
+    sycl::range local{8, 32};
+    sycl::range global{(size_t)grid_divide(height, local.get(0)), (size_t)grid_divide(width, local.get(1))};
 
     // Not sure if it is better to have these varaibles inside of the submit or not
     float* prev_level = oct_obj.getDataArray()[level - 1]; // src
@@ -317,9 +304,9 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     // float* cur_intm = oct_obj.getIntermediateArray()[level]; // dst_data
     float* cur_intm = oct_obj.getIntermediate(); // dst_data
     // fprintf(stderr, "\nThis is fine!!!\n");
-    const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
+    // const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
     // fprintf(stderr, "\nThis is fine!!!\n");
-    const int span = _d_gauss->inc.span[level];
+    // const int span = _d_gauss->inc.span[level];
     // fprintf(stderr, "\nThis is fine!!!\n");
 
     sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
@@ -342,13 +329,18 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
 
 sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event intm_write)
 {
+    fprintf(stderr, "At start of vert from interm basic\n");
     Octave& oct_obj = _octaves[octave];
 
     const int width = oct_obj.getWidth();
     const int height = oct_obj.getHeight();
 
-    sycl::range local{64, 2};
-    sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+    // sycl::range local{64, 2};
+    // sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+
+    // Need to be flipped due to sycl (sub grops are along second axis)
+    sycl::range local{2, 64};
+    sycl::range global{(size_t)grid_divide(height, local.get(0)), (size_t)grid_divide(width, local.get(1))};
 
     // printf("\n\n\tvert_from_interm_basic GLOBAL(%zu, %zu), LEVEL=%d\n", global[0], global[1], level);
     // printf("\n\tSpan=%d \n", _d_gauss->inc.span[level]);
@@ -356,17 +348,21 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     // float* intermediate = oct_obj.getIntermediateArray()[level];
     float* intermediate = oct_obj.getIntermediate();
     float* dst_data = oct_obj.getDataArray()[level];
-    const int span = _d_gauss->inc.span[level];
-    const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
+    // const int span = _d_gauss->inc.span[level];
+    // const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
 
+    fprintf(stderr, "\n\n\tMy current TESTER POINT\n");
     sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(intm_write); // Set horiz write to intermediate as dependency --
         // Sycl not in order queue by default hence needed
         // std::cout << "Past intm dependency I think" << std::endl;
         cgh.parallel_for(sycl::nd_range(global, local),
-                         absoluteSource::Vert(intermediate, dst_data, filter, span, width, height, level));
+                         absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
     });
+    // e.wait();
 
+    _device_queue.wait();
+    fprintf(stderr, "\n\n\tMy current TESTER POINT\n");
     // fprintf(stderr, "After Vert_aa was submited\n");
     // e.wait();
     // printf("\n\t AFTER VERT SUBMIT CALL BEFORE RETURN level = %d\n", level);

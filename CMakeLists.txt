@@ -36,6 +36,8 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/${CMAKE_SYSTEM_NAME}-$
 include(cmake/ConfigureSYCL.cmake)
 
 
+## For debug symbols remove for release
+set(CMAKE_BUILD_TYPE Debug)
 
 # TODO: Make it like this for amd and intel gpu's too so you can toggle on and off cpu only
 if(${ENABLE_CUDA})

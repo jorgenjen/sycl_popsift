@@ -54,6 +54,9 @@
 namespace popsift {
 namespace sycl_common {
 
+void print_region(
+  float* ptr, const char* identifier, int start_x, int end_x, int start_y, int end_y, int width, sycl::queue Q);
+
 template<class T>
 T* malloc_devT(int num, const char* file, int line, const char* error_message, sycl::queue& Q)
 {
