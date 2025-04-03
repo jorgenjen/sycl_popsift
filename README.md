@@ -27,8 +27,6 @@
 
 - [ ] Get rid of unnecessary shared USM memory (hapers performance)
 
-- [x] Fix pyramid for GPU
-
 
 ## Profiling/analysis
 

@@ -647,7 +647,7 @@ class find_extrema_in_dog
     const popsift::ConstInfo* d_consts;
     ExtremaCounters* dct;
     DevBuffers* dobuf;
-    int max_extrema;
+    // int max_extrema;
 
   public:
     find_extrema_in_dog(float** dog,
@@ -662,8 +662,8 @@ class find_extrema_in_dog
                         const int grid_width,
                         const popsift::ConstInfo* d_consts,
                         ExtremaCounters* dct,
-                        DevBuffers* dobuf,
-                        int max_extrema)
+                        DevBuffers* dobuf)
+      // int max_extrema)
       : dog(dog)
       , octave(octave)
       , width(width)
@@ -677,13 +677,14 @@ class find_extrema_in_dog
       , d_consts(d_consts)
       , dct(dct)
       , dobuf(dobuf)
-      , max_extrema(max_extrema)
+    // , max_extrema(max_extrema)
     {}
 
     inline void operator()(sycl::nd_item<3> it) const
     {
         InitialExtremum ec;
         ec.ignore = false;
+        int max_extrema = d_consts->max_extrema;
 
         bool indicator = find_extrema_in_dog_sub<sift_mode>(
           dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, &ec, it, d_consts);
@@ -777,6 +778,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
 
         // cudaStream_t oct_str = oct_obj.getStream();
 
+        // Currently this barrier is shared but I'm not sure if that is needed
         int* num_blocks = getNumberOfBlocks(octave);
 
         int width = oct_obj.getWidth();
@@ -799,7 +801,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
         // currently same as cuda
         sycl::range local{1, HEIGHT, LOCAL_X};
         sycl::range global{
-          (size_t)_levels - 3, (size_t)grid_divide(height, local.get(1)), (size_t)grid_divide(width, local.get(0))};
+          (size_t)_levels - 3, (size_t)grid_divide(height, local.get(1)), (size_t)grid_divide(width, local.get(2))};
 
         int work_group_count = grid_divide_cuda(height, local[1]) * grid_divide_cuda(width, local[2]) * (_levels - 3);
 
@@ -851,8 +853,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                                                                                          conf.getFilterGridSize(),
                                                                                          _d_consts,
                                                                                          _dct,
-                                                                                         _dobuf,
-                                                                                         _d_consts->max_extrema));
+                                                                                         _dobuf));
                 });
                 break;
         }

@@ -62,7 +62,7 @@ Pyramid::Pyramid(const Config& config,
     fprintf(stderr, "After using malloc_devT\n");
     _device_queue.memset(_dct, 0, sizeof(ExtremaCounters));
 
-    _d_extrema_num_blocks = popsift::sycl_common::malloc_sharedT<int>(
+    _d_extrema_num_blocks = popsift::sycl_common::malloc_devT<int>(
       _num_octaves, __FILE__, __LINE__, "Global octave barrier allocation failed", _device_queue);
 
     // don't see the purpose of dobuf_shadow, so not using it untill I see a purpose for it (I probs will in future :D)
@@ -147,7 +147,7 @@ std::vector<sycl::event> Pyramid::step1(const Config& conf,
 // could probably pass the dependencies as a reference...
 void Pyramid::step2(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write)
 {
-    // find_extrema(conf, dependencies, d_consts_write);
+    find_extrema(conf, dependencies, d_consts_write);
 
     // orientation(conf);
 
@@ -177,6 +177,7 @@ void Pyramid::resetDimensions(const Config& conf, int width, int height)
     }
 }
 
+// Fine to use on device memory as it is just pointer arithmetic
 int* Pyramid::getNumberOfBlocks(int octave) { return &_d_extrema_num_blocks[octave]; }
 
 sycl::event Pyramid::readDescCountersFromDevice() { return _device_queue.memcpy(&_hct, _dct, sizeof(ExtremaCounters)); }

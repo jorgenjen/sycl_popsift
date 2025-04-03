@@ -365,7 +365,7 @@ void PopSift::extractDownloadLoop()
         // uploaded Image object is no longer needed, release for reuse
         p._unused.push(img);
 
-        // p._pyramid->step2(_config, dependencies, _d_consts_write);
+        p._pyramid->step2(_config, dependencies, _d_consts_write);
 
         // _device_queue.wait();
         fflush(stdout);
