@@ -92,6 +92,81 @@ class Horiz
     };
 };
 
+template<int if_required>
+class Horiz_new
+{
+  private:
+    float* src;
+    float* dst_data;
+    const float* filter;
+    const int span;
+    const int width;
+    const int height; // not sure if height was needed here (verify)
+
+  public:
+    Horiz_new(float* src, float* dst_data, const float* filter, const int span, const int width, const int height)
+      : src(src)
+      , dst_data(dst_data)
+      , filter(filter)
+      , span(span)
+      , width(width)
+      , height(height)
+    {}
+
+    // Not sure if inlining makes this worse or better...
+    // might remove function calls but not sure exactly
+    inline void operator()(sycl::nd_item<2> it) const
+    {
+        // int x = it.get_global_id(0);
+        // int y = it.get_global_id(1);
+        int x = it.get_global_id(1);
+        int y = it.get_global_id(0);
+
+        // could have two different kernels one with this and one without
+        // depending on if it is perfectly divisible by 128 but might not be worth it... Test
+
+        // Using template so that we can call kernel without if if it's perfectly divisible by 128
+        // and hence would not be needed
+        switch(if_required)
+        {
+            case 1:
+                if(x >= width || y >= height)
+                {
+                    return;
+                }
+                break;
+            default: break; // do nothing
+        }
+
+        int idx;
+        float g;
+        float val;
+        float out = 0.0f;
+
+        // Look into sycl mad or fma (multiply-and-add instruction done in one clock cycle)
+        // is probably done by the compiler anyways though
+        for(int offset = span; offset > 0; offset--)
+        {
+            g = filter[offset];
+
+            idx = x - offset;
+            val = idx < 0 ? src[y * width] : src[idx + y * width];
+
+            out += (val * g);
+
+            idx = x + offset;
+            val = idx >= width ? src[width - 1 + y * width] : src[idx + y * width];
+            out += (val * g);
+        }
+
+        g = filter[0];
+        val = src[x + y * width];
+        out += (val * g);
+
+        dst_data[x + y * width] = out;
+    };
+};
+
 class Vert
 {
   private:
@@ -176,24 +251,29 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
 
     // Grid divide is different from cuda due to the way nd_range kerneels
     // work in sycl but serves the same purpose
-    sycl::range local{128, 1};
-    sycl::range global{(size_t)grid_divide(width, local[0]), (size_t)height};
+    // sycl::range local{128, 1};
+    // sycl::range global{(size_t)grid_divide(width, local[0]), (size_t)height};
+
+    sycl::range local{1, 128};
+    sycl::range total{(size_t)height, (size_t)grid_divide(width, local[1])};
 
     const float* filter = &_d_gauss->dd.filter[0];
     const int span = _d_gauss->dd.span[0];
 
-    if(global[0] == width)
+    // if(global[0] == width)
+    if(total[1] == width)
     {
+        fprintf(stderr, "Running no if\n");
         // width % 128 = 0 and hence we don't need if check in kernel
         return _device_queue.parallel_for(
-          sycl::nd_range{global, local},
+          sycl::nd_range{total, local},
           dependencies,
-          absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+          absoluteSource::Horiz_new<0>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
     }
     else
     {
         return _device_queue.parallel_for(
-          sycl::nd_range{global, local},
+          sycl::nd_range{total, local},
           dependencies,
           absoluteSource::Horiz<1>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
     }
