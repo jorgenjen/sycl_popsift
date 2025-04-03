@@ -47,8 +47,8 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event p
     return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(prev_octave_done);
         cgh.parallel_for(sycl::nd_range(global, local), [=](sycl::nd_item<2> it) {
-            int x = it.get_global_id(0);
-            int y = it.get_global_id(1);
+            int x = it.get_global_id(1);
+            int y = it.get_global_id(0);
 
             // better to have in one or two? -- Probs don't matter
             if(x >= dst_width)
@@ -56,6 +56,7 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event p
             if(y >= dst_height)
                 return;
 
+            // Don't need clamp just an upper check not sure if it matters
             const int read_x = sycl::clamp(x << 1, 0, src_width);
             const int read_y = sycl::clamp(y << 1, 0, src_height);
 
@@ -100,8 +101,6 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
     float** data_array = oct_obj.getDataArray();
     float** dog_array = oct_obj.getDogArray();
     // another way to call lambda IDK what is better
-
-    fprintf(stderr, "Before dog launch!\n");
 
     // Having this go from highest to lowest level would probably be better for cache hits
     return _device_queue.parallel_for<make_dog>(
@@ -195,7 +194,6 @@ sycl::event Pyramid::vert_from_interm(int octave,
                                       GaussTableChoice useInterpolatedGauss,
                                       sycl::event intm_write)
 {
-    fprintf(stderr, "at start of ver_from_interm\n");
     Octave& oct_obj = _octaves[octave];
 
     const int width = oct_obj.getWidth();
@@ -271,7 +269,7 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
                 }
                 else
                 {
-                    fprintf(stderr, "\n\n\nNow I run yes\n\n\n");
+                    // fprintf(stderr, "\n\n\nNow I run yes\n\n\n");
                     Octave& prev_oct_obj = _octaves[octave - 1];
 
                     // ensure event dependency is correct
@@ -296,6 +294,30 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
     _device_queue.wait(); // Add wait to see if event passing is the problem
     // return {sycl::event()};
 
+#define INSPTECT_OCTAVE 1
+#define INSPTECT_LEVEL 0
+    Octave& obj = _octaves[INSPTECT_OCTAVE];
+    int w = obj.getWidth();
+    int h = obj.getHeight();
+
+    Octave& prev_obj = _octaves[INSPTECT_OCTAVE - 1];
+    int prev_w = prev_obj.getWidth();
+    int prev_h = prev_obj.getHeight();
+
+    float* src_data = prev_obj.getDataArray()[_levels - PREV_LEVEL];
+
+    popsift::sycl_common::print_region(prev_obj.getDataArray()[_levels - PREV_LEVEL],
+                                       "Sub sampling source... ",
+                                       prev_w - 8,
+                                       prev_w,
+                                       prev_h - 8,
+                                       prev_h,
+                                       prev_w,
+                                       _device_queue);
+
+    popsift::sycl_common::print_region(
+      obj.getDataArray()[INSPTECT_LEVEL], "Level 0 for octave 0 :D -- ", w - 8, w, h - 8, h, w, _device_queue);
+
     std::vector<sycl::event> make_dog_events;
     make_dog_events.reserve(_num_octaves);
     fprintf(stderr, "num octave = %d -- _levels = %d\n", _num_octaves, _levels);
@@ -304,37 +326,12 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
         Octave& oct_obj = _octaves[octave];
 
         // Final level done of octave is dependend event for it to run
-        fprintf(stderr, "making DOGs for octave %d\n", octave);
         make_dog_events.push_back(dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]));
     }
 
-    _device_queue.wait(); // remove in future when you pass events from dog_from_blurred
-
-    // #define INSPTECT_LEVEL 0
-    //     float* dog_lvl = _octaves[INSPTECT_LEVEL].getDogArray()[0];
-    //     int width = _octaves[INSPTECT_LEVEL].getWidth();
-    //     int height = _octaves[INSPTECT_LEVEL].getHeight();
-    //     _device_queue.single_task(make_dog_events, [=]() {
-    //         sycl::ext::oneapi::experimental::printf(
-    //           "\n\nMe DoG's in range: y(%d -> %d) x(%d -> %d) for lvl = %d\n", height - 8, height, width - 8, width),
-    //           INSPTECT_LEVEL;
-    //         for(int y = height - 8; y < height; ++y)
-    //         {
-    //             for(int x = width - 8; x < width; ++x)
-    //             {
-    //                 sycl::ext::oneapi::experimental::printf("%010.6f ", dog_lvl[x + y * (width)]);
-    //             }
-    //             sycl::ext::oneapi::experimental::printf("\n");
-    //         }
-    //         sycl::ext::oneapi::experimental::printf("\n\n");
-    //     });
+    // _device_queue.wait(); // remove in future when you pass events from dog_from_blurred
 
     return make_dog_events;
-    // for (int octave = 0; octave < _num_octaves; octave++) {
-    //     Octave &oct_obj = _octaves[octave];
-    //     cudaStream_t stream = oct_obj.getStream();
-    //     cudaStreamSynchronize(stream);
-    // }
 }
 
 } // namespace popsift

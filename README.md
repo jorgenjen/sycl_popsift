@@ -23,6 +23,7 @@
 
 1. Improve error handlng (preferably asynchronous errors (refer to chap 5 in book)). 
 
+2. Make it work for cpu aswell (could not work due to local and global sizes does not match with what the cpu can handle? device_multiple? Look into using prefered device multiple instead to create the nd_ranges for the kernels
 
 
 ## Profiling/analysis

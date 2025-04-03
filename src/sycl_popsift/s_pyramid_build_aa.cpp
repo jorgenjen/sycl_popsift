@@ -187,15 +187,11 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
 
     float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
 
-    // Grid divide is different from cuda due to the way nd_range kerneels
-    // work in sycl but serves the same purpose
-    // sycl::range local{128, 1};
-    // sycl::range global{(size_t)grid_divide(width, local[0]), (size_t)height};
-
     // Need to be flipped due to the way sycl works
     sycl::range local{1, 128};
     sycl::range global{(size_t)height, (size_t)grid_divide(width, local[0])};
 
+    // Are on device so can't access them like this here
     // const float* filter = &_d_gauss->dd.filter[0];
     // const int span = _d_gauss->dd.span[0];
 
@@ -216,67 +212,6 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
     }
 }
 
-// Moved from s_pyramid_build_ra.cpp as  I don't use normalized source when using USM
-// sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std::vector<sycl::event> dependencies)
-// {
-//     Octave& oct_obj = _octaves[0];
-//
-//     const int width = oct_obj.getWidth();
-//     const int height = oct_obj.getHeight();
-//
-//     float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
-//
-//     // Grid divide is different from cuda due to the way nd_range kerneels
-//     // work in sycl but serves the same purpose
-//     // sycl::range local{128, 1};
-//     // sycl::range global{(size_t)grid_divide(width, local[0]), (size_t)height};
-//
-//     // Need to be flipped due to the way sycl works
-//     sycl::range local{1, 128};
-//     sycl::range global{(size_t)height, (size_t)grid_divide(width, local[0])};
-//     // fprintf(stderr, "You are the problem next few lines\n");
-//     // const float* filter = &_d_gauss->dd.filter[0];
-//     // const int span = _d_gauss->dd.span[0];
-//     // fprintf(stderr, "the problem you were not hmm\n");
-//
-//     float* my_data = sycl::malloc_device<float>(2048, _device_queue);
-//
-//     if(global[1] == width)
-//     {
-//         fprintf(stderr, "before the kernel invocation\n");
-//         // width % 128 = 0 and hence we don't need if check in kernel
-//         // return _device_queue.parallel_for(
-//         //   sycl::nd_range{global, local},
-//         //   dependencies,
-//         //   absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), width, height, _d_gauss));
-//
-//         return _device_queue.submit([&](sycl::handler& cgh) {
-//             cgh.depends_on(dependencies);
-//             // auto inputImg = base->getInput();
-//             // auto intermediate = oct_obj.getIntermediate();
-//
-//             // cgh.parallel_for(sycl::nd_range{global, local},
-//             //                  absoluteSource::Horiz<0>(nullptr, nullptr, width, height, nullptr));
-//
-//             sycl::range local_t{2, 32};
-//             sycl::range global_t{16, 64};
-//
-//             cgh.parallel_for(sycl::nd_range{global_t, local_t}, absoluteSource::simple_test(my_data));
-//
-//             // absoluteSource::Horiz<0>(inputImg, intermediate, width, height, _d_gauss));
-//             fprintf(stderr, "AFTER KERNEL\n");
-//         });
-//     }
-//     else
-//     {
-//         return _device_queue.parallel_for(
-//           sycl::nd_range{global, local},
-//           dependencies,
-//           absoluteSource::Horiz<1>(base->getInput(), oct_obj.getIntermediate(), width, height, _d_gauss));
-//     }
-//     fprintf(stderr, "After the kernel invocation\n");
-// }
-
 // Should only be called wiht a level > 0
 sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::event prev_level_write)
 {
@@ -285,41 +220,14 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     const int width = oct_obj.getWidth();
     const int height = oct_obj.getHeight();
 
-    fprintf(stderr, "In horiz_from_prev_level_basic\n");
-    fprintf(stderr, "widht = %d -- height = %d\n\n", width, height);
-
     // similar speed: dim3 block( 32,  4 ); dim3 block( 32,  3 ); dim3 block( 32,  2 );
     // (32, 8) most stable good perf on GTX 980 TI -- need to test different for me sycl implementation
-
-    // sycl::range local{32, 8}; // coult move inside of submit but probs done by compiler
-    //                           // and replaced .get(0) with the values inline
-    // sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
 
     sycl::range local{8, 32};
     sycl::range global{(size_t)grid_divide(height, local.get(0)), (size_t)grid_divide(width, local.get(1))};
 
-    // Not sure if it is better to have these varaibles inside of the submit or not
-
-    //
-
     float* prev_level = oct_obj.getDataArray()[level - 1]; // src
-
-    //
-
-    // // fprintf(stderr, "\nThis is fine!!!\n");
-    // float* cur_intm = oct_obj.getIntermediateArray()[level]; // dst_data
-
-    //
-
-    float* cur_intm = oct_obj.getIntermediate(); // dst_data
-
-    //
-
-    // fprintf(stderr, "\nThis is fine!!!\n");
-    // const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
-    // fprintf(stderr, "\nThis is fine!!!\n");
-    // const int span = _d_gauss->inc.span[level];
-    // fprintf(stderr, "\nThis is fine!!!\n");
+    float* cur_intm = oct_obj.getIntermediate();           // dst_data
 
     sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(prev_level_write);
@@ -327,22 +235,11 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
                          absoluteSource::Horiz<1>(prev_level, cur_intm, _d_gauss, width, height));
     });
 
-    // fprintf(stderr, "\nAFTER BEFORE WAIT!!!\n");
-    // e.wait();
-    // fprintf(stderr, "\nAFTER WAIT!!! before return LEVEL = %d \n", level);
-    // printf("AFTER HORIZ IN 'From prev' -- LEVEL = %d", level);
     return e;
-    // return sycl::event();
-
-    // _device_queue.wait();
-    // absoluteSource::horiz<<<grid, block, 0, stream>>>(
-    //   oct_obj.getDataTexPoint(), oct_obj.getIntermediateSurface(), level);
-    // POP_SYNC_CHK;
 }
 
 sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event intm_write)
 {
-    fprintf(stderr, "At start of vert from interm basic\n");
     Octave& oct_obj = _octaves[octave];
 
     const int width = oct_obj.getWidth();
@@ -364,42 +261,22 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     // const int span = _d_gauss->inc.span[level];
     // const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
 
-    fprintf(stderr, "\n\n\tMy current TESTER POINT\n");
-    sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
-        cgh.depends_on(intm_write); // Set horiz write to intermediate as dependency --
-        // Sycl not in order queue by default hence needed
-        // std::cout << "Past intm dependency I think" << std::endl;
-        cgh.parallel_for(sycl::nd_range(global, local),
-                         absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
-    });
-    // e.wait();
+    return _device_queue.parallel_for(sycl::nd_range(global, local),
+                                      intm_write,
+                                      absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
 
-    _device_queue.wait();
-    fprintf(stderr, "\n\n\tMy current TESTER POINT\n");
-    // fprintf(stderr, "After Vert_aa was submited\n");
-    // e.wait();
-    // printf("\n\t AFTER VERT SUBMIT CALL BEFORE RETURN level = %d\n", level);
-    return e;
-
-    // _device_queue.wait();
-
-    // _device_queue.submit([&](sycl::handler& cgh) {
-    //     cgh.single_task([=]() {
-    //         sycl::ext::oneapi::experimental::printf(
-    //           "\n\nAfter Vert: y(%d, %d) x(%d, %d)\n", height - 13, height, width - 13, width);
-    //         for(int y = height - 13; y < height; ++y)
-    //         {
-    //             for(int x = width - 13; x < width; ++x)
-    //             {
-    //                 sycl::ext::oneapi::experimental::printf("%06.2f ", dst_data[x + y * (width)]);
-    //             }
-    //             sycl::ext::oneapi::experimental::printf("\n");
-    //         }
-    //         sycl::ext::oneapi::experimental::printf("\n\n");
-    //     });
+    // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
+    //     cgh.depends_on(intm_write); // Set horiz write to intermediate as dependency --
+    //     // Sycl not in order queue by default hence needed
+    //     // std::cout << "Past intm dependency I think" << std::endl;
+    //     cgh.parallel_for(sycl::nd_range(global, local),
+    //                      absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
     // });
-    // absoluteSource::vert<<<grid, block, 0, stream>>>(oct_obj.getIntermDataTexPoint(), oct_obj.getDataSurface(),
-    // level); POP_SYNC_CHK;
+    // // e.wait();
+    //
+    // _device_queue.wait();
+    // fprintf(stderr, "\n\n\tMy current TESTER POINT\n");
+    // return e;
 }
 
 } // namespace popsift

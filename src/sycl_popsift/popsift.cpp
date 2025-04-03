@@ -362,7 +362,7 @@ void PopSift::extractDownloadLoop()
         // idk why this does not work
         // job->printJob();
 
-        // uploaded input image no longer needed, release for reuse
+        // uploaded Image object is no longer needed, release for reuse
         p._unused.push(img);
 
         // p._pyramid->step2(_config, dependencies, _d_consts_write);

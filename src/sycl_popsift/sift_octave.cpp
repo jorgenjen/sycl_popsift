@@ -126,7 +126,6 @@ void Octave::alloc(const Config& conf, int width, int height, int levels)
     _w_grid_divider = float(_w) / conf.getFilterGridSize();
     _h_grid_divider = float(_h) / conf.getFilterGridSize();
 
-    fprintf(stderr, "Reserving levels for level_complete_event vector --> %d\n", levels);
     // BUG: When adding one to resere it does not happen again?
     _level_complete_events.reserve(levels + 1); // Adding another solves the problem ???
     // On GPU it works without the +1 so no clue what is going on....
@@ -201,23 +200,5 @@ void Octave::resetDimensions(const Config& conf, int w, int h)
     _max_w = _w = w;
     _max_h = _h = h;
     alloc_arrays();
-
-    // free_dog_tex();
-    // free_dog_array();
-    //
-    // free_interm_tex();
-    // free_interm_array();
-    //
-    // free_data_tex();
-    // free_data_planes();
-    //
-    // alloc_data_planes();
-    // alloc_data_tex();
-    //
-    // alloc_interm_array();
-    // alloc_interm_tex();
-    //
-    // alloc_dog_array();
-    // alloc_dog_tex();
 }
 }
