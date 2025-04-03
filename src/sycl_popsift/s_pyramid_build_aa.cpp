@@ -237,6 +237,78 @@ class Vert
     }
 };
 
+class Vert_new
+{
+  private:
+    float* intermediate; // or is it intermediate :D IDK
+    float* dst_data;
+    const float* filter;
+    const int span;
+    const int width;
+    const int height;
+    const int level;
+
+  public:
+    Vert_new(float* intermediate,
+             float* dst_data,
+             const float* filter,
+             const int span,
+             const int width,
+             const int height,
+             const int level)
+      : intermediate(intermediate)
+      , dst_data(dst_data)
+      , filter(filter)
+      , span(span)
+      , width(width)
+      , height(height)
+      , level(level)
+    {}
+
+    // seems to be slightly different from cuda PopSIFT but could be due to the way GPU vs cpu handles
+    // floats as the difference is noticable for the intermediate futher out in the decimal values and I gues
+    // it compunds making a bigger difference causing differences of up to almost 5? but that does seem like it is
+    // way too much.... so Need to investigate what is going on Intermediate after horiz is different some places on
+    // the 3 decimal so could be from the way the texture engine is getting the data and reading the uchars as
+    // floats and that conversion is not as accurate as the software way I've done here in sycl.. Will assume it is
+    // correct for now and move on
+    inline void operator()(sycl::nd_item<2> it) const
+    {
+        // int x = it.get_global_id(0);
+        // int y = it.get_global_id(1);
+        int x = it.get_global_id(1);
+        int y = it.get_global_id(0);
+
+        // This need to be here  I think. Was not in cuda PopSift probs due to textures making it a non issue
+        if(x >= width || y >= height)
+            return;
+
+        int idy;
+        float g;
+        float val;
+        float out = 0.0f;
+
+        for(int offset = span; offset > 0; offset--)
+        {
+            g = filter[offset];
+
+            idy = y - offset;
+            val = idy < 0 ? intermediate[x] : intermediate[x + idy * width]; // clamp edge
+            out += (val * g);
+
+            idy = y + offset;
+            val = idy >= height ? intermediate[x + (height - 1) * width] : intermediate[x + idy * width]; // clamp edge
+            out += (val * g);
+        }
+
+        g = filter[0];
+        val = intermediate[x + y * width];
+        out += (val * g);
+
+        dst_data[x + y * width] = out;
+    }
+};
+
 } // namespace absoluteSource
 
 // Moved from s_pyramid_build_ra.cpp as  I don't use normalized source when using USM
@@ -275,7 +347,7 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
         return _device_queue.parallel_for(
           sycl::nd_range{total, local},
           dependencies,
-          absoluteSource::Horiz<1>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+          absoluteSource::Horiz_new<1>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
     }
 }
 
@@ -333,8 +405,11 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     const int width = oct_obj.getWidth();
     const int height = oct_obj.getHeight();
 
-    sycl::range local{64, 2};
-    sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+    // sycl::range local{64, 2};
+    // sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+
+    sycl::range local{2, 64};
+    sycl::range global{(size_t)grid_divide(height, local[0]), (size_t)grid_divide(width, local[1])};
 
     // printf("\n\n\tvert_from_interm_basic GLOBAL(%zu, %zu), LEVEL=%d\n", global[0], global[1], level);
     // printf("\n\tSpan=%d \n", _d_gauss->inc.span[level]);
@@ -350,7 +425,7 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
         // Sycl not in order queue by default hence needed
         // std::cout << "Past intm dependency I think" << std::endl;
         cgh.parallel_for(sycl::nd_range(global, local),
-                         absoluteSource::Vert(intermediate, dst_data, filter, span, width, height, level));
+                         absoluteSource::Vert_new(intermediate, dst_data, filter, span, width, height, level));
     });
 
     // fprintf(stderr, "After Vert_aa was submited\n");
