@@ -82,8 +82,10 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
     const int width = oct_obj.getWidth();
     const int height = oct_obj.getHeight();
 
-    sycl::range local{1024, 1};
-    sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+    // sycl::range local{1024, 1};
+    // sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+    sycl::range local{1, 1024};
+    sycl::range global{(size_t)grid_divide(height, local[0]), (size_t)grid_divide(width, local[1])};
 
     float** data_array = oct_obj.getDataArray();
     float** dog_array = oct_obj.getDogArray();
@@ -91,8 +93,10 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
 
     return _device_queue.parallel_for<make_dog>(
       sycl::nd_range{global, local}, {octave_complete}, [=](sycl::nd_item<2> it) {
-          int x = it.get_global_id(0);
-          int y = it.get_global_id(1);
+          // int x = it.get_global_id(0);
+          // int y = it.get_global_id(1);
+          int x = it.get_global_id(1);
+          int y = it.get_global_id(0);
           if(x > width)
               return;
 
@@ -251,7 +255,7 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
     {
         Octave& oct_obj = _octaves[octave];
 
-        // Final level done of octave is dependend event for it to run
+        // Final level must be complete before we can do dogs (aka all levels as final depends on all before it)
         make_dog_events.push_back(dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]));
     }
 
