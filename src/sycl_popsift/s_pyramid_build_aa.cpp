@@ -327,25 +327,25 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
     // sycl::range global{(size_t)grid_divide(width, local[0]), (size_t)height};
 
     sycl::range local{1, 128};
-    sycl::range total{(size_t)height, (size_t)grid_divide(width, local[1])};
+    sycl::range global{(size_t)height, (size_t)grid_divide(width, local[1])};
 
     const float* filter = &_d_gauss->dd.filter[0];
     const int span = _d_gauss->dd.span[0];
 
     // if(global[0] == width)
-    if(total[1] == width)
+    if(global[1] == width)
     {
         fprintf(stderr, "Running no if\n");
         // width % 128 = 0 and hence we don't need if check in kernel
         return _device_queue.parallel_for(
-          sycl::nd_range{total, local},
+          sycl::nd_range{global, local},
           dependencies,
           absoluteSource::Horiz_new<0>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
     }
     else
     {
         return _device_queue.parallel_for(
-          sycl::nd_range{total, local},
+          sycl::nd_range{global, local},
           dependencies,
           absoluteSource::Horiz_new<1>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
     }
@@ -367,7 +367,7 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     // sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
 
     sycl::range local{8, 32};
-    sycl::range total{(size_t)grid_divide(height, local[0]), (size_t)grid_divide(width, local[1])};
+    sycl::range global{(size_t)grid_divide(height, local[0]), (size_t)grid_divide(width, local[1])};
 
     // _device_queue.wait();
     // printf("\nGlobal in horiz from prev level wop wop(%zu, %zu), level=%d:\n", global[0], global[1], level);
@@ -385,7 +385,7 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
 
     sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(prev_level_write);
-        cgh.parallel_for(sycl::nd_range{total, local},
+        cgh.parallel_for(sycl::nd_range{global, local},
                          absoluteSource::Horiz_new<1>(prev_level, cur_intm, filter, span, width, height));
     });
 
