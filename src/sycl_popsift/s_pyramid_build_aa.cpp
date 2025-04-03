@@ -362,9 +362,12 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     // similar speed: dim3 block( 32,  4 ); dim3 block( 32,  3 ); dim3 block( 32,  2 );
     // (32, 8) most stable good perf on GTX 980 TI -- need to test different for me sycl implementation
 
-    sycl::range local{32, 8}; // coult move inside of submit but probs done by compiler
-                              // and replaced .get(0) with the values inline
-    sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+    // sycl::range local{32, 8}; // coult move inside of submit but probs done by compiler
+    //                           // and replaced .get(0) with the values inline
+    // sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
+
+    sycl::range local{8, 32};
+    sycl::range total{(size_t)grid_divide(height, local[0]), (size_t)grid_divide(width, local[1])};
 
     // _device_queue.wait();
     // printf("\nGlobal in horiz from prev level wop wop(%zu, %zu), level=%d:\n", global[0], global[1], level);
@@ -382,8 +385,8 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
 
     sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(prev_level_write);
-        cgh.parallel_for(sycl::nd_range{global, local},
-                         absoluteSource::Horiz<1>(prev_level, cur_intm, filter, span, width, height));
+        cgh.parallel_for(sycl::nd_range{total, local},
+                         absoluteSource::Horiz_new<1>(prev_level, cur_intm, filter, span, width, height));
     });
 
     // fprintf(stderr, "\nAFTER BEFORE WAIT!!!\n");
