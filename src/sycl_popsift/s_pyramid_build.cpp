@@ -37,16 +37,20 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event p
     float* src_data = prev_oct_obj.getDataArray()[_levels - PREV_LEVEL];
     float* dst_data = oct_obj.getDataArray()[0]; // Level 0 is the subsampled result
 
-    sycl::range local{64, 2};
-    sycl::range global{(size_t)grid_divide(dst_width, local.get(0)), (size_t)grid_divide(dst_height, local.get(1))};
+    // sycl::range local{64, 2};
+    // sycl::range global{(size_t)grid_divide(dst_width, local.get(0)), (size_t)grid_divide(dst_height, local.get(1))};
+    sycl::range local{2, 64};
+    sycl::range global{(size_t)grid_divide(dst_height, local[0]), (size_t)grid_divide(dst_width, local[1])};
 
     // printf("\n\n\tIN downscale_from_prev_octave GLOBAL(%zu, %zu), OCTAVE=%d\n", global[0], global[1], octave);
 
     return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(prev_octave_done);
         cgh.parallel_for(sycl::nd_range(global, local), [=](sycl::nd_item<2> it) {
-            int x = it.get_global_id(0);
-            int y = it.get_global_id(1);
+            // int x = it.get_global_id(0);
+            // int y = it.get_global_id(1);
+            int x = it.get_global_id(1);
+            int y = it.get_global_id(0);
 
             // better to have in one or two? -- Probs don't matter
             if(x >= dst_width)
