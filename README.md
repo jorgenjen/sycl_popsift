@@ -21,9 +21,13 @@
 
 ## Things that needs to be done:
 
-1. Improve error handlng (preferably asynchronous errors (refer to chap 5 in book)). 
+- [ ] Improve error handlng (preferably asynchronous errors (refer to chap 5 in book)). 
 
-2. Make it work for cpu aswell (could not work due to local and global sizes does not match with what the cpu can handle? device_multiple? Look into using prefered device multiple instead to create the nd_ranges for the kernels
+- [ ] Make it work for cpu aswell (could not work due to local and global sizes does not match with what the cpu can handle? device_multiple? Look into using prefered device multiple instead to create the nd_ranges for the kernels
+
+- [ ] Get rid of unnecessary shared USM memory (hapers performance)
+
+- [x] Fix pyramid for GPU
 
 
 ## Profiling/analysis
