@@ -83,10 +83,10 @@ void Octave::free_arrays()
     {
         fprintf(stderr, "\nData array is NULL at octave=%d\n", _debug_octave_id);
     }
-    // if(!_dog_array)
-    // {
-    //     fprintf(stderr, "\nDOG array is NULL at octave=%d\n", _debug_octave_id);
-    // }
+    if(!_dog_array)
+    {
+        fprintf(stderr, "\nDOG array is NULL at octave=%d\n", _debug_octave_id);
+    }
 
     if(!_intermediate)
     {
@@ -99,16 +99,21 @@ void Octave::free_arrays()
         sycl::free(_data_array[i], _device_queue);
         sycl::free(_dog_array[i], _device_queue);
     }
-    _device_queue.wait();
+    // _device_queue.wait();
     // fprintf(stderr, "\nFreeing final level of data arary %d \n", _levels - 1);
+    // fprintf(stderr, "Right before freeing last _data_array");
     sycl::free(_data_array[_levels - 1], _device_queue); // has one more than DoG's
 
+    // fprintf(stderr, "AFTER FREEING last _data_array");
     // fprintf(stderr, "\nFreeing data array \n");
     sycl::free(_data_array, _device_queue);
     // fprintf(stderr, "\nFreeing dog array %p\n", _dog_array);
     sycl::free(_dog_array, _device_queue);
+    // _device_queue.wait();
     // fprintf(stderr, "\nFreeing intermediate array \n");
     sycl::free(_intermediate, _device_queue);
+
+    // fprintf(stderr, "done freeing octave %d", _debug_octave_id);
 }
 
 // void Octave::alloc(const Config& conf, int width, int height, int levels, int gauss_group, sycl::queue& Q)
@@ -126,6 +131,7 @@ void Octave::alloc(const Config& conf, int width, int height, int levels)
     _level_complete_events.reserve(levels + 1); // Adding another solves the problem ???
     // On GPU it works without the +1 so no clue what is going on....
     // _level_complete_events.reserve(levels);
+    // WARNING: GPU Fails freeing octave when not +1 why I have no clue
 
     // TODO: FIGURE out Replacements for these methods
     // most of them are related to textures in CUDA
