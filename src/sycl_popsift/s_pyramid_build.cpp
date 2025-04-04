@@ -212,6 +212,10 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
         // fprintf(stderr, "BEFORE ACCESS OF octave %d", octave);
         Octave& oct_obj = _octaves[octave];
 
+        // Just for print outs
+        int w = _octaves[octave].getWidth();
+        int h = _octaves[octave].getHeight();
+
         for(int level = 0; level < _levels; level++)
         {
             if(level == 0)
@@ -220,6 +224,26 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
                 {
                     sycl::event horiz = horiz_from_input_image(conf, base_img, {d_gauss_write, img_transfer});
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+
+                    // horiz.wait();
+                    // popsift::sycl_common::print_region(oct_obj.getIntermediate(),
+                    //                                    "INTERMEDIATE after horiz first octave -- ",
+                    //                                    w - 8,
+                    //                                    w,
+                    //                                    h - 8,
+                    //                                    h,
+                    //                                    w,
+                    //                                    _device_queue);
+                    //
+                    // _device_queue.wait();
+                    // popsift::sycl_common::print_region(oct_obj.getDataArray()[level],
+                    //                                    "First octave after vert -- ",
+                    //                                    w - 8,
+                    //                                    w,
+                    //                                    h - 8,
+                    //                                    h,
+                    //                                    w,
+                    //                                    _device_queue);
                 }
                 else
                 {
@@ -261,24 +285,24 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
 
     // _device_queue.wait(); // remove in future when you pass events from dog_from_blurred
 
-#define INSPTECT_LEVEL 0
-    float* dog_lvl = _octaves[INSPTECT_LEVEL].getDogArray()[0];
-    int width = _octaves[INSPTECT_LEVEL].getWidth();
-    int height = _octaves[INSPTECT_LEVEL].getHeight();
-    _device_queue.single_task(make_dog_events, [=]() {
-        sycl::ext::oneapi::experimental::printf(
-          "\n\nMe DoG's in range: y(%d -> %d) x(%d -> %d) for lvl = %d\n", height - 8, height, width - 8, width),
-          INSPTECT_LEVEL;
-        for(int y = height - 8; y < height; ++y)
-        {
-            for(int x = width - 8; x < width; ++x)
-            {
-                sycl::ext::oneapi::experimental::printf("%010.6f ", dog_lvl[x + y * (width)]);
-            }
-            sycl::ext::oneapi::experimental::printf("\n");
-        }
-        sycl::ext::oneapi::experimental::printf("\n\n");
-    });
+    // #define INSPTECT_LEVEL 0
+    //     float* dog_lvl = _octaves[INSPTECT_LEVEL].getDogArray()[0];
+    //     int width = _octaves[INSPTECT_LEVEL].getWidth();
+    //     int height = _octaves[INSPTECT_LEVEL].getHeight();
+    //     _device_queue.single_task(make_dog_events, [=]() {
+    //         sycl::ext::oneapi::experimental::printf(
+    //           "\n\nMe DoG's in range: y(%d -> %d) x(%d -> %d) for lvl = %d\n", height - 8, height, width - 8, width),
+    //           INSPTECT_LEVEL;
+    //         for(int y = height - 8; y < height; ++y)
+    //         {
+    //             for(int x = width - 8; x < width; ++x)
+    //             {
+    //                 sycl::ext::oneapi::experimental::printf("%010.6f ", dog_lvl[x + y * (width)]);
+    //             }
+    //             sycl::ext::oneapi::experimental::printf("\n");
+    //         }
+    //         sycl::ext::oneapi::experimental::printf("\n\n");
+    //     });
 
     return make_dog_events;
     // for (int octave = 0; octave < _num_octaves; octave++) {

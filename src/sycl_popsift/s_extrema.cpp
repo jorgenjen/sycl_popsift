@@ -799,7 +799,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
         // currently same as cuda
         sycl::range local{1, HEIGHT, LOCAL_X};
         sycl::range global{
-          (size_t)_levels - 3, (size_t)grid_divide(height, local.get(1)), (size_t)grid_divide(width, local.get(0))};
+          (size_t)_levels - 3, (size_t)grid_divide(height, local[1]), (size_t)grid_divide(width, local[2])};
 
         int work_group_count = grid_divide_cuda(height, local[1]) * grid_divide_cuda(width, local[2]) * (_levels - 3);
 

@@ -6,6 +6,9 @@
 
 // Results in file not found and without it malloc_devT does not work hence moved to malloc_devt.hpp file
 // #include <sycl/sycl.hpp>
+// #include "sycl/queue.hpp"
+
+#include <sycl/sycl.hpp>
 
 #include <cassert>
 #include <cstdlib>
@@ -48,6 +51,15 @@
     {                                                                                                                  \
         POP_FATAL_FL(s, file, line);                                                                                   \
     }
+
+namespace popsift {
+namespace sycl_common {
+
+void print_region(
+  float* ptr, const char* identifier, int start_x, int end_x, int start_y, int end_y, int width, sycl::queue Q);
+
+} // namespace sycl_common
+} // namespace popsift
 
 // Cannot include sycl.hpp here and hence can't find sycl::queu so can't have the function here IDK why that is so it is
 // moved to ../malloc_devt.hpp

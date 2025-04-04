@@ -1,61 +1,57 @@
 #include "sycl_popsift/common/debug_macros.hpp"
-// #include "sycl/queue.hpp"
 
 // #include "sycl/queue.hpp"
+// #include "sycl/sycl.hpp"
 
-// #include <sycl/sycl.hpp>
+namespace popsift {
+namespace sycl_common {
 
-// #include <sstream>
+void print_region(
+  float* ptr, const char* identifier, int start_x, int end_x, int start_y, int end_y, int width, sycl::queue Q)
+{
+    int str_len = std::strlen(identifier) + 1;
 
-// namespace popsift {
-// namespace sycl_helpers {
-//
-// template<class T>
-// T* malloc_devT(int num, const char* file, int line, sycl::queue Q)
-// {
-//     T* ptr;
-//     try
-//     {
-//         ptr = sycl::malloc_device<T>(num, Q);
-//     }
-//     catch(const sycl::exception& e)
-//     {
-//         std::stringstream ss;
-//         ss << "Memory allocation failed" << e.what();
-//         POP_FATAL_FL(ss.str(), file, line);
-//     }
-//     return ptr;
-// }
-//
-// }
-// }
+    // char* dev_msg = malloc_devT<char>(str_len, __FILE__, __LINE__, "Could not allocate print identifier", Q);
+    char* dev_msg = sycl::malloc_device<char>(str_len, Q);
+    Q.memcpy(dev_msg, identifier, (size_t)str_len).wait();
 
-// namespace popsift {
-// namespace sycl_helpers {
-//
-// template<class T>
-// T* malloc_devT(int num, const char* file, int line, char* error_message, sycl::queue Q)
-// {
-//     T* ptr;
-//     try
-//     {
-//         ptr = sycl::malloc_device<T>(num, Q);
-//     }
-//     catch(const sycl::exception& e)
-//     {
-//         std::stringstream ss;
-//         ss << error_message << e.what();
-//         POP_FATAL_FL(ss.str(), file, line);
-//     }
-//
-// #ifdef DEBUG_INIT_DEVICE_ALLOCATIONS
-//     // popsift::cuda::memset_sync(*ptr, 0, sz, file, line);
-//     // Should probably change this to function so we can have try catch
-//     Q.memset(ptr, 0, num * sizeof(T));
-// #endif // NDEBUG
-//
-//     return ptr;
-// }
-// }
-//
-// }
+    Q.single_task([=]() {
+         sycl::ext::oneapi::experimental::printf(
+           "\n\n%s -- Region: y(%d -> %d) x(%d -> %d) \n", dev_msg, start_x, end_x, start_y, end_y);
+         for(int y = start_y; y < end_y; ++y)
+         {
+             for(int x = start_x; x < end_x; ++x)
+             {
+                 sycl::ext::oneapi::experimental::printf("%010.6f ", ptr[x + y * (width)]);
+             }
+             sycl::ext::oneapi::experimental::printf("\n");
+         }
+         sycl::ext::oneapi::experimental::printf("\n\n");
+     })
+      .wait();
+
+    sycl::free(dev_msg, Q);
+    // With stream
+    // Q.submit([&](sycl::handler& h) {
+    //      sycl::stream out(4096, 512, h);
+    //
+    //      h.single_task([=]() {
+    //          out << "\n"
+    //              << dev_msg << " -- Region: y(" << start_y << " -> " << end_y << ") x(" << start_x << " -> " << end_x
+    //              << ")\n";
+    //
+    //          for(int y = start_y; y < end_y; ++y)
+    //          {
+    //              for(int x = start_x; x < end_x; ++x)
+    //              {
+    //                  out << ptr[x + y * width] << " ";
+    //              }
+    //              out << "\n";
+    //          }
+    //          out << "\n\n";
+    //      });
+    //  })
+    //   .wait();
+}
+}
+}
