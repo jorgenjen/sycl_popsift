@@ -2,6 +2,7 @@
 
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
+#include "sycl_popsift/malloc_devt.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
 
@@ -135,6 +136,53 @@ void PopSift::uninit()
     _isInit = false;
 }
 
+sycl::event PopSift::init_gauss_filter()
+{
+    fprintf(stderr, "In init_gauss_filter()\n");
+
+    // Crate gauss filter store it on host
+    popsift::init_filter(_config, &_h_gauss);
+
+    fprintf(stderr, "AT bottom off init_gauss_filter()\n");
+    // Transfer gauss filter to device
+    if(_d_gauss == nullptr)
+    {
+        _d_gauss = popsift::common_sycl::malloc_devT<popsift::GaussInfo>(
+          1, __FILE__, __LINE__, "Failed to allocate gauss filter on device", _device_queue);
+    }
+    else
+        std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl; // Remove down the line
+
+    // Look into partial updates for this one (currently any change to config would be expensive...) but again who
+    // updates config while it's running...
+    return _device_queue.memcpy(_d_gauss, &_h_gauss, sizeof(popsift::GaussInfo));
+}
+
+sycl::event PopSift::init_constants()
+{
+    fprintf(stderr, "in init contsatns\n");
+
+    popsift::init_constants(_config.sigma,
+                            _config.levels,
+                            _config.getPeakThreshold(),
+                            _config._edge_limit,
+                            _config.getMaxExtrema(),
+                            _config.getNormalizationMultiplier(),
+                            &_h_consts);
+
+    // Transfer constants to device
+    if(_d_consts == nullptr)
+    {
+        _d_consts = popsift::common_sycl::malloc_devT<popsift::ConstInfo>(
+          1, __FILE__, __LINE__, "Failed to allocate constants on device", _device_queue);
+    }
+    else
+        std::cout << "\n\n\t\t_d_consts is set -- no malloc needed\n\n" << std::endl; // reomve in future
+
+    // Again look into partial update (but normaly updats won't be done)
+    return _device_queue.memcpy(_d_consts, &_h_consts, sizeof(popsift::ConstInfo));
+}
+
 // Apply configuration should reside here
 bool PopSift::applyConfiguration(bool force)
 {
@@ -142,21 +190,20 @@ bool PopSift::applyConfiguration(bool force)
     // so something seems to be wrong here. Once figured out revert the equal function back to the commented out one
     if(force || (_config != _shadow_config))
     {
-        // cout << "\n\n\t\tApplying configuration nuuuuuu!!\n\n" << endl;
         // for re ren we need to free and re malloc or change the size or not malloc again if it is already malloced
-        _d_gauss_write = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue, &_d_gauss);
-        // _d_gauss_write.wait(); // tmp -- should not be needed as it's passed as a dependency
+        // _d_gauss_writPe = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue, &_d_gauss);
+        _d_gauss_write = this->init_gauss_filter();
 
-        _d_consts_write = popsift::init_constants(_config.sigma,
-                                                  _config.levels,
-                                                  _config.getPeakThreshold(),
-                                                  _config._edge_limit,
-                                                  _config.getMaxExtrema(),
-                                                  _config.getNormalizationMultiplier(),
-                                                  _device_queue,
-                                                  &_d_consts);
+        _d_consts_write = this->init_constants();
 
-        // _d_consts_write.wait();
+        // _d_consts_write = popsift::init_constants(_config.sigma,
+        //                                           _config.levels,
+        //                                           _config.getPeakThreshold(),
+        //                                           _config._edge_limit,
+        //                                           _config.getMaxExtrema(),
+        //                                           _config.getNormalizationMultiplier(),
+        //                                           _device_queue,
+        //                                           &_d_consts);
     }
     _shadow_config = _config;
     return true;
@@ -214,7 +261,7 @@ bool PopSift::private_init(int w, int h)
         return true;
     }
 
-    p._pyramid = new popsift::Pyramid(_config, w, h, _device_queue, _d_gauss, _d_consts);
+    p._pyramid = new popsift::Pyramid(_config, w, h, _device_queue, _d_gauss, _d_consts, _h_consts);
 
     return true;
 }
@@ -304,20 +351,13 @@ void PopSift::extractDownloadLoop()
     while((job = p._queue_stage2.pull()) != nullptr)
     {
         // will do nothing if configuraiton has not changed
-
         applyConfiguration();
 
-        // get the next job in queue or wait until a new job arrives
-
         popsift::Image* img = job->getImg();
-        // std::cout << "the job is --> ";
-        job->printJob();
+
+        job->printJob(); // Can probs remove
 
         private_init(img->getWidth(), img->getHeight());
-
-        // img->print_region(4, 4, 20, 20);
-
-        // DO THE JOB!!!
 
         std::vector<sycl::event> dependencies =
           p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());

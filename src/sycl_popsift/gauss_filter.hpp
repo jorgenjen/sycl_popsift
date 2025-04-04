@@ -89,6 +89,6 @@ extern GaussInfo h_gauss;
 
 /* init_filter must be called early to initialize the Gauss tables.
  */
-sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queue& Q, popsift::GaussInfo** d_gauss);
+void init_filter(const Config& conf, popsift::GaussInfo* h_gauss);
 
 } // namespace popsift

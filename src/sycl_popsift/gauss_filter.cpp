@@ -26,7 +26,7 @@ namespace popsift {
 
 // __align__(128) thread_local GaussInfo h_gauss;
 // thread_local GaussInfo h_gauss;
-GaussInfo h_gauss; // not sure if I need thread local and not sure how to do align
+// GaussInfo h_gauss; // not sure if I need thread local and not sure how to do align
 
 // TODO: Implement an equivalent print function that would work with sycl
 // void print_gauss_filter_symbol( int columns )
@@ -92,12 +92,15 @@ GaussInfo h_gauss; // not sure if I need thread local and not sure how to do ali
 //     printf("\n");
 // }
 
-/*************************************************************
- * Initialize the Gauss filter table in constant memory
- *************************************************************/
-
-sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queue& Q, GaussInfo** d_gauss)
+// It is probably possible to do partial updates of _d_gauss if struct is packed but not sure if it is worth it
+// TODO: Look into partial update of struct on device side as currently the whole host is copied into device no matter
+// how small or large the change is (not sure if there are cases where it would be partial updates when config changes
+// so that is a prerquisite for doing partial updates)
+void init_filter(const Config& conf, GaussInfo* h_gauss) // modifies passed h_gauss
 {
+    float sigma0 = conf.sigma;
+    int levels = conf.levels;
+
     if(sigma0 > 2.0)
     {
         stringstream ss;
@@ -129,11 +132,11 @@ sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queu
         // printf("sigma is initially sigma0, afterwards the difference between previous 2 sigmas\n");
     }
 
-    h_gauss.setSpanMode(conf.getGaussMode());
+    h_gauss->setSpanMode(conf.getGaussMode());
 
-    h_gauss.clearTables();
+    h_gauss->clearTables();
 
-    h_gauss.required_filter_stages = levels + 3;
+    h_gauss->required_filter_stages = levels + 3;
 
     const float initial_blur =
       conf.hasInitialBlur() ? conf.getInitialBlur() * pow(2.0f, conf.getUpscaleFactor()) : 0.0f;
@@ -142,17 +145,17 @@ sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queu
      * The classical Gaussian blur tables for incremental blurring.
      * These do not rely on hardware interpolation.
      */
-    h_gauss.inc.sigma[0] = conf.hasInitialBlur() ? sqrt(fabsf(sigma0 * sigma0 - initial_blur * initial_blur)) : sigma0;
+    h_gauss->inc.sigma[0] = conf.hasInitialBlur() ? sqrt(fabsf(sigma0 * sigma0 - initial_blur * initial_blur)) : sigma0;
 
-    for(int lvl = 1; lvl < h_gauss.required_filter_stages; lvl++)
+    for(int lvl = 1; lvl < h_gauss->required_filter_stages; lvl++)
     {
         const float sigmaP = sigma0 * pow(2.0f, (float)(lvl - 1) / (float)levels);
         const float sigmaS = sigma0 * pow(2.0f, (float)(lvl) / (float)levels);
 
-        h_gauss.inc.sigma[lvl] = sqrt(sigmaS * sigmaS - sigmaP * sigmaP);
+        h_gauss->inc.sigma[lvl] = sqrt(sigmaS * sigmaS - sigmaP * sigmaP);
     }
 
-    h_gauss.inc.computeBlurTable(&h_gauss);
+    h_gauss->inc.computeBlurTable(h_gauss);
 
     /* dd :
      * The direct-downscaling kernels make use of the assumption that downscaling
@@ -169,35 +172,10 @@ sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queu
     const float b = sqrt(fabs(sigma0 * sigma0 - initial_blur * initial_blur));
 
     // sigma / 2^i
-    h_gauss.dd.sigma[0] = b;
-    h_gauss.dd.computeBlurTable(&h_gauss);
+    h_gauss->dd.sigma[0] = b;
+    h_gauss->dd.computeBlurTable(h_gauss);
 
-    // for (int i = 0; i < 6; ++i){
-    //     fprintf(stderr, "span[%d] = %d", i, h_gauss.inc.span
-    //
-    // }
-
-    // Copy h_gauss to device
-
-    try
-    {
-        if(*d_gauss == nullptr)
-            *d_gauss = sycl::malloc_device<GaussInfo>(1, Q);
-        else
-            std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl;
-    }
-    catch(const sycl::exception& e)
-    {
-        std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-        // Here, d_consts was never assigned, so there's no need to free it
-    }
-    // sycl::event write_gauss = Q.memcpy(d_consts, &h_consts, sizeof(GaussInfo));
-
-    return Q.memcpy(*d_gauss, &h_gauss, sizeof(GaussInfo));
-
-    // cudaError_t err;
-    // err = cudaMemcpyToSymbol(d_gauss, &h_gauss, sizeof(GaussInfo), 0, cudaMemcpyHostToDevice);
-    // POP_CUDA_FATAL_TEST(err, "cudaMemcpyToSymbol failed for Gauss kernel initialization: ");
+    // Copy of host struct have been moved to a method of PopSift class
 
     // TODO: Implement printGausstables function
     // if(conf.ifPrintGaussTables())
