@@ -3,7 +3,7 @@
 #include "sycl/usm.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
-#include "sycl_popsift/malloc_devt.hpp"
+// #include "sycl_popsift/malloc_devt.hpp"
 #include "sycl_popsift/s_image.hpp" // not sure if needed to include here aswell clean up #includes at some point
 #include "sycl_popsift/sift_constants.hpp"
 
@@ -70,26 +70,26 @@ Pyramid::Pyramid(const Config& config,
     // NOTE: Not sure if we want to have the custom error message for each malloc not sure if it gives any usefull
     // information and it might slightly slow us down...
 
-    _dct = popsift::common_sycl::malloc_devT<ExtremaCounters>(
+    _dct = popsift::sycl_common::malloc_devT<ExtremaCounters>(
       1, __FILE__, __LINE__, "Device Extrema counter allocation failed", Q);
     Q.memset(_dct, 0, sizeof(ExtremaCounters));
 
-    _d_extrema_num_blocks = popsift::common_sycl::malloc_devT<int>(
+    _d_extrema_num_blocks = popsift::sycl_common::malloc_devT<int>(
       _num_octaves, __FILE__, __LINE__, "Global octave barrier allocation failed", Q);
 
     // don't see the purpose of dobuf_shadow, so not using it untill I see a purpose for it (I probs will in future :D)
     // I think it's mainly for some memory optimizations in cuda but might be wrong!
 
     int sz = _num_octaves * h_consts.max_extrema; // h_consts.max_extrema is 100 000 by default
-    _dobuf = popsift::common_sycl::malloc_devT<DevBuffers>(
+    _dobuf = popsift::sycl_common::malloc_devT<DevBuffers>(
       1, __FILE__, __LINE__, "Allocating device DevBuffers struct failed", Q);
 
     // For 7 octaves case the total memory useage for this array is 196MB
-    _dobuf->i_ext_dat[0] = popsift::common_sycl::malloc_devT<InitialExtremum>(
+    _dobuf->i_ext_dat[0] = popsift::sycl_common::malloc_devT<InitialExtremum>(
       sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", Q);
 
     // For 7 octaves case the total memory useage for this array is 2.8MB
-    _dobuf->i_ext_off[0] = popsift::common_sycl::malloc_devT<int>(
+    _dobuf->i_ext_off[0] = popsift::sycl_common::malloc_devT<int>(
       sz, __FILE__, __LINE__, "Device extremum offset array allocation failed", Q);
 
     // All octaves in one contigous memory segment that has 100k each in default case
@@ -108,9 +108,9 @@ Pyramid::Pyramid(const Config& config,
 
     sz = h_consts.max_extrema; // setting to 100 000 in default case octave num invariant
     _dobuf->extrema =
-      popsift::common_sycl::malloc_devT<Extremum>(sz, __FILE__, __LINE__, "Device Extremum array allocation failed", Q);
+      popsift::sycl_common::malloc_devT<Extremum>(sz, __FILE__, __LINE__, "Device Extremum array allocation failed", Q);
     _dobuf->features =
-      popsift::common_sycl::malloc_devT<Feature>(sz, __FILE__, __LINE__, "Device Feature array allocation failed", Q);
+      popsift::sycl_common::malloc_devT<Feature>(sz, __FILE__, __LINE__, "Device Feature array allocation failed", Q);
     // hbuf.ext_allocated = sz; // don't know the purpose of this boy yet
     // dbuf_shadow.ext_allocated = sz; // don't know puppose of this boy yet either
 
@@ -118,7 +118,7 @@ Pyramid::Pyramid(const Config& config,
     // hbuf.desc = popsift::cuda::malloc_hstT<Descriptor>(sz, __FILE__, __LINE__);
     // dbuf_shadow.desc = popsift::cuda::malloc_devT<Descriptor>(sz, __FILE__, __LINE__);
     _dobuf->feat_to_ext_map =
-      popsift::common_sycl::malloc_devT<int>(sz, __FILE__, __LINE__, "Device feat_to_ext_map allocation failed", Q);
+      popsift::sycl_common::malloc_devT<int>(sz, __FILE__, __LINE__, "Device feat_to_ext_map allocation failed", Q);
     // hbuf.ori_allocated = sz;
     // dbuf_shadow.ori_allocated = sz;
 }

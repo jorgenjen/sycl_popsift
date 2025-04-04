@@ -58,6 +58,54 @@ namespace sycl_common {
 void print_region(
   float* ptr, const char* identifier, int start_x, int end_x, int start_y, int end_y, int width, sycl::queue Q);
 
+template<class T>
+T* malloc_devT(int num, const char* file, int line, const char* error_message, sycl::queue& Q)
+{
+    T* ptr;
+    try
+    {
+        ptr = sycl::malloc_device<T>(num, Q);
+        std::stringstream ss;
+    }
+    catch(const sycl::exception& e)
+    {
+        std::stringstream ss;
+        ss << error_message << e.what();
+        std::string error_msg = ss.str(); // seems to be required to have given message show up
+        POP_FATAL_FL(ss.str(), file, line);
+    }
+    return ptr;
+
+    // TODO: Consider adding debug option like this
+    // #ifdef DEBUG_INIT_DEVICE_ALLOCATIONS
+    //     popsift::cuda::memset_sync(*ptr, 0, sz, file, line);
+    // #endif // NDEBUG
+}
+
+template<class T>
+T* malloc_sharedT(int num, const char* file, int line, const char* error_message, sycl::queue Q)
+{
+    T* ptr;
+    try
+    {
+        ptr = sycl::malloc_shared<T>(num, Q);
+        std::stringstream ss;
+    }
+    catch(const sycl::exception& e)
+    {
+        std::stringstream ss;
+        ss << error_message << e.what();
+        std::string error_msg = ss.str(); // seems to be required to have given message show up
+        POP_FATAL_FL(ss.str(), file, line);
+    }
+    return ptr;
+
+    // TODO: Consider adding debug option like this
+    // #ifdef DEBUG_INIT_DEVICE_ALLOCATIONS
+    //     popsift::cuda::memset_sync(*ptr, 0, sz, file, line);
+    // #endif // NDEBUG
+}
+
 } // namespace sycl_common
 } // namespace popsift
 
