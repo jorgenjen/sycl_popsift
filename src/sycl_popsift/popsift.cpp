@@ -20,28 +20,38 @@ using std::endl;
 using std::max;
 using std::min;
 
-// template<class T>
-// T* malloc_devT(int num, const char* file, int line, sycl::queue Q)
-// {
-//     T* ptr;
-//     try
-//     {
-//         ptr = sycl::malloc_device<T>(num, Q);
-//     }
-//     catch(const sycl::exception& e)
-//     {
-//         std::stringstream ss;
-//         ss << "Memory allocation failed" << e.what();
-//         POP_FATAL_FL(ss.str(), file, line);
-//     }
-//     return ptr;
-// }
+inline void PopSift::initQueue()
+{
+#ifndef CPU_ONLY
+    try
+    {
+        // If there is no GPU it will throw exception and use CPU in catch
+        sycl::device dev = sycl::device{sycl::gpu_selector_v};
+        _device_queue = sycl::queue(sycl::context{dev}, dev);
+        // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
+    }
+    catch(sycl::exception const& ex)
+    {
+        cout << "No GPU found falling back to CPU... Exception thrown: " << ex.what() << endl;
+
+        sycl::device dev = sycl::device{sycl::cpu_selector_v};
+        _device_queue = sycl::queue(sycl::context{dev}, dev);
+        // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
+    }
+#else
+    fprintf(stderr, "Running in CPU_ONLY mode\n");
+    sycl::device dev = sycl::device{sycl::cpu_selector_v};
+    _device_queue = sycl::queue(sycl::context{dev}, dev);
+    // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
+#endif
+}
 
 PopSift::PopSift(const popsift::Config& config)
 {
     // should use the confige here to configure but requires that you have the
     // pyramid and all that
 
+    initQueue();
     configure(config);
 
     // Set the static memer pointers to nullptr

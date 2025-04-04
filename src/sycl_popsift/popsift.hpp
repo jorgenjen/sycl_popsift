@@ -144,6 +144,9 @@ class PopSift
 
     void extractDownloadLoop();
     void uploadImages();
+
+    inline void initQueue();
+
     // destructor
     // ~PopSift();
 
