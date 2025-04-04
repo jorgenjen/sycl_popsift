@@ -172,6 +172,11 @@ sycl::event init_filter(const Config& conf, float sigma0, int levels, sycl::queu
     h_gauss.dd.sigma[0] = b;
     h_gauss.dd.computeBlurTable(&h_gauss);
 
+    // for (int i = 0; i < 6; ++i){
+    //     fprintf(stderr, "span[%d] = %d", i, h_gauss.inc.span
+    //
+    // }
+
     // Copy h_gauss to device
 
     try

@@ -19,98 +19,37 @@ namespace absoluteSource {
 
 // SHould use this one instead of Horiz in absolute source as this one makes sense to use in both
 // situations and we dont need to divide the image initially, wasting performance.
-template<int if_required>
+template<int if_required, bool initial>
 class Horiz
 {
   private:
     float* src;
     float* dst_data;
-    const float* filter;
-    const int span;
+    // const float* filter;
+    // const int span;
     const int width;
     const int height; // not sure if height was needed here (verify)
+    popsift::GaussInfo* d_gauss;
+    const int level;
 
   public:
-    Horiz(float* src, float* dst_data, const float* filter, const int span, const int width, const int height)
+    Horiz(float* src,
+          float* dst_data,
+          // const float* filter,
+          // const int span,
+          const int width,
+          const int height,
+          popsift::GaussInfo* d_gauss,
+          int level)
       : src(src)
       , dst_data(dst_data)
-      , filter(filter)
-      , span(span)
+      // , filter(filter)
+      // , span(span)
       , width(width)
       , height(height)
-    {}
+      , d_gauss(d_gauss)
+      , level(level)
 
-    // Not sure if inlining makes this worse or better...
-    // might remove function calls but not sure exactly
-    inline void operator()(sycl::nd_item<2> it) const
-    {
-        int x = it.get_global_id(0);
-        int y = it.get_global_id(1);
-
-        // could have two different kernels one with this and one without
-        // depending on if it is perfectly divisible by 128 but might not be worth it... Test
-
-        // Using template so that we can call kernel without if if it's perfectly divisible by 128
-        // and hence would not be needed
-        switch(if_required)
-        {
-            case 1:
-                if(x >= width || y >= height)
-                {
-                    return;
-                }
-                break;
-            default: break; // do nothing
-        }
-
-        int idx;
-        float g;
-        float val;
-        float out = 0.0f;
-
-        // Look into sycl mad or fma (multiply-and-add instruction done in one clock cycle)
-        // is probably done by the compiler anyways though
-        for(int offset = span; offset > 0; offset--)
-        {
-            g = filter[offset];
-
-            idx = x - offset;
-            val = idx < 0 ? src[y * width] : src[idx + y * width];
-
-            out += (val * g);
-
-            idx = x + offset;
-            val = idx >= width ? src[width - 1 + y * width] : src[idx + y * width];
-            out += (val * g);
-        }
-
-        g = filter[0];
-        val = src[x + y * width];
-        out += (val * g);
-
-        dst_data[x + y * width] = out;
-    };
-};
-
-template<int if_required>
-class Horiz_new
-{
-  private:
-    float* src;
-    float* dst_data;
-    const float* filter;
-    const int span;
-    const int width;
-    const int height; // not sure if height was needed here (verify)
-
-  public:
-    Horiz_new(float* src, float* dst_data, const float* filter, const int span, const int width, const int height)
-      : src(src)
-      , dst_data(dst_data)
-      , filter(filter)
-      , span(span)
-      , width(width)
-      , height(height)
     {}
 
     // Not sure if inlining makes this worse or better...
@@ -121,6 +60,51 @@ class Horiz_new
         // int y = it.get_global_id(1);
         int x = it.get_global_id(1);
         int y = it.get_global_id(0);
+
+        // When level is 0 it's zero otherwise gauss align does it's thing
+        // float* filter_new = &(d_gauss->dd.filter[0]) + (level * GAUSS_ALIGN);
+
+        const float* filter;
+        int span;
+        if(initial)
+        {
+            // is always from source image and level 0 // called once
+
+            // Look into packing the struct differntly to avoid splitting but this might be the best way(idk)
+            filter = &d_gauss->dd.filter[0];
+            span = d_gauss->dd.span[0];
+        }
+        else
+        {
+            filter = &d_gauss->inc.filter[level * GAUSS_ALIGN];
+            span = d_gauss->inc.span[level];
+        }
+
+        // if(x == 0 && y == 0)
+        // {
+        //     sycl::ext::oneapi::experimental::printf("\n\n\t\tfilter_new[0] = %p --> filter_new = %p -- filter = %p --
+        //     "
+        //                                             "--  level = %d, GAUSS_ALIGN = %d",
+        //                                             &d_gauss->dd.filter[0],
+        //                                             filter_new,
+        //                                             filter,
+        //                                             level,
+        //                                             GAUSS_ALIGN);
+        //
+        //     // sycl::ext::oneapi::experimental::printf("\n\n\t\tfilter_new[0] = %p --> filter_new = %p -- filter = %p
+        //     --
+        //     // "
+        //     //                                         "-- span_new = %d -- span = %d -- level = %d, GAUSS_ALIGN = %
+        //     d
+        //     //                                         ",
+        //     //                                         &d_gauss->dd.filter[0],
+        //     //                                         filter_new,
+        //     //                                         filter,
+        //     //                                         span_new,
+        //     //                                         span,
+        //     //                                         level,
+        //     //                                         GAUSS_ALIGN);
+        // }
 
         // could have two different kernels one with this and one without
         // depending on if it is perfectly divisible by 128 but might not be worth it... Test
@@ -340,14 +324,14 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
           dependencies,
-          absoluteSource::Horiz_new<0>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+          absoluteSource::Horiz<0, true>(base->getInput(), oct_obj.getIntermediate(), width, height, _d_gauss, 0));
     }
     else
     {
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
           dependencies,
-          absoluteSource::Horiz_new<1>(base->getInput(), oct_obj.getIntermediate(), filter, span, width, height));
+          absoluteSource::Horiz<1, true>(base->getInput(), oct_obj.getIntermediate(), width, height, _d_gauss, 0));
     }
 }
 
@@ -386,7 +370,7 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(prev_level_write);
         cgh.parallel_for(sycl::nd_range{global, local},
-                         absoluteSource::Horiz_new<1>(prev_level, cur_intm, filter, span, width, height));
+                         absoluteSource::Horiz<1, false>(prev_level, cur_intm, width, height, _d_gauss, level));
     });
 
     // fprintf(stderr, "\nAFTER BEFORE WAIT!!!\n");
