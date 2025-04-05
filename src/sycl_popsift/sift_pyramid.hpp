@@ -85,8 +85,9 @@ class Pyramid
     ExtremaCounters _hct;  // host
     ExtremaCounters* _dct; // device
 
-    DevBuffers* _dobuf;        // device
-    DevBuffers* _dobuf_shadow; // device
+    DevBuffers* _dobuf;       // device
+    DevBuffers _dobuf_host{}; // needed for memory management
+    sycl::event _dobuf_write;
 
     /* the download of converted descriptors should be asynchronous */
     // cudaStream_t _download_stream;

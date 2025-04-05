@@ -85,19 +85,16 @@ Pyramid::Pyramid(const Config& config,
     _dobuf = popsift::sycl_common::malloc_devT<DevBuffers>(
       1, __FILE__, __LINE__, "Allocating device DevBuffers struct failed", Q);
 
-    DevBuffers dobuf_host{}; // Just used to store device malloc before copying the struct over to device (_dobuf) where
-                             // it will be used
-
     // For 7 octaves case the total memory useage for this array is 196MB
     // _dobuf->i_ext_dat[0] = popsift::sycl_common::malloc_devT<InitialExtremum>(
     //   sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", Q);
-    dobuf_host.i_ext_dat[0] = popsift::sycl_common::malloc_devT<InitialExtremum>(
+    _dobuf_host.i_ext_dat[0] = popsift::sycl_common::malloc_devT<InitialExtremum>(
       sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", Q);
 
     // For 7 octaves case the total memory useage for this array is 2.8MB
     // _dobuf->i_ext_off[0] = popsift::sycl_common::malloc_devT<int>(
     // sz, __FILE__, __LINE__, "Device extremum offset array allocation failed", Q);
-    dobuf_host.i_ext_off[0] = popsift::sycl_common::malloc_devT<int>(
+    _dobuf_host.i_ext_off[0] = popsift::sycl_common::malloc_devT<int>(
       sz, __FILE__, __LINE__, "Device extremum offset array allocation failed", Q);
 
     // All octaves in one contigous memory segment that has 100k each in default case
@@ -106,16 +103,16 @@ Pyramid::Pyramid(const Config& config,
     {
         // _dobuf->i_ext_dat[o] = _dobuf->i_ext_dat[0] + (o * h_consts.max_extrema);
         // _dobuf->i_ext_off[o] = _dobuf->i_ext_off[0] + (o * h_consts.max_extrema);
-        dobuf_host.i_ext_dat[o] = dobuf_host.i_ext_dat[0] + (o * h_consts.max_extrema);
-        dobuf_host.i_ext_off[o] = dobuf_host.i_ext_off[0] + (o * h_consts.max_extrema);
+        _dobuf_host.i_ext_dat[o] = _dobuf_host.i_ext_dat[0] + (o * h_consts.max_extrema);
+        _dobuf_host.i_ext_off[o] = _dobuf_host.i_ext_off[0] + (o * h_consts.max_extrema);
     }
     // set remaining to nullptr
     for(int o = _num_octaves; o < MAX_OCTAVES; o++)
     {
         // _dobuf->i_ext_dat[o] = nullptr;
         // _dobuf->i_ext_off[o] = nullptr;
-        dobuf_host.i_ext_dat[o] = nullptr;
-        dobuf_host.i_ext_off[o] = nullptr;
+        _dobuf_host.i_ext_dat[o] = nullptr;
+        _dobuf_host.i_ext_off[o] = nullptr;
     }
 
     sz = h_consts.max_extrema; // setting to 100 000 in default case octave num invariant
@@ -125,9 +122,9 @@ Pyramid::Pyramid(const Config& config,
     // _dobuf->features =
     //   popsift::sycl_common::malloc_devT<Feature>(sz, __FILE__, __LINE__, "Device Feature array allocation failed",
     //   Q);
-    dobuf_host.extrema =
+    _dobuf_host.extrema =
       popsift::sycl_common::malloc_devT<Extremum>(sz, __FILE__, __LINE__, "Device Extremum array allocation failed", Q);
-    dobuf_host.features =
+    _dobuf_host.features =
       popsift::sycl_common::malloc_devT<Feature>(sz, __FILE__, __LINE__, "Device Feature array allocation failed", Q);
 
     // hbuf.ext_allocated = sz; // don't know the purpose of this boy yet
@@ -136,13 +133,10 @@ Pyramid::Pyramid(const Config& config,
     sz = std::max(2 * h_consts.max_extrema, h_consts.max_orientations);
     // hbuf.desc = popsift::cuda::malloc_hstT<Descriptor>(sz, __FILE__, __LINE__);
     // dbuf_shadow.desc = popsift::cuda::malloc_devT<Descriptor>(sz, __FILE__, __LINE__);
-    dobuf_host.feat_to_ext_map =
+    _dobuf_host.feat_to_ext_map =
       popsift::sycl_common::malloc_devT<int>(sz, __FILE__, __LINE__, "Device feat_to_ext_map allocation failed", Q);
 
-    // Need to wait due to using local variable dobuf_host which will go out of scope right after this line
-    // Can make this async by keeping dobuf_host as a class attribute but then it will be stored for the duration of the
-    // program (but probs faster to store as attribute)
-    Q.memcpy(_dobuf, &dobuf_host, sizeof(DevBuffers)).wait();
+    _dobuf_write = Q.memcpy(_dobuf, &_dobuf_host, sizeof(DevBuffers));
 
     // hbuf.ori_allocated = sz;
     // dbuf_shadow.ori_allocated = sz;
@@ -155,12 +149,12 @@ Pyramid::~Pyramid()
     sycl::free(_d_extrema_num_blocks, _device_queue);
     sycl::free(_dct, _device_queue);
 
-    sycl::free(_dobuf->i_ext_dat[0], _device_queue);
-    sycl::free(_dobuf->i_ext_off[0], _device_queue);
-    sycl::free(_dobuf->features, _device_queue);
-    sycl::free(_dobuf->extrema, _device_queue);
-    sycl::free(_dobuf->feat_to_ext_map, _device_queue);
-    sycl::free(_dobuf, _device_queue);
+    sycl::free(_dobuf_host.i_ext_dat[0], _device_queue);
+    sycl::free(_dobuf_host.i_ext_off[0], _device_queue);
+    sycl::free(_dobuf_host.features, _device_queue);
+    sycl::free(_dobuf_host.extrema, _device_queue);
+    sycl::free(_dobuf_host.feat_to_ext_map, _device_queue);
+    // sycl::free(_dobuf_host, _device_queue); // No need as it's a struct not malloced
 }
 
 std::vector<sycl::event> Pyramid::step1(const Config& conf,

@@ -837,7 +837,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
             default:
                 printf("RefineInOctave type popsift default\n");
                 oct_obj._extrema_done_event = _device_queue.submit([&](sycl::handler& cgh) {
-                    cgh.depends_on({dependencies[octave], d_consts_write});
+                    cgh.depends_on({dependencies[octave], d_consts_write, _dobuf_write});
                     cgh.parallel_for(sycl::nd_range{global, local},
                                      find_extrema_in_dog<HEIGHT, Config::RefineInOctave>(oct_obj.getDogArray(),
                                                                                          octave,
