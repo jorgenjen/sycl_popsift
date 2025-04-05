@@ -753,7 +753,11 @@ class find_extrema_in_dog
                   .fetch_min(max_extrema);
 
                 sycl::ext::oneapi::experimental::printf(
-                  "\n\t Octave: %d extrema_count = %d\n", octave, dct->ext_ct[octave]);
+                  "\n\t Octave: %d extrema_count = %d --> ct = %d && number_of_blocks - 1 = %d  \n",
+                  octave,
+                  dct->ext_ct[octave],
+                  ct,
+                  number_of_blocks - 1);
             }
         }
     }

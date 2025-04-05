@@ -2,6 +2,7 @@
 
 #include "sycl/usm.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
+#include "sycl_popsift/malloc_devt.hpp"
 
 #include <sstream>
 
@@ -15,54 +16,52 @@ Octave::Octave(sycl::queue& Q)
 
 void Octave::alloc_arrays()
 {
-    try
+    // Could use shared for these ones aswell probs same end result and cleaner code
+
+    _data_array_host =
+      popsift::common::new_hostT<float*>(_levels, __FILE__, __LINE__, "Host allocation for data array failed");
+    _dog_array_host =
+      popsift::common::new_hostT<float*>(_levels - 1, __FILE__, __LINE__, "Host allocation for DoG array failed");
+
+    _data_array = popsift::common_sycl::malloc_devT<float*>(
+      _levels, __FILE__, __LINE__, "Device allocation for data array failed", _device_queue);
+
+    _dog_array = popsift::common_sycl::malloc_devT<float*>(
+      _levels - 1, __FILE__, __LINE__, "Device allocation for DoG array failed", _device_queue);
+
+    _intermediate = popsift::common_sycl::malloc_devT<float>(
+      _w * _h, __FILE__, __LINE__, "Intermediate allocation for octave failed", _device_queue);
+
+    // Allocate all in one chunck (might be better to have it in multiple to have less chance of it failing but this is
+    // propbs faster (might be insignificant))
+
+    // std::stringstream data_msg; // could use std::forat if c++20
+    // data_msg << "Could not allocate all data levels as one segment of of size " << (_w * _h * _levels) / 1000 <<
+    // "kB";
+
+    _data_array_host[0] = popsift::common_sycl::malloc_devT<float>(
+      _w * _h * _levels, __FILE__, __LINE__, "Could not allocate all data levels as one segment", _device_queue);
+
+    // std::stringstream dog_msg; // could use std::forat if c++20
+    // dog_msg << "Could not allocate DoG levels as one segment of of size " << (_w * _h * (_levels - 1)) / 1000 <<
+    // "kB";
+
+    _dog_array_host[0] = popsift::common_sycl::malloc_devT<float>(
+      _w * _h * (_levels - 1), __FILE__, __LINE__, "Could not allocate DoG levels as one segment", _device_queue);
+
+    // Set the pointer positions for indexing
+    for(int i = 1; i < _levels - 1; ++i)
     {
-        // _intm_array = sycl::malloc_device<float*>(_levels, _device_queue);
-        _data_array = sycl::malloc_device<float*>(_levels, _device_queue);
-        _dog_array = sycl::malloc_device<float*>(_levels - 1, _device_queue);
-        _intermediate = sycl::malloc_device<float>(_w * _h, _device_queue);
-        // if(!_intm_array || !_data_array)
-        if(!_data_array || !_intermediate) // should be caught by catch
-        {
-            POP_FATAL("Octave memory allocation failed");
-        }
-    }
-    catch(const sycl::exception& e)
-    {
-        std::stringstream ss;
-        ss << "Octave memory allocation failed" << e.what();
-        POP_FATAL(ss.str());
-        // std::cerr << "Memory allocation failed: " << e.what() << std::endl;
+        _data_array_host[i] = _data_array_host[0] + (i * _w * _h);
+        _dog_array_host[i] = _dog_array_host[0] + (i * _w * _h);
     }
 
-    try
-    {
-        // Allocate the _levels in the octave
-        for(int i = 0; i < _levels - 1; ++i)
-        {
-            _data_array[i] = sycl::malloc_device<float>(_w * _h, _device_queue);
-            _dog_array[i] = sycl::malloc_device<float>(_w * _h, _device_queue);
+    // Data has one more than dog hence out of loop
+    _data_array_host[_levels - 1] = _data_array_host[0] + ((_levels - 1) * _w * _h);
 
-            if(!_data_array[i] || !_dog_array[i])
-            {
-                POP_FATAL("Octave memory allocation failed");
-            }
-        }
-
-        // Data has one more than dog hence out of loop
-        _data_array[_levels - 1] = sycl::malloc_device<float>(_w * _h, _device_queue);
-        if(!_data_array[_levels - 1])
-        {
-            POP_FATAL("Octave memory allocation failed");
-        }
-    }
-    catch(const sycl::exception& e)
-    {
-        std::stringstream ss;
-        ss << "Octave memory allocation failed" << e.what();
-        POP_FATAL(ss.str());
-        // std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-    }
+    // Copy host arrays to device
+    _data_array_write = _device_queue.memcpy(_data_array, _data_array_host, _levels * sizeof(float*));
+    _dog_array_write = _device_queue.memcpy(_dog_array, _dog_array_host, (_levels - 1) * sizeof(float*));
 }
 
 // Assumes _levels can't change affter malloc have been done
@@ -84,15 +83,21 @@ void Octave::free_arrays()
         fprintf(stderr, "\nINTERMEDIATE array is NULL at octave=%d\n", _debug_octave_id);
     }
 
-    for(int i = 0; i < _levels - 1; ++i)
-    {
-        sycl::free(_data_array[i], _device_queue);
-        sycl::free(_dog_array[i], _device_queue);
-    }
-    sycl::free(_data_array[_levels - 1], _device_queue); // has one more than DoG's
+    // for(int i = 0; i < _levels - 1; ++i)
+    // {
+    //     sycl::free(_data_array[i], _device_queue);
+    //     sycl::free(_dog_array[i], _device_queue);
+    // }
+    // sycl::free(_data_array[_levels - 1], _device_queue); // has one more than DoG's
 
+    sycl::free(_data_array_host[0], _device_queue); // one large segment holding all levels
     sycl::free(_data_array, _device_queue);
+    delete[] _data_array_host;
+
+    sycl::free(_dog_array_host[0], _device_queue); // one large segment holding all levels
     sycl::free(_dog_array, _device_queue);
+    delete[] _dog_array_host;
+
     sycl::free(_intermediate, _device_queue);
 }
 

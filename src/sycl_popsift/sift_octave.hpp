@@ -46,8 +46,10 @@ class Octave
 
     float* _intermediate; // should not need an array
 
-    float** _data_array; // Gaussians stored _levels
-    float** _dog_array;  // DoG stored _levels - 1
+    float** _data_array;      // Gaussians stored _levels
+    float** _data_array_host; // Just for memory management
+    float** _dog_array;       // DoG stored _levels - 1
+    float** _dog_array_host;  // Just for memory maangemrnt
 
     // cudaArray_t _data{};
     // cudaChannelFormatDesc _data_desc{};
@@ -77,6 +79,9 @@ class Octave
     // cudaEvent_t _ori_done{};
     // cudaEvent_t _desc_done{};
 
+    sycl::event _data_array_write;
+    sycl::event _dog_array_write;
+
   public:
     std::vector<sycl::event> _level_complete_events;
     sycl::event _extrema_done_event;
@@ -103,7 +108,12 @@ class Octave
     inline float* getIntermediate() const { return _intermediate; }
     // inline float** getIntermediateArray() const { return _intm_array; }
     inline float** getDataArray() const { return _data_array; }
+    inline float** getDataArrayHost() const { return _data_array_host; }
+    inline sycl::event getDataArrayWriteEvent() const { return _data_array_write; }
+
     inline float** getDogArray() const { return _dog_array; }
+    inline float** getDogArrayHost() const { return _dog_array_host; }
+    inline sycl::event getDogArrayWriteEvent() const { return _dog_array_write; }
 
     // inline cudaStream_t getStream( ) {
     //     return _stream;

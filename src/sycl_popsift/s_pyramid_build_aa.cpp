@@ -231,8 +231,8 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
 
     // Should be fine to do arithmetic on getDaraArray as it's only first level of a pointer hence no dereferences
     // needed and we can still use device memory and not shared
-    float* prev_level = oct_obj.getDataArray()[level - 1]; // src
-    float* cur_intm = oct_obj.getIntermediate();           // dst_data
+    float* prev_level = oct_obj.getDataArrayHost()[level - 1]; // src
+    float* cur_intm = oct_obj.getIntermediate();               // dst_data
 
     return _device_queue.parallel_for(
       sycl::nd_range{global, local},
@@ -251,7 +251,7 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     sycl::range global{(size_t)grid_divide(height, local[0]), (size_t)grid_divide(width, local[1])};
 
     float* intermediate = oct_obj.getIntermediate();
-    float* dst_data = oct_obj.getDataArray()[level]; // should be fine just pointer arithmetic
+    float* dst_data = oct_obj.getDataArrayHost()[level]; // Uses host array to get device pointer
 
     // TODO: Consider adding template argument like in Horiz and either have one for all, w, h and nothing but might be
     // excessive need to test (and figure out if the templates works as I hope making separeate kernels or somother

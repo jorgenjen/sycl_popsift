@@ -65,7 +65,7 @@ T* malloc_devT(int num, const char* file, int line, const char* error_message, s
     try
     {
         ptr = sycl::malloc_device<T>(num, Q);
-        std::stringstream ss;
+        std::stringstream ss; // why here?
     }
     catch(const sycl::exception& e)
     {
@@ -107,6 +107,28 @@ T* malloc_sharedT(int num, const char* file, int line, const char* error_message
 }
 
 } // namespace sycl_common
+
+namespace common {
+
+// Could also use sycl::malloc_host but that is also accsesible on device so might be overhead
+template<class T>
+T* new_hostT(int num, const char* file, int line, const char* error_message)
+{
+    try
+    {
+        // Only returns if new is success full
+        return new T[num];
+    }
+    catch(const std::bad_alloc& e)
+    {
+        std::stringstream ss;
+        ss << error_message << e.what();
+        std::string error_msg = ss.str(); // seems to be required to have given message show up
+        POP_FATAL_FL(ss.str(), file, line);
+    }
+}
+
+} // namespace common
 } // namespace popsift
 
 // Cannot include sycl.hpp here and hence can't find sycl::queu so can't have the function here IDK why that is so it is

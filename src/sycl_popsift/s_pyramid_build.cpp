@@ -5,6 +5,7 @@
 #include "sycl_popsift/sift_octave.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 
+#include <cstdio>
 #include <vector>
 
 /* It makes no sense whatsoever to change this value */
@@ -34,8 +35,8 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event p
     const int src_width = prev_oct_obj.getWidth();
     const int src_height = prev_oct_obj.getHeight();
 
-    float* src_data = prev_oct_obj.getDataArray()[_levels - PREV_LEVEL];
-    float* dst_data = oct_obj.getDataArray()[0]; // Level 0 is the subsampled result
+    float* src_data = prev_oct_obj.getDataArrayHost()[_levels - PREV_LEVEL];
+    float* dst_data = oct_obj.getDataArrayHost()[0];
 
     // sycl::range local{64, 2};
     // sycl::range global{(size_t)grid_divide(dst_width, local.get(0)), (size_t)grid_divide(dst_height, local.get(1))};
@@ -87,12 +88,22 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
     sycl::range local{1, 1024};
     sycl::range global{(size_t)grid_divide(height, local[0]), (size_t)grid_divide(width, local[1])};
 
+    // _device_queue.wait();
+
     float** data_array = oct_obj.getDataArray();
     float** dog_array = oct_obj.getDogArray();
-    // another way to call lambda IDK what is better
+
+    // fprintf(stderr,
+    //         "\n\n\tAfter array methods have been called now before kernle launch  --> DoG_array ptr = %p -- Data
+    //         array " "ptr = %p \n\n", dog_array, data_array);
+    //
+    // sycl::event e = _device_queue.single_task(
+    //   [=]() { sycl::ext::oneapi::experimental::printf("\n\n\t\t\tPrint val in DoG array %f\n", dog_array[0][0]); });
 
     return _device_queue.parallel_for<make_dog>(
-      sycl::nd_range{global, local}, {octave_complete}, [=](sycl::nd_item<2> it) {
+      sycl::nd_range{global, local},
+      {octave_complete, oct_obj.getDataArrayWriteEvent(), oct_obj.getDogArrayWriteEvent()},
+      [=](sycl::nd_item<2> it) {
           // int x = it.get_global_id(0);
           // int y = it.get_global_id(1);
           int x = it.get_global_id(1);
@@ -109,6 +120,8 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
               a = b;
           }
       });
+
+    // return e;
 
     // dim3 block(1024, 1);
     // dim3 grid;
@@ -223,7 +236,11 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
                 if(octave == 0)
                 {
                     sycl::event horiz = horiz_from_input_image(conf, base_img, {d_gauss_write, img_transfer});
+                    // horiz.wait();
+                    // fprintf(stderr, "past horiz so problems occur in vert??\n\n");
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                    // oct_obj._level_complete_events[0].wait();
+                    // fprintf(stderr, "past horiz so problems occur in vert??\n\n");
 
                     // horiz.wait();
                     // popsift::sycl_common::print_region(oct_obj.getIntermediate(),
@@ -254,62 +271,56 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
                     oct_obj._level_complete_events[0] =
                       downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
 
-                    oct_obj._level_complete_events[0].wait();
+                    // oct_obj._level_complete_events[0].wait();
                     // fprintf(stderr, "AFTER downscale to Octave %d", octave);
                 }
             }
             else
             {
+                // fprintf(stderr, "Before horiz on octave %d at level %d\n", octave, level);
                 sycl::event horiz =
                   horiz_from_prev_level(octave, level, gaussTableChoice, oct_obj._level_complete_events[level - 1]);
 
+                // horiz.wait();
+
+                // fprintf(stderr, "AFTER WAIT ON horiz level %d at octave %d\n", level, octave);
                 // Hope horiz is fine to use even though it goes out of scope after the line but should have been
                 // copied by then I think eventough vert_from_interm takes it as reference...
                 // fprintf(stderr, "RIGHT BEFORE FAILURE level=%d -- octave=%d ", level, octave);
                 oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
-                oct_obj._level_complete_events[level].wait();
-                // fprintf(stderr, "AFTER WAIT ON EVENT level 1-5");
+                // oct_obj._level_complete_events[level].wait();
+                // fprintf(stderr, "AFTER WAIT ON EVENT level %d\n", level);
             }
         }
     }
+    // _octaves[_num_octaves - 1]._level_complete_events[_levels - 1].wait();
+    _device_queue.wait();
+    fprintf(stderr, "\n\tFinal octave is done so pyramid is done!!\n\n");
 
     std::vector<sycl::event> make_dog_events;
     make_dog_events.reserve(_num_octaves);
-    for(int octave = 0; octave < _num_octaves; octave++)
+    for(int octave = 0; octave < _num_octaves; octave++) //
     {
         Octave& oct_obj = _octaves[octave];
 
         // Final level must be complete before we can do dogs (aka all levels as final depends on all before it)
         make_dog_events.push_back(dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]));
+        // make_dog_events[octave].wait();
+        // fprintf(stderr, "Done octave %d\n", octave);
     }
+    _device_queue.wait();
 
-    // _device_queue.wait(); // remove in future when you pass events from dog_from_blurred
+#define me_oct 4
+#define me_lvl 5
 
-    // #define INSPTECT_LEVEL 0
-    //     float* dog_lvl = _octaves[INSPTECT_LEVEL].getDogArray()[0];
-    //     int width = _octaves[INSPTECT_LEVEL].getWidth();
-    //     int height = _octaves[INSPTECT_LEVEL].getHeight();
-    //     _device_queue.single_task(make_dog_events, [=]() {
-    //         sycl::ext::oneapi::experimental::printf(
-    //           "\n\nMe DoG's in range: y(%d -> %d) x(%d -> %d) for lvl = %d\n", height - 8, height, width - 8, width),
-    //           INSPTECT_LEVEL;
-    //         for(int y = height - 8; y < height; ++y)
-    //         {
-    //             for(int x = width - 8; x < width; ++x)
-    //             {
-    //                 sycl::ext::oneapi::experimental::printf("%010.6f ", dog_lvl[x + y * (width)]);
-    //             }
-    //             sycl::ext::oneapi::experimental::printf("\n");
-    //         }
-    //         sycl::ext::oneapi::experimental::printf("\n\n");
-    //     });
+    Octave& oct = _octaves[me_oct];
+    int w = oct.getWidth();
+    int h = oct.getHeight();
+
+    popsift::sycl_common::print_region(
+      oct.getDataArrayHost()[me_lvl], "Me doggy dog dog  new -> ", w - 8, w, h - 8, h, w, _device_queue);
 
     return make_dog_events;
-    // for (int octave = 0; octave < _num_octaves; octave++) {
-    //     Octave &oct_obj = _octaves[octave];
-    //     cudaStream_t stream = oct_obj.getStream();
-    //     cudaStreamSynchronize(stream);
-    // }
 }
 
 } // namespace popsift
