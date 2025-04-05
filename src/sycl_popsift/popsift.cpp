@@ -73,6 +73,8 @@ PopSift::PopSift(const popsift::Config& config)
     _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
     _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
 
+    std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
+
     // NOTE: Currently not supporting extraction and config like that
     // _pipe._thread_stage1.reset( new std::thread( &PopSift::uploadImages, this
     // )); if( mode == popsift::Config::ExtractingMode )
@@ -420,11 +422,14 @@ void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFac
     int scaled_h = _h;
     get_scale_factor(&scaled_w, &scaled_h, upscaleFactor);
     img->resetDimensions(_w, _h, scaled_w, scaled_h);
+
+    sycl::event src_img_transfer = img->copy_src_dev(_imageData);
+
     // img->load(_imageData);
     // img->load_divide(_imageData);
     // img->load_divide_point(_imageData, scaled_w);
     // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
-    _img_transfer_event = img->load_linear(_imageData, scaled_w);
+    _img_transfer_event = img->load_linear(scaled_w, src_img_transfer);
     _img = img;
 }
 

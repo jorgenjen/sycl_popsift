@@ -93,19 +93,34 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
     float** data_array = oct_obj.getDataArray();
     float** dog_array = oct_obj.getDogArray();
 
-    // fprintf(stderr,
-    //         "\n\n\tAfter array methods have been called now before kernle launch  --> DoG_array ptr = %p -- Data
-    //         array " "ptr = %p \n\n", dog_array, data_array);
-    //
-    // sycl::event e = _device_queue.single_task(
-    //   [=]() { sycl::ext::oneapi::experimental::printf("\n\n\t\t\tPrint val in DoG array %f\n", dog_array[0][0]); });
+#define reverse 1
+#if reverse
 
     return _device_queue.parallel_for<make_dog>(
       sycl::nd_range{global, local},
       {octave_complete, oct_obj.getDataArrayWriteEvent(), oct_obj.getDogArrayWriteEvent()},
       [=](sycl::nd_item<2> it) {
-          // int x = it.get_global_id(0);
-          // int y = it.get_global_id(1);
+          int x = it.get_global_id(1);
+          int y = it.get_global_id(0);
+          if(x > width)
+              return;
+
+          // Reverse for potentially more cache hits for first access
+          float upper = data_array[max_level - 1][x + y * width];
+          for(int level = max_level - 2; level >= 0; --level)
+          {
+              const float lower = data_array[level][x + y * width];
+
+              dog_array[level][x + y * width] = upper - lower;
+              upper = lower;
+          }
+      });
+#else
+
+    return _device_queue.parallel_for<make_dog>(
+      sycl::nd_range{global, local},
+      {octave_complete, oct_obj.getDataArrayWriteEvent(), oct_obj.getDogArrayWriteEvent()},
+      [=](sycl::nd_item<2> it) {
           int x = it.get_global_id(1);
           int y = it.get_global_id(0);
           if(x > width)
@@ -120,35 +135,7 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
               a = b;
           }
       });
-
-    // return e;
-
-    // dim3 block(1024, 1);
-    // dim3 grid;
-    // grid.x = grid_divide(width, block.x);
-    // grid.y = grid_divide(height, block.y);
-    // grid.z = 1;
-    //
-    // gauss::make_dog<<<grid, block, 0, stream>>>(
-    //   oct_obj.getDataTexPoint(), oct_obj.getDogSurface(), oct_obj.getWidth(), oct_obj.getHeight(), max_level);
-
-    //     __global__ void make_dog(
-    //   cudaTextureObject_t src_data, cudaSurfaceObject_t dog_data, const int w, const int h, const int max_level)
-    // {
-    //     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    //     const int idy = blockIdx.y * blockDim.y + threadIdx.y;
-    //
-    //     float a = readTex(src_data, idx, idy, 0);
-    //     for(int level = 0; level < max_level - 1; level++)
-    //     {
-    //         const float b = readTex(src_data, idx, idy, level + 1);
-    //
-    //         surf2DLayeredwrite(b - a, dog_data, idx * 4, idy, level, cudaBoundaryModeZero);
-    //         a = b;
-    //     }
-    // }
-
-    // POP_SYNC_CHK;
+#endif
 }
 
 inline sycl::event Pyramid::horiz_from_prev_level(int octave,

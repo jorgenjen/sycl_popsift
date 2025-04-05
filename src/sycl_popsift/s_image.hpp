@@ -10,21 +10,24 @@ struct Image
 {
     Image() = delete;
 
-    Image(sycl::queue& q);
+    Image(sycl::queue& Q);
 
     /** Create a device-sided buffer of the given dimensions */
-    Image(int w, int h, sycl::queue& q);
+    Image(int w, int h, sycl::queue& Q);
 
     ~Image();
 
     // void resetDimensions(int w, int h);
     void resetDimensions(int w, int h, int init_w, int init_h);
 
+    sycl::event copy_src_dev(unsigned char* input) { return _device_queue.memcpy(_device_src_img, input, _w * _h); }
+
     sycl::event load(void* input);
     sycl::event load_divide(unsigned char* input);
     sycl::event load_divide_point(unsigned char* input, const int& scaled_w);
     sycl::event load_divide_linear(unsigned char* input, const int& scaled_w);
-    sycl::event load_linear(unsigned char* input, const int& scaled_w);
+    sycl::event load_linear(const int& scaled_w, sycl::event src_img_transfer);
+    // TODO: Should only be load_linear and load_point
 
     inline int getWidth() const { return _w; }
     inline int getHeight() const { return _h; }
@@ -50,5 +53,6 @@ struct Image
     // it can make it more performant
     // unsigned char* _device_img;
     float* _device_img;
+    unsigned char* _device_src_img;
 };
 } // namespace popsift

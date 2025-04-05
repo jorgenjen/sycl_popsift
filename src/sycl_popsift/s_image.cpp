@@ -1,33 +1,36 @@
 #include "s_image.hpp"
 
+#include "common/debug_macros.hpp"
+#include "sycl_popsift/malloc_devt.hpp"
+
 #include <sycl/sycl.hpp>
 
 #include <iostream>
 
 namespace popsift {
 
-Image::Image(sycl::queue& q)
+Image::Image(sycl::queue& Q)
   : _w(0)
   , _h(0)
   , _max_w(0)
   , _max_h(0)
-  , _device_queue(q)
+  , _device_queue(Q)
 {}
 
-Image::Image(int w, int h, sycl::queue& q)
+Image::Image(int w, int h, sycl::queue& Q)
   : _w(w)
   , _h(h)
   , _max_w(w)
   , _max_h(h)
-  , _device_queue(q)
+  , _device_queue(Q)
 {
-    // allocate( w, h );
-    // need to allocate malloc_device
-    // _device_img = sycl::malloc_device<unsigned char>(w * h, q);
-    _device_img = sycl::malloc_device<float>(w * h, q);
-    if(_device_img == nullptr)
-        std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
-                  << std::endl;
+    // Not sure if using w and h is correct need to refactor the whole scaling thing as it is kinda confusing
+    // Should probably just use the scaled size and nothing else when using USM
+    _device_src_img = popsift::common_sycl::malloc_devT<unsigned char>(
+      w * h, __FILE__, __LINE__, "Could not allocate memory for image on device", Q);
+
+    _device_img = popsift::common_sycl::malloc_devT<float>(
+      w * h, __FILE__, __LINE__, "Could not allocate memory for float representation of image on device", Q);
 }
 
 Image::~Image()
@@ -36,6 +39,7 @@ Image::~Image()
         return;
 
     sycl::free(_device_img, _device_queue);
+    sycl::free(_device_src_img, _device_queue);
     // destroyTexture( );
     // _input_image_d.freeDev( );
     // _input_image_h.freeHost( popsift::CudaAllocated );
@@ -49,11 +53,17 @@ void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
         // First time instantiating
         _max_w = _w = w;
         _max_h = _h = h;
-        // allocate( w, h );
-        _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _device_queue);
-        if(_device_img == nullptr)
-            std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
-                      << std::endl;
+
+        _device_src_img = popsift::common_sycl::malloc_devT<unsigned char>(
+          scaled_w * scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
+
+        _device_img = popsift::common_sycl::malloc_devT<float>(
+          scaled_w * scaled_h,
+          __FILE__,
+          __LINE__,
+          "Could not allocate memory for float representation of image on device",
+          _device_queue);
+
         return;
     }
 
@@ -70,20 +80,28 @@ void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
         return;
     }
 
-    // larger than current segment hence need to free and remalloc
+    // larger than current segment hence need to free and re-malloc
 
-    // TODO: See if sycl has realloc -- could not find it
     sycl::free(_device_img, _device_queue);
+    sycl::free(_device_src_img, _device_queue);
 
     _max_w = _w = w;
     _max_h = _h = h;
-    _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _device_queue);
-    if(_device_img == nullptr)
-        std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
-                  << std::endl;
+
+    _device_src_img = popsift::common_sycl::malloc_devT<unsigned char>(
+      scaled_w * scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
+
+    _device_img =
+      popsift::common_sycl::malloc_devT<float>(scaled_w * scaled_h,
+                                               __FILE__,
+                                               __LINE__,
+                                               "Could not allocate memory for float representation of image on device",
+                                               _device_queue);
 }
 
-sycl::event Image::load(void* input) { return _device_queue.memcpy(_device_img, input, _w * _h); }
+// This is wrong can't transfer a char image into a float pointer it would make store 4 pixels into one causing the
+// result to be very wrong
+// sycl::event Image::load(void* input) { return _device_queue.memcpy(_device_img, input, _w * _h); }
 
 // directly making it normalized
 sycl::event Image::load_divide(unsigned char* input)
@@ -92,8 +110,8 @@ sycl::event Image::load_divide(unsigned char* input)
         auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
         std::cout << "widht and height in load_divide" << _w << " - " << _h << std::endl;
         cgh.parallel_for(sycl::range<1>(_w * _h), [=](sycl::id<1> idx) {
-            // To simulate normalized reads in PopSift -- think I would rather change the kernel in the future to avoid
-            // this as I think that should be equivalent
+            // To simulate normalized reads in PopSift -- think I would rather change the kernel in the future to
+            // avoid this as I think that should be equivalent
             img[idx] = static_cast<float>(input[idx]) / 255.0f;
             // img[idx] = static_cast<float>(input[idx]);
         });
@@ -168,10 +186,48 @@ sycl::event Image::load_divide_linear(unsigned char* input, const int& scaled_w)
     });
 }
 
-sycl::event Image::load_linear(unsigned char* input, const int& scaled_w)
+// sycl::event Image::load_linear(unsigned char* input, const int& scaled_w)
+// {
+//     return _device_queue.submit([&](sycl::handler& cgh) {
+//         auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
+//         auto width = _w;
+//         auto height = _h;
+//         int step = scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
+//         cgh.parallel_for(sycl::range<2>(width, height), [=](sycl::id<2> idx) {
+//             auto in_pos = idx[0] + idx[1] * width;
+//
+//             auto in_pos_right = idx[0] == width - 1 ? in_pos : in_pos + 1;
+//             auto in_pos_down = idx[1] == height - 1 ? in_pos : in_pos + width;
+//             auto in_pos_down_right = (idx[0] == width - 1 && idx[1] == height - 1) ? in_pos
+//                                      : idx[0] == width - 1                         ? in_pos + width
+//                                      : idx[1] == height - 1                        ? in_pos + 1
+//                                                                                    : in_pos + width + 1; // default
+//                                                                                    case
+//
+//             float pixel = static_cast<float>(input[in_pos]);
+//             float pixel_right = static_cast<float>(input[in_pos_right]);
+//             float pixel_down = static_cast<float>(input[in_pos_down]);
+//             float pixel_down_right = static_cast<float>(input[in_pos_down_right]);
+//
+//             auto pos = idx[0] * step + idx[1] * step * scaled_w; // position in potentially upscaled image
+//
+//             img[pos] = pixel;
+//             img[pos + 1] = (pixel + pixel_right) / 2;
+//             img[pos + scaled_w] = (pixel + pixel_down) / 2;
+//             img[pos + scaled_w + 1] = (pixel + pixel_down + pixel_right + pixel_down_right) / 4;
+//         });
+//     });
+// }
+
+// Only valid of the load functions others pass a host pointer to use which don't work on gpu need to transfer the image
+// to device first before kernel launch
+sycl::event Image::load_linear(const int& scaled_w, sycl::event src_img_transfer)
 {
     return _device_queue.submit([&](sycl::handler& cgh) {
-        auto img = _device_img; // needed to avoid implicitly capturing this which is not allowed
+        cgh.depends_on(src_img_transfer);
+        auto img = _device_img; // needed to avoid implicitly capturing this which
+                                // is not allowed
+        auto input = _device_src_img;
         auto width = _w;
         auto height = _h;
         int step = scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
