@@ -82,7 +82,7 @@ class Pyramid
     popsift::ConstInfo* _d_consts; // copy of same pointer as Popsift's _d_consts and it deals with freeing it
 
     // Global memory not supported by sycl
-    ExtremaCounters _hct;  // host // not sure if we want to have this global like h_consts and h_gauss
+    ExtremaCounters _hct;  // host
     ExtremaCounters* _dct; // device
 
     DevBuffers* _dobuf;        // device

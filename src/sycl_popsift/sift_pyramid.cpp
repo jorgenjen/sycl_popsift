@@ -85,41 +85,65 @@ Pyramid::Pyramid(const Config& config,
     _dobuf = popsift::sycl_common::malloc_devT<DevBuffers>(
       1, __FILE__, __LINE__, "Allocating device DevBuffers struct failed", Q);
 
+    DevBuffers dobuf_host{}; // Just used to store device malloc before copying the struct over to device (_dobuf) where
+                             // it will be used
+
     // For 7 octaves case the total memory useage for this array is 196MB
-    _dobuf->i_ext_dat[0] = popsift::sycl_common::malloc_devT<InitialExtremum>(
+    // _dobuf->i_ext_dat[0] = popsift::sycl_common::malloc_devT<InitialExtremum>(
+    //   sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", Q);
+    dobuf_host.i_ext_dat[0] = popsift::sycl_common::malloc_devT<InitialExtremum>(
       sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", Q);
 
     // For 7 octaves case the total memory useage for this array is 2.8MB
-    _dobuf->i_ext_off[0] = popsift::sycl_common::malloc_devT<int>(
+    // _dobuf->i_ext_off[0] = popsift::sycl_common::malloc_devT<int>(
+    // sz, __FILE__, __LINE__, "Device extremum offset array allocation failed", Q);
+    dobuf_host.i_ext_off[0] = popsift::sycl_common::malloc_devT<int>(
       sz, __FILE__, __LINE__, "Device extremum offset array allocation failed", Q);
 
     // All octaves in one contigous memory segment that has 100k each in default case
     // loop sets poitners to appropriate 0 positions per octave
     for(int o = 1; o < _num_octaves; o++)
     {
-        _dobuf->i_ext_dat[o] = _dobuf->i_ext_dat[0] + (o * h_consts.max_extrema);
-        _dobuf->i_ext_off[o] = _dobuf->i_ext_off[0] + (o * h_consts.max_extrema);
+        // _dobuf->i_ext_dat[o] = _dobuf->i_ext_dat[0] + (o * h_consts.max_extrema);
+        // _dobuf->i_ext_off[o] = _dobuf->i_ext_off[0] + (o * h_consts.max_extrema);
+        dobuf_host.i_ext_dat[o] = dobuf_host.i_ext_dat[0] + (o * h_consts.max_extrema);
+        dobuf_host.i_ext_off[o] = dobuf_host.i_ext_off[0] + (o * h_consts.max_extrema);
     }
     // set remaining to nullptr
     for(int o = _num_octaves; o < MAX_OCTAVES; o++)
     {
-        _dobuf->i_ext_dat[o] = nullptr;
-        _dobuf->i_ext_off[o] = nullptr;
+        // _dobuf->i_ext_dat[o] = nullptr;
+        // _dobuf->i_ext_off[o] = nullptr;
+        dobuf_host.i_ext_dat[o] = nullptr;
+        dobuf_host.i_ext_off[o] = nullptr;
     }
 
     sz = h_consts.max_extrema; // setting to 100 000 in default case octave num invariant
-    _dobuf->extrema =
+    // _dobuf->extrema =
+    //   popsift::sycl_common::malloc_devT<Extremum>(sz, __FILE__, __LINE__, "Device Extremum array allocation failed",
+    //   Q);
+    // _dobuf->features =
+    //   popsift::sycl_common::malloc_devT<Feature>(sz, __FILE__, __LINE__, "Device Feature array allocation failed",
+    //   Q);
+    dobuf_host.extrema =
       popsift::sycl_common::malloc_devT<Extremum>(sz, __FILE__, __LINE__, "Device Extremum array allocation failed", Q);
-    _dobuf->features =
+    dobuf_host.features =
       popsift::sycl_common::malloc_devT<Feature>(sz, __FILE__, __LINE__, "Device Feature array allocation failed", Q);
+
     // hbuf.ext_allocated = sz; // don't know the purpose of this boy yet
     // dbuf_shadow.ext_allocated = sz; // don't know puppose of this boy yet either
 
     sz = std::max(2 * h_consts.max_extrema, h_consts.max_orientations);
     // hbuf.desc = popsift::cuda::malloc_hstT<Descriptor>(sz, __FILE__, __LINE__);
     // dbuf_shadow.desc = popsift::cuda::malloc_devT<Descriptor>(sz, __FILE__, __LINE__);
-    _dobuf->feat_to_ext_map =
+    dobuf_host.feat_to_ext_map =
       popsift::sycl_common::malloc_devT<int>(sz, __FILE__, __LINE__, "Device feat_to_ext_map allocation failed", Q);
+
+    // Need to wait due to using local variable dobuf_host which will go out of scope right after this line
+    // Can make this async by keeping dobuf_host as a class attribute but then it will be stored for the duration of the
+    // program (but probs faster to store as attribute)
+    Q.memcpy(_dobuf, &dobuf_host, sizeof(DevBuffers)).wait();
+
     // hbuf.ori_allocated = sz;
     // dbuf_shadow.ori_allocated = sz;
 }
