@@ -86,6 +86,7 @@ PopSift::PopSift(const popsift::Config& config)
 }
 PopSift::~PopSift()
 {
+    fprintf(stderr, "\n\tDESTROYING POPSIFT CLASS\n");
     if(_isInit)
     {
         uninit();
@@ -123,17 +124,25 @@ void PopSift::uninit()
     // else
     //     std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
 
+    fprintf(stderr, "\n\tINSIDE UNINIT OF POPSIFT\n");
+
     if(_d_gauss != nullptr)
         sycl::free(_d_gauss, _device_queue);
     else
         std::cout << "_d_gauss was a nullptr hennce not freeing" << std::endl;
 
-    if(_d_consts != nullptr)
-        sycl::free(_d_consts, _device_queue);
-    else
-        std::cout << "_d_consts was a nullptr hennce not freeing" << std::endl;
+    fprintf(stderr, "\n\tFreed _d_gauss -- next is _d_consts = %p\n", _d_consts);
+
+    // if(_d_consts != nullptr)
+    //     sycl::free(_d_consts, _device_queue);
+    // else
+    //     std::cout << "_d_consts was a nullptr hennce not freeing" << std::endl;
+
+    fprintf(stderr, "\n\tFreed _d_consts\n");
 
     _pipe.uninit();
+
+    fprintf(stderr, "\n\tUninted the pipe\n");
 
     _isInit = false;
 }
@@ -175,6 +184,7 @@ sycl::event PopSift::init_constants()
     // Transfer constants to device
     if(_d_consts == nullptr)
     {
+        fprintf(stderr, "\n\n\n\t\t\tALLOC _d_consts \n\n");
         _d_consts = popsift::common_sycl::malloc_devT<popsift::ConstInfo>(
           1, __FILE__, __LINE__, "Failed to allocate constants on device", _device_queue);
     }
@@ -361,6 +371,10 @@ void PopSift::extractDownloadLoop()
 
         private_init(img->getWidth(), img->getHeight());
 
+        _device_queue.wait();
+
+        fprintf(stderr, "\n\tBefore step one queue clear\n");
+
         std::vector<sycl::event> dependencies =
           p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
@@ -372,9 +386,10 @@ void PopSift::extractDownloadLoop()
         // uploaded input image no longer needed, release for reuse
         p._unused.push(img);
 
-        p._pyramid->step2(_config, dependencies, _d_consts_write);
+        // p._pyramid->step2(_config, dependencies, _d_consts_write);
 
         _device_queue.wait();
+        fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");
         fflush(stdout);
         fflush(stderr);
         job->jobDone(5);
@@ -405,7 +420,11 @@ SiftJob::SiftJob(int w, int h, const unsigned char* imageData)
     }
 }
 
-SiftJob::~SiftJob() { free(_imageData); }
+SiftJob::~SiftJob()
+{
+    fprintf(stderr, "\n\tDESTROYING SIFTJOB\n");
+    free(_imageData);
+}
 
 // To fufill promise temporary promise solution while I don't have a
 // featuresBase object to return
@@ -430,7 +449,10 @@ void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFac
     // img->load_divide_point(_imageData, scaled_w);
     // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
     _img_transfer_event = img->load_linear(scaled_w, src_img_transfer);
-    _img = img;
+
+    _img_transfer_event.wait();
+    fprintf(stderr, "\n\tWe got past sending og image to device!!! and doing load lienar\n");
+    _img = img; // Why are you copying the image class pointer?
 }
 
 // Not sure if this is a good way of doing it

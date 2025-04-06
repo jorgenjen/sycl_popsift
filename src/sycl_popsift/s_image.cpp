@@ -5,6 +5,7 @@
 
 #include <sycl/sycl.hpp>
 
+#include <cstdio>
 #include <iostream>
 
 namespace popsift {
@@ -35,6 +36,7 @@ Image::Image(int w, int h, sycl::queue& Q)
 
 Image::~Image()
 {
+    fprintf(stderr, "\n\tDESTROYING IMAGE\n");
     if(_max_w == 0)
         return;
 

@@ -223,11 +223,11 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
                 if(octave == 0)
                 {
                     sycl::event horiz = horiz_from_input_image(conf, base_img, {d_gauss_write, img_transfer});
-                    // horiz.wait();
-                    // fprintf(stderr, "past horiz so problems occur in vert??\n\n");
+                    horiz.wait();
+                    fprintf(stderr, "past horiz so problems occur in vert??\n\n");
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
-                    // oct_obj._level_complete_events[0].wait();
-                    // fprintf(stderr, "past horiz so problems occur in vert??\n\n");
+                    oct_obj._level_complete_events[0].wait();
+                    fprintf(stderr, "past horiz so problems occur in vert??\n\n");
 
                     // horiz.wait();
                     // popsift::sycl_common::print_region(oct_obj.getIntermediate(),

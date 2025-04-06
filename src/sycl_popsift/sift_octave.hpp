@@ -88,7 +88,11 @@ class Octave
     // Octave();
     Octave() = delete;
     Octave(sycl::queue& Q);
-    ~Octave() { this->free_arrays(); }
+    ~Octave()
+    {
+        fprintf(stderr, "\n\tDESTROY OCTAVE\n");
+        this->free_arrays();
+    }
     // ~Octave();
 
     void resetDimensions(const Config& conf, int w, int h);

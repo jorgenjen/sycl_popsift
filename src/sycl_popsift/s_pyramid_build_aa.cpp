@@ -195,9 +195,6 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
     sycl::range local{1, 128};
     sycl::range global{(size_t)height, (size_t)grid_divide(width, local[1])};
 
-    const float* filter = &_d_gauss->dd.filter[0];
-    const int span = _d_gauss->dd.span[0];
-
     if(global[1] == width)
     {
         fprintf(stderr, "Running no if\n");
