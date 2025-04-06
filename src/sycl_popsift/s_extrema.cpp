@@ -763,7 +763,8 @@ class find_extrema_in_dog
     }
 };
 
-void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write)
+// void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
+void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
 {
     static const int HEIGHT = 4;
 
@@ -806,6 +807,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
           (size_t)_levels - 3, (size_t)grid_divide(height, local[1]), (size_t)grid_divide(width, local[2])};
 
         int work_group_count = grid_divide_cuda(height, local[1]) * grid_divide_cuda(width, local[2]) * (_levels - 3);
+        sycl::event dog_done = oct_obj._dog_done_event;
 
         printf("\nFIND EXTREMA: Local(%zu, %zu, %zu) --- --- Global(%zu, %zu, %zu) work_group(%d, %d, %d) "
                "Work_group_count = %d\n\n",
@@ -841,7 +843,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
             default:
                 printf("RefineInOctave type popsift default\n");
                 oct_obj._extrema_done_event = _device_queue.submit([&](sycl::handler& cgh) {
-                    cgh.depends_on({dependencies[octave], d_consts_write, _dobuf_write});
+                    cgh.depends_on({dog_done, d_consts_write, _dobuf_write});
                     cgh.parallel_for(sycl::nd_range{global, local},
                                      find_extrema_in_dog<HEIGHT, Config::RefineInOctave>(oct_obj.getDogArray(),
                                                                                          octave,

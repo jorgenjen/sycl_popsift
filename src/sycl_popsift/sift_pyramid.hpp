@@ -113,10 +113,13 @@ class Pyramid
     void resetDimensions(const Config& conf, int width, int height);
 
     /** step 1: load image and build pyramid */
-    std::vector<sycl::event> step1(const Config& conf, Image* img, sycl::event d_gauss_wirte, sycl::event img_transfer);
+    // std::vector<sycl::event> step1(const Config& conf, Image* img, sycl::event d_gauss_wirte, sycl::event
+    // img_transfer);
+    void step1(const Config& conf, Image* img, sycl::event d_gauss_wirte, sycl::event img_transfer);
 
     /** step 2: find extrema, orientations and descriptor */
-    void step2(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write);
+    // void step2(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write);
+    void step2(const Config& conf, sycl::event d_consts_write);
 
     /** step 3: download descriptors */
     // FeaturesHost *get_descriptors(const Config &conf);
@@ -154,11 +157,8 @@ class Pyramid
     sycl::event dogs_from_blurred(int octave, int max_level, sycl::event octave_complete);
 
     void reset_extrema_mgmt();
-    std::vector<sycl::event> build_pyramid(const Config& conf,
-                                           Image* base,
-                                           sycl::event d_gauss_write,
-                                           sycl::event img_transfer);
-    void find_extrema(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write);
+    void build_pyramid(const Config& conf, Image* base, sycl::event d_gauss_write, sycl::event img_transfer);
+    void find_extrema(const Config& conf, sycl::event d_consts_write);
     void reallocExtrema(int numExtrema);
 
     int extrema_filter_grid(const Config& conf,

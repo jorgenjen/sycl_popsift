@@ -86,7 +86,12 @@ class Octave
     // std::vector<sycl::event> _level_complete_events;
 
   public:
+    // NOTE: consider making the evnt array private and have getter and setter
+    // so that it's abit more safe but I would not want to have to safe guard as it's not needed as long as
+    // only library code modifies it. Could make Pyramid and PopSift friend classes
+    // which would solve that problem of outsider modifying this pointer but agai why would they
     sycl::event* _level_complete_events;
+    sycl::event _dog_done_event;
     sycl::event _extrema_done_event;
 
     // Octave();

@@ -168,13 +168,13 @@ void PopSift::uninit()
     fprintf(stderr, "\n\tFreed _d_gauss -- next is _d_consts = %p\n", _d_consts);
 
     popsift::ConstInfo* me_consts = _d_consts;
-    _device_queue
-      .single_task([=]() {
-          sycl::ext::oneapi::experimental::printf("\n\n\tinside uninit _d_donsts norm_multi %d -- edge_limit %f\n",
-                                                  me_consts->norm_multi,
-                                                  me_consts->edge_limit);
-      })
-      .wait();
+    // _device_queue
+    //   .single_task([=]() {
+    //       sycl::ext::oneapi::experimental::printf("\n\n\tinside uninit _d_donsts norm_multi %d -- edge_limit %f\n",
+    //                                               me_consts->norm_multi,
+    //                                               me_consts->edge_limit);
+    //   })
+    //   .wait();
 
     // BUG: Segfaults here might be due to context going out of scope and hence freeing on _device_queue does not work?
     // Migh be worth trying shared_ptr for the device_queue but I don't really think that is the issue...
@@ -418,12 +418,11 @@ void PopSift::extractDownloadLoop()
 
         private_init(img->getWidth(), img->getHeight());
 
-        _device_queue.wait();
+        // _device_queue.wait();
 
         fprintf(stderr, "\n\tBefore step one queue clear\n");
 
-        std::vector<sycl::event> dependencies =
-          p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+        p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
         // p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
@@ -444,8 +443,9 @@ void PopSift::extractDownloadLoop()
         p._unused.push(img);
 
         // p._pyramid->step2(_config, {sycl::event()}, _d_consts_write);
+        p._pyramid->step2(_config, _d_consts_write);
 
-        _device_queue.wait();
+        _device_queue.wait_and_throw();
         fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");
         fflush(stdout);
         fflush(stderr);
@@ -562,7 +562,7 @@ void PopSift::allMainThread()
     // _pipe._queue_stage2.push(job);
     fprintf(stderr, "\n\n\t\tDone uploading you little DOGGY DOG\n\n");
 
-    _device_queue.wait_and_throw();
+    // _device_queue.wait_and_throw();
     // START extractDownloadLoop();
 
     applyConfiguration(true); // Applies configuration is only run once as
@@ -576,7 +576,7 @@ void PopSift::allMainThread()
 
     private_init(img->getWidth(), img->getHeight());
 
-    _device_queue.wait();
+    // _device_queue.wait();
 
     fprintf(stderr, "\n\tBefore step one queue clear\n");
 

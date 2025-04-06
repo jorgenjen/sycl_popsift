@@ -176,10 +176,7 @@ sycl::event Pyramid::vert_from_interm(int octave,
     return sycl::event(); // just to return for now to avoid warning for compiler
 }
 
-std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
-                                                Image* base_img,
-                                                sycl::event d_gauss_write,
-                                                sycl::event img_transfer)
+void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_gauss_write, sycl::event img_transfer)
 {
     // #if (PYRAMID_PRINT_DEBUG==1)
     //     cerr << "Entering " << __FUNCTION__ << " with base image "  << endl
@@ -244,17 +241,17 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
         }
     }
     // _octaves[_num_octaves - 1]._level_complete_events[_levels - 1].wait();
-    _device_queue.wait_and_throw();
+    // _device_queue.wait_and_throw();
     fprintf(stderr, "\n\tFinal octave is done so pyramid is done!!\n\n");
 
     for(int octave = 0; octave < _num_octaves; octave++) //
     {
         Octave& oct_obj = _octaves[octave];
 
-        dogs_from_blurred(octave, _levels, sycl::event());
+        oct_obj._dog_done_event = dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]);
     }
 
-    _device_queue.wait_and_throw();
+    // _device_queue.wait_and_throw();
 
     fprintf(stderr, "\n\tDone with DoG's\n\n");
 
@@ -268,7 +265,7 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
     //     popsift::sycl_common::print_region(
     //       oct.getDataArrayHost()[me_lvl], "Me doggy dog dog  new -> ", w - 8, w, h - 8, h, w, _device_queue);
 
-    return {sycl::event()};
+    // return {sycl::event()};
 }
 
 } // namespace popsift
