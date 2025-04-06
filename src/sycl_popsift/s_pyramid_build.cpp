@@ -102,7 +102,7 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
       [=](sycl::nd_item<2> it) {
           int x = it.get_global_id(1);
           int y = it.get_global_id(0);
-          if(x > width)
+          if(x >= width)
               return;
 
           // Reverse for potentially more cache hits for first access
@@ -123,7 +123,7 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
       [=](sycl::nd_item<2> it) {
           int x = it.get_global_id(1);
           int y = it.get_global_id(0);
-          if(x > width)
+          if(x >= width)
               return;
 
           float a = data_array[0][x + y * width];
@@ -285,6 +285,7 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
     fprintf(stderr, "\n\tFinal octave is done so pyramid is done!!\n\n");
 
     std::vector<sycl::event> make_dog_events;
+    fprintf(stderr, "\nMake dog vec capacity %d", make_dog_events.capacity());
     make_dog_events.reserve(_num_octaves);
     for(int octave = 0; octave < _num_octaves; octave++) //
     {
@@ -292,6 +293,7 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
 
         // Final level must be complete before we can do dogs (aka all levels as final depends on all before it)
         make_dog_events.push_back(dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]));
+        fprintf(stderr, "\nMake dog vec capacity %d aftere octave %d", make_dog_events.capacity(), octave);
         // make_dog_events[octave].wait();
         // fprintf(stderr, "Done octave %d\n", octave);
     }
