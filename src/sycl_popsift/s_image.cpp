@@ -258,62 +258,62 @@ sycl::event Image::load_linear(const int& scaled_w, sycl::event src_img_transfer
     });
 }
 
-// only for printing and debugging
-sycl::event Image::host_move(void* output) { return _device_queue.memcpy(output, _device_img, _w * _h); };
-
-// only for printing and debugging -- quite inefficient
-void Image::print_region(int start_x, int start_y, int end_x, int end_y)
-{
-    using std::cout;
-    using std::endl;
-    using std::printf;
-    cout << "Inside of Print_region of Image" << endl << endl << endl;
-
-    unsigned char* img = (unsigned char*)malloc(_w * _h * sizeof(unsigned char));
-    if(img == NULL)
-    {
-        cout << "Memory allocation failed" << endl;
-        return;
-    }
-    sycl::event write_event = host_move(img);
-
-    if(start_x > _w || end_x > _w || start_y > _h || end_y > _h)
-    {
-        cout << "Region coordinates are outisde of bounds of Image" << endl;
-        return;
-    }
-    if(start_x > end_x || start_y > end_y)
-    {
-        cout << "Invalid region" << endl;
-        return;
-    }
-    if(start_x < 0 || start_y < 0 || end_x < 0 || end_y < 0)
-    {
-        cout << "Cannot have negative position of region" << endl;
-        return;
-    }
-    printf("Image region (%d, %d) -> (%d, %d)\n", start_x, start_y, end_x, end_y);
-
-    try
-    {
-        write_event.wait();
-    }
-    catch(const sycl::exception& e)
-    {
-        std::cerr << "SYCL exception caught: " << e.what() << std::endl;
-        return;
-    }
-    // _device_queue.wait(); // wait for memcpy to finish
-    for(int i = start_y; i < end_y; ++i)
-    {
-        for(int j = start_x; j < end_x; ++j)
-        {
-            printf("%03u ", img[i * _w + j]);
-        }
-        cout << endl;
-    }
-    cout << endl << endl;
-    free(img);
-}
+// // only for printing and debugging
+// sycl::event Image::host_move(void* output) { return _device_queue.memcpy(output, _device_img, _w * _h); };
+//
+// // only for printing and debugging -- quite inefficient
+// void Image::print_region(int start_x, int start_y, int end_x, int end_y)
+// {
+//     using std::cout;
+//     using std::endl;
+//     using std::printf;
+//     cout << "Inside of Print_region of Image" << endl << endl << endl;
+//
+//     unsigned char* img = (unsigned char*)malloc(_w * _h * sizeof(unsigned char));
+//     if(img == NULL)
+//     {
+//         cout << "Memory allocation failed" << endl;
+//         return;
+//     }
+//     sycl::event write_event = host_move(img);
+//
+//     if(start_x > _w || end_x > _w || start_y > _h || end_y > _h)
+//     {
+//         cout << "Region coordinates are outisde of bounds of Image" << endl;
+//         return;
+//     }
+//     if(start_x > end_x || start_y > end_y)
+//     {
+//         cout << "Invalid region" << endl;
+//         return;
+//     }
+//     if(start_x < 0 || start_y < 0 || end_x < 0 || end_y < 0)
+//     {
+//         cout << "Cannot have negative position of region" << endl;
+//         return;
+//     }
+//     printf("Image region (%d, %d) -> (%d, %d)\n", start_x, start_y, end_x, end_y);
+//
+//     try
+//     {
+//         write_event.wait();
+//     }
+//     catch(const sycl::exception& e)
+//     {
+//         std::cerr << "SYCL exception caught: " << e.what() << std::endl;
+//         return;
+//     }
+//     // _device_queue.wait(); // wait for memcpy to finish
+//     for(int i = start_y; i < end_y; ++i)
+//     {
+//         for(int j = start_x; j < end_x; ++j)
+//         {
+//             printf("%03u ", img[i * _w + j]);
+//         }
+//         cout << endl;
+//     }
+//     cout << endl << endl;
+//     free(img);
+// }
 
 } // namespace popsift

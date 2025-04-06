@@ -96,6 +96,15 @@ PopSift::PopSift(const popsift::Config& config)
 
     std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
 
+    if(_device_queue.is_in_order())
+    {
+        std::cout << "Queue is in-order" << std::endl;
+    }
+    else
+    {
+        std::cout << "Queue is out-of-order" << std::endl;
+    }
+
     // NOTE: Currently not supporting extraction and config like that
     // _pipe._thread_stage1.reset( new std::thread( &PopSift::uploadImages, this
     // )); if( mode == popsift::Config::ExtractingMode )
@@ -409,16 +418,18 @@ void PopSift::extractDownloadLoop()
 
         fprintf(stderr, "\n\tBefore step one queue clear\n");
 
-        std::vector<sycl::event> dependencies =
-          p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+        // std::vector<sycl::event> dependencies =
+        //   p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
-        popsift::ConstInfo* me_consts = _d_consts;
-        _device_queue
-          .single_task([=]() {
-              sycl::ext::oneapi::experimental::printf(
-                "_d_donsts norm_multi %d -- edge_limit %f", me_consts->norm_multi, me_consts->edge_limit);
-          })
-          .wait();
+        p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+
+        // popsift::ConstInfo* me_consts = _d_consts;
+        // _device_queue
+        //   .single_task([=]() {
+        //       sycl::ext::oneapi::experimental::printf(
+        //         "_d_donsts norm_multi %d -- edge_limit %f", me_consts->norm_multi, me_consts->edge_limit);
+        //   })
+        //   .wait();
 
         // FUFULL THE PROMISE
 
@@ -492,8 +503,8 @@ void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFac
     // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
     _img_transfer_event = img->load_linear(scaled_w, src_img_transfer);
 
-    _img_transfer_event.wait();
-    fprintf(stderr, "\n\tWe got past sending og image to device!!! and doing load lienar\n");
+    // _img_transfer_event.wait();
+    // fprintf(stderr, "\n\tWe got past sending og image to device!!! and doing load lienar\n");
     _img = img; // Why are you copying the image class pointer?
 }
 

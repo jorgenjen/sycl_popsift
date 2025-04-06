@@ -250,35 +250,16 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     float* intermediate = oct_obj.getIntermediate();
     float* dst_data = oct_obj.getDataArrayHost()[level]; // Uses host array to get device pointer
 
-    fprintf(stderr,
-            "INSIDE VERT_FROM_INTERM_BASIC --> Event created: %p Status: %d\n",
-            &intm_write,
-            intm_write.get_info<sycl::info::event::command_execution_status>());
+    // fprintf(stderr,
+    //         "INSIDE VERT_FROM_INTERM_BASIC --> Event created: %p Status: %d\n",
+    //         &intm_write,
+    //         intm_write.get_info<sycl::info::event::command_execution_status>());
 
-    _device_queue.wait_and_throw();
+    // _device_queue.wait_and_throw();
 
-    fprintf(stderr,
-            "INSIDE VERT_FROM_INTERM_BASIC --> Event created: %p Status: %d\n",
-            &intm_write,
-            intm_write.get_info<sycl::info::event::command_execution_status>());
-
-    sycl::event e =
-      _device_queue.parallel_for(sycl::nd_range{global, local},
-                                 intm_write,
-                                 absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
-
-    fprintf(stderr,
-            "Local newly created event --> Event created: %p Status: %d\n",
-            &e,
-            e.get_info<sycl::info::event::command_execution_status>());
-
-    e.wait_and_throw();
-    fprintf(stderr,
-            "Local newly created event after wait --> Event created: %p Status: %d\n",
-            &e,
-            e.get_info<sycl::info::event::command_execution_status>());
-
-    return e;
+    return _device_queue.parallel_for(sycl::nd_range{global, local},
+                                      intm_write,
+                                      absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
 
     // TODO: Consider adding template argument like in Horiz and either have one for all, w, h and nothing but might be
     // excessive need to test (and figure out if the templates works as I hope making separeate kernels or somother

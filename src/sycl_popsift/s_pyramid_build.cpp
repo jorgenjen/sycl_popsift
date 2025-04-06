@@ -102,7 +102,7 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
       [=](sycl::nd_item<2> it) {
           int x = it.get_global_id(1);
           int y = it.get_global_id(0);
-          if(x > width)
+          if(x >= width)
               return;
 
           // Reverse for potentially more cache hits for first access
@@ -123,7 +123,7 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
       [=](sycl::nd_item<2> it) {
           int x = it.get_global_id(1);
           int y = it.get_global_id(0);
-          if(x > width)
+          if(x >= width)
               return;
 
           float a = data_array[0][x + y * width];
@@ -222,103 +222,50 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
             {
                 if(octave == 0)
                 {
-                    sycl::event horiz = horiz_from_input_image(conf, base_img, {d_gauss_write, img_transfer});
-                    horiz.wait();
-                    fprintf(stderr, "past horiz so problems occur in vert??\n\n");
-                    oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
-                    oct_obj._level_complete_events[0].wait();
-                    fprintf(stderr, "past horiz so problems occur in vert??\n\n");
-
-                    // horiz.wait();
-                    // popsift::sycl_common::print_region(oct_obj.getIntermediate(),
-                    //                                    "INTERMEDIATE after horiz first octave -- ",
-                    //                                    w - 8,
-                    //                                    w,
-                    //                                    h - 8,
-                    //                                    h,
-                    //                                    w,
-                    //                                    _device_queue);
-                    //
-                    // _device_queue.wait();
-                    // popsift::sycl_common::print_region(oct_obj.getDataArray()[level],
-                    //                                    "First octave after vert -- ",
-                    //                                    w - 8,
-                    //                                    w,
-                    //                                    h - 8,
-                    //                                    h,
-                    //                                    w,
-                    //                                    _device_queue);
+                    horiz_from_input_image(conf, base_img, {sycl::event()});
+                    vert_from_interm(octave, 0, gaussTableChoice, sycl::event());
                 }
                 else
                 {
-                    fprintf(stderr, "BEFORE ACCESS OF PREV OCTAVE!!!!! in octave %d", octave);
-                    Octave& prev_oct_obj = _octaves[octave - 1];
+                    // Octave& prev_oct_obj = _octaves[octave - 1];
 
-                    // fprintf(stderr, "Before downscale to Octave %d", octave);
-                    oct_obj._level_complete_events[0] =
-                      downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
-
-                    oct_obj._level_complete_events[0].wait();
-                    fprintf(stderr, "AFTER downscale to Octave %d", octave);
+                    downscale_from_prev_octave(octave, sycl::event());
                 }
             }
             else
             {
-                fprintf(stderr, "Before horiz on octave %d at level %d\n", octave, level);
-                sycl::event horiz =
-                  horiz_from_prev_level(octave, level, gaussTableChoice, oct_obj._level_complete_events[level - 1]);
+                horiz_from_prev_level(octave, level, gaussTableChoice, sycl::event());
 
-                horiz.wait();
-
-                fprintf(stderr, "AFTER WAIT ON horiz level %d at octave %d\n", level, octave);
-                // Hope horiz is fine to use even though it goes out of scope after the line but should have been
-                // copied by then I think eventough vert_from_interm takes it as reference...
-                fprintf(stderr, "RIGHT BEFORE FAILURE level=%d -- octave=%d\n ", level, octave);
-                fprintf(stderr,
-                        "Event created: %p Status: %d\n",
-                        &horiz,
-                        horiz.get_info<sycl::info::event::command_execution_status>());
-
-                // oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
-                // oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz); // Use directly
-                sycl::event tmp_event = vert_from_interm_basic(octave, level, horiz); // Use directly
-                tmp_event.wait();
-                fprintf(stderr, "AFTER VERT FROM interm %d\n", level);
-                oct_obj._level_complete_events[level] = sycl::event();
-                fprintf(stderr, "after vector assignment\n");
-
-                // oct_obj._level_complete_events[level].wait();
+                vert_from_interm_basic(octave, level, sycl::event()); // Use directly
             }
         }
     }
     // _octaves[_num_octaves - 1]._level_complete_events[_levels - 1].wait();
-    _device_queue.wait();
+    _device_queue.wait_and_throw();
     fprintf(stderr, "\n\tFinal octave is done so pyramid is done!!\n\n");
 
-    std::vector<sycl::event> make_dog_events;
-    make_dog_events.reserve(_num_octaves);
     for(int octave = 0; octave < _num_octaves; octave++) //
     {
         Octave& oct_obj = _octaves[octave];
 
-        // Final level must be complete before we can do dogs (aka all levels as final depends on all before it)
-        make_dog_events.push_back(dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]));
-        // make_dog_events[octave].wait();
-        // fprintf(stderr, "Done octave %d\n", octave);
+        dogs_from_blurred(octave, _levels, sycl::event());
     }
-    _device_queue.wait();
 
-#define me_oct 4
-#define me_lvl 5
+    _device_queue.wait_and_throw();
 
-    Octave& oct = _octaves[me_oct];
-    int w = oct.getWidth();
-    int h = oct.getHeight();
+    fprintf(stderr, "\n\tDone with DoG's\n\n");
 
-    popsift::sycl_common::print_region(
-      oct.getDataArrayHost()[me_lvl], "Me doggy dog dog  new -> ", w - 8, w, h - 8, h, w, _device_queue);
+    // #define me_oct 4
+    // #define me_lvl 5
+    //
+    //     Octave& oct = _octaves[me_oct];
+    //     int w = oct.getWidth();
+    //     int h = oct.getHeight();
+    //
+    //     popsift::sycl_common::print_region(
+    //       oct.getDataArrayHost()[me_lvl], "Me doggy dog dog  new -> ", w - 8, w, h - 8, h, w, _device_queue);
 
-    return make_dog_events;
+    return {sycl::event()};
 }
 
 } // namespace popsift
