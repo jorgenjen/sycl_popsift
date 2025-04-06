@@ -41,8 +41,29 @@ inline void PopSift::initQueue()
     }
 #else
     fprintf(stderr, "Running in CPU_ONLY mode\n");
-    sycl::device dev = sycl::device{sycl::cpu_selector_v};
-    _device_queue = sycl::queue(sycl::context{dev}, dev);
+    // sycl::device dev = sycl::device{sycl::cpu_selector_v};
+    // _device_queue = sycl::queue(sycl::context{dev}, dev);
+
+    // _device_queue =
+    //   sycl::queue{sycl::cpu_selector_v, sycl::property::queue::in_order{},
+    //   sycl::property::queue::enable_profiling{}};
+
+    // _device_queue =
+    //   sycl::queue(sycl::cpu_selector_v, sycl::property::queue::in_order{},
+    //   sycl::property::queue::enable_profiling{});
+
+    try
+    {
+        sycl::device cpu_dev = sycl::device{sycl::cpu_selector_v};
+        _device_queue = sycl::queue(
+          cpu_dev, sycl::property_list{sycl::property::queue::in_order{}, sycl::property::queue::enable_profiling{}});
+    }
+    catch(const sycl::exception& e)
+    {
+        std::cerr << "Failed to create CPU queue: " << e.what() << std::endl;
+        throw;
+    }
+
     // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
 #endif
 }
@@ -70,8 +91,8 @@ PopSift::PopSift(const popsift::Config& config)
     _pipe._unused.push(new popsift::Image(_device_queue));
 
     // TODO(jorgejen): Setup these threads.
-    _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
-    _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
+    // _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
+    // _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
 
     std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
 
@@ -133,10 +154,21 @@ void PopSift::uninit()
 
     fprintf(stderr, "\n\tFreed _d_gauss -- next is _d_consts = %p\n", _d_consts);
 
-    // if(_d_consts != nullptr)
-    //     sycl::free(_d_consts, _device_queue);
-    // else
-    //     std::cout << "_d_consts was a nullptr hennce not freeing" << std::endl;
+    popsift::ConstInfo* me_consts = _d_consts;
+    _device_queue
+      .single_task([=]() {
+          sycl::ext::oneapi::experimental::printf("\n\n\tinside uninit _d_donsts norm_multi %d -- edge_limit %f\n",
+                                                  me_consts->norm_multi,
+                                                  me_consts->edge_limit);
+      })
+      .wait();
+
+    // BUG: Segfaults here might be due to context going out of scope and hence freeing on _device_queue does not work?
+    // Migh be worth trying shared_ptr for the device_queue but I don't really think that is the issue...
+    if(_d_consts != nullptr)
+        sycl::free(_d_consts, _device_queue);
+    else
+        std::cout << "_d_consts was a nullptr hennce not freeing" << std::endl;
 
     fprintf(stderr, "\n\tFreed _d_consts\n");
 
@@ -343,7 +375,9 @@ void PopSift::uploadImages()
 
         // job->setImg( img );
         _pipe._queue_stage2.push(job);
+        break;
     }
+    fprintf(stderr, "\n\n\t\tDone uploading\n\n");
     // Push nullptr to stage2 queue to make that one terminates aswell
     // safe to do as we know know no more jobs will be pushed to stage 1 queue
     _pipe._queue_stage2.push(nullptr);
@@ -377,6 +411,14 @@ void PopSift::extractDownloadLoop()
 
         std::vector<sycl::event> dependencies =
           p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+
+        popsift::ConstInfo* me_consts = _d_consts;
+        _device_queue
+          .single_task([=]() {
+              sycl::ext::oneapi::experimental::printf(
+                "_d_donsts norm_multi %d -- edge_limit %f", me_consts->norm_multi, me_consts->edge_limit);
+          })
+          .wait();
 
         // FUFULL THE PROMISE
 
@@ -481,6 +523,79 @@ void PopSift::Pipe::uninit()
         popsift::Image* img = _unused.pull();
         delete img;
     }
+}
+
+void PopSift::allMainThread()
+{
+#define break_in_uploadImages 1
+
+#if break_in_uploadImages
+    uploadImages();
+
+    extractDownloadLoop();
+    _device_queue.wait_and_throw();
+
+#else
+
+    // START: uploadImages();
+    SiftJob* job = _pipe._queue_stage1.pull();
+
+    popsift::Image* img = _pipe._unused.pull(); // getting a unused Image (reusing it)
+
+    job->setImg(img, _device_queue, _config.getUpscaleFactor());
+
+    // _pipe._queue_stage2.push(job);
+    fprintf(stderr, "\n\n\t\tDone uploading you little DOGGY DOG\n\n");
+
+    _device_queue.wait_and_throw();
+    // START extractDownloadLoop();
+
+    applyConfiguration(true); // Applies configuration is only run once as
+    Pipe& p = _pipe;
+
+    // SiftJob* job = p._queue_stage2.pull(); // Same job pointer as above
+
+    // popsift::Image* img = job->getImg(); // same img pointer as above
+
+    job->printJob(); // Can probs remove
+
+    private_init(img->getWidth(), img->getHeight());
+
+    _device_queue.wait();
+
+    fprintf(stderr, "\n\tBefore step one queue clear\n");
+
+    std::vector<sycl::event> dependencies = p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+
+    popsift::ConstInfo* me_consts = _d_consts;
+    _device_queue
+      .single_task([=]() {
+          sycl::ext::oneapi::experimental::printf(
+            "_d_donsts norm_multi %d -- edge_limit %f", me_consts->norm_multi, me_consts->edge_limit);
+      })
+      .wait();
+
+    // FUFULL THE PROMISE
+
+    cout << "Jobby: -- " << endl;
+    job->printJob();
+
+    // uploaded input image no longer needed, release for reuse
+    p._unused.push(img);
+
+    // p._pyramid->step2(_config, dependencies, _d_consts_write);
+
+    // _device_queue.wait();
+    _device_queue.wait_and_throw();
+
+    fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");
+    fflush(stdout);
+    fflush(stderr);
+    job->jobDone(5);
+
+    // _device_queue.wait(); // Having a wait here before I have all events configured properly
+    private_uninit();
+#endif
 }
 
 // Helper function for development

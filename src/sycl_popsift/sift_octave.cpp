@@ -111,7 +111,7 @@ void Octave::alloc(const Config& conf, int width, int height, int levels)
     _w_grid_divider = float(_w) / conf.getFilterGridSize();
     _h_grid_divider = float(_h) / conf.getFilterGridSize();
 
-    _level_complete_events.reserve(levels);
+    _level_complete_events.reserve(levels + 1);
 
     // TODO: FIGURE out Replacements for these methods
     // most of them are related to textures in CUDA

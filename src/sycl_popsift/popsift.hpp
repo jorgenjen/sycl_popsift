@@ -130,6 +130,8 @@ class PopSift
 
     SiftJob* enqueue(int w, int h, const unsigned char* imageData);
 
+    void allMainThread();
+
   private:
     void printDim();
     void printDevice();

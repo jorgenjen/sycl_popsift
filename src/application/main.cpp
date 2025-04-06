@@ -16,6 +16,7 @@
 #include <boost/program_options.hpp>
 #include <sycl_popsift/non_sycl/sift_conf.hpp>
 #include <sycl_popsift/popsift.hpp>
+#include <unistd.h>
 
 #include <list>
 
@@ -217,6 +218,8 @@ int main(int argc, char** argv)
         jobs.push(job);
     }
 
+    PopSift.allMainThread();
+
     while(!jobs.empty())
     {
         SiftJob* job = jobs.front();
@@ -258,5 +261,7 @@ int main(int argc, char** argv)
     // PopSift.uninit(); // don't see the need as it will be done automatically
     // bu the destructor of the popsift class
 
+    // fprintf(stderr, "\n\t\tI sleep now before return :D\n\n");
+    fprintf(stderr, "\n\t\tExiting main now BYE\n\n");
     return EXIT_SUCCESS;
 }

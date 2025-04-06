@@ -251,32 +251,43 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
                 }
                 else
                 {
-                    // fprintf(stderr, "BEFORE ACCESS OF PREV OCTAVE!!!!! in octave %d", octave);
+                    fprintf(stderr, "BEFORE ACCESS OF PREV OCTAVE!!!!! in octave %d", octave);
                     Octave& prev_oct_obj = _octaves[octave - 1];
 
                     // fprintf(stderr, "Before downscale to Octave %d", octave);
                     oct_obj._level_complete_events[0] =
                       downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
 
-                    // oct_obj._level_complete_events[0].wait();
-                    // fprintf(stderr, "AFTER downscale to Octave %d", octave);
+                    oct_obj._level_complete_events[0].wait();
+                    fprintf(stderr, "AFTER downscale to Octave %d", octave);
                 }
             }
             else
             {
-                // fprintf(stderr, "Before horiz on octave %d at level %d\n", octave, level);
+                fprintf(stderr, "Before horiz on octave %d at level %d\n", octave, level);
                 sycl::event horiz =
                   horiz_from_prev_level(octave, level, gaussTableChoice, oct_obj._level_complete_events[level - 1]);
 
-                // horiz.wait();
+                horiz.wait();
 
-                // fprintf(stderr, "AFTER WAIT ON horiz level %d at octave %d\n", level, octave);
+                fprintf(stderr, "AFTER WAIT ON horiz level %d at octave %d\n", level, octave);
                 // Hope horiz is fine to use even though it goes out of scope after the line but should have been
                 // copied by then I think eventough vert_from_interm takes it as reference...
-                // fprintf(stderr, "RIGHT BEFORE FAILURE level=%d -- octave=%d ", level, octave);
-                oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
+                fprintf(stderr, "RIGHT BEFORE FAILURE level=%d -- octave=%d\n ", level, octave);
+                fprintf(stderr,
+                        "Event created: %p Status: %d\n",
+                        &horiz,
+                        horiz.get_info<sycl::info::event::command_execution_status>());
+
+                // oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
+                // oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz); // Use directly
+                sycl::event tmp_event = vert_from_interm_basic(octave, level, horiz); // Use directly
+                tmp_event.wait();
+                fprintf(stderr, "AFTER VERT FROM interm %d\n", level);
+                oct_obj._level_complete_events[level] = sycl::event();
+                fprintf(stderr, "after vector assignment\n");
+
                 // oct_obj._level_complete_events[level].wait();
-                // fprintf(stderr, "AFTER WAIT ON EVENT level %d\n", level);
             }
         }
     }
