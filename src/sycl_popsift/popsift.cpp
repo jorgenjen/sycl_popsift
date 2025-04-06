@@ -54,9 +54,13 @@ inline void PopSift::initQueue()
 
     try
     {
-        sycl::device cpu_dev = sycl::device{sycl::cpu_selector_v};
-        _device_queue = sycl::queue(
-          cpu_dev, sycl::property_list{sycl::property::queue::in_order{}, sycl::property::queue::enable_profiling{}});
+        // sycl::device cpu_dev = sycl::device{sycl::cpu_selector_v};
+        // _device_queue = sycl::queue(
+        //   cpu_dev, sycl::property_list{sycl::property::queue::in_order{},
+        //   sycl::property::queue::enable_profiling{}});
+
+        sycl::device dev = sycl::device{sycl::cpu_selector_v};
+        _device_queue = sycl::queue(sycl::context{dev}, dev);
     }
     catch(const sycl::exception& e)
     {
@@ -418,10 +422,10 @@ void PopSift::extractDownloadLoop()
 
         fprintf(stderr, "\n\tBefore step one queue clear\n");
 
-        // std::vector<sycl::event> dependencies =
-        //   p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+        std::vector<sycl::event> dependencies =
+          p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
-        p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+        // p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
         // popsift::ConstInfo* me_consts = _d_consts;
         // _device_queue
@@ -439,7 +443,7 @@ void PopSift::extractDownloadLoop()
         // uploaded input image no longer needed, release for reuse
         p._unused.push(img);
 
-        // p._pyramid->step2(_config, dependencies, _d_consts_write);
+        // p._pyramid->step2(_config, {sycl::event()}, _d_consts_write);
 
         _device_queue.wait();
         fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");

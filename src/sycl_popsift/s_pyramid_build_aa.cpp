@@ -183,7 +183,11 @@ class Vert
 
 } // namespace absoluteSource
 
-sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std::vector<sycl::event> dependencies)
+sycl::event Pyramid::horiz_from_input_image(const Config& conf,
+                                            Image* base,
+                                            sycl::event d_gauss_write,
+                                            sycl::event img_write)
+
 {
     Octave& oct_obj = _octaves[0];
 
@@ -201,19 +205,19 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
         // width % 128 = 0 and hence we don't need if check in kernel
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
-          dependencies,
+          {d_gauss_write, img_write},
           absoluteSource::Horiz<0, true>(base->getInput(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
     }
     else
     {
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
-          dependencies,
+          {d_gauss_write, img_write},
           absoluteSource::Horiz<1, true>(base->getInput(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
     }
 }
 
-sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::event prev_level_write)
+sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level)
 {
     Octave& oct_obj = _octaves[octave];
 
@@ -231,9 +235,11 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     float* prev_level = oct_obj.getDataArrayHost()[level - 1]; // src
     float* cur_intm = oct_obj.getIntermediate();               // dst_data
 
+    // sycl::event dependency = oct_obj.getLevelEvent(level-1); // wrong
+    sycl::event prev_lvl_event = oct_obj._level_complete_events[level - 1]; // prev level
     return _device_queue.parallel_for(
       sycl::nd_range{global, local},
-      prev_level_write,
+      prev_lvl_event,
       absoluteSource::Horiz<1, false>(prev_level, cur_intm, _d_gauss, width, height, level));
 }
 

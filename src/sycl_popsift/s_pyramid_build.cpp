@@ -23,7 +23,7 @@ namespace popsift {
 // }
 
 // not sure if we want the se to be inline they were in CUDA popsift
-inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event prev_octave_done)
+inline sycl::event Pyramid::downscale_from_prev_octave(int octave)
 {
     Octave& oct_obj = _octaves[octave];
     Octave& prev_oct_obj = _octaves[octave - 1];
@@ -44,9 +44,11 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event p
     sycl::range global{(size_t)grid_divide(dst_height, local[0]), (size_t)grid_divide(dst_width, local[1])};
 
     // printf("\n\n\tIN downscale_from_prev_octave GLOBAL(%zu, %zu), OCTAVE=%d\n", global[0], global[1], octave);
+    // sycl::event dependency = prev_oct_obj.getLevelEvent(_levels - PREV_LEVEL);
+    sycl::event dependency = prev_oct_obj._level_complete_events[_levels - PREV_LEVEL];
 
     return _device_queue.submit([&](sycl::handler& cgh) {
-        cgh.depends_on(prev_octave_done);
+        cgh.depends_on(dependency);
         cgh.parallel_for(sycl::nd_range(global, local), [=](sycl::nd_item<2> it) {
             // int x = it.get_global_id(0);
             // int y = it.get_global_id(1);
@@ -138,16 +140,14 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
 #endif
 }
 
-inline sycl::event Pyramid::horiz_from_prev_level(int octave,
-                                                  int level,
-                                                  GaussTableChoice useInterpolatedGauss,
-                                                  sycl::event prev_level_write)
+inline sycl::event Pyramid::horiz_from_prev_level(int octave, int level, GaussTableChoice useInterpolatedGauss)
+// sycl::event prev_level_write)
 {
     switch(useInterpolatedGauss)
     {
         // case Interpolated_FromPrevious: horiz_from_prev_level_pairs(octave, level, stream); break;
         case Interpolated_FromPrevious: cout << "horiz_from_prev_level_pairs not implemented yet"; break;
-        case NotInterpolated_FromPrevious: return horiz_from_prev_level_basic(octave, level, prev_level_write); break;
+        case NotInterpolated_FromPrevious: return horiz_from_prev_level_basic(octave, level); break;
         default: POP_FATAL("Missing case in horizontal Gauss filter from previous level"); break;
     }
     return sycl::event(); // just to return for now to avoid warning for compiler
@@ -211,6 +211,7 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
     {
         // fprintf(stderr, "BEFORE ACCESS OF octave %d", octave);
         Octave& oct_obj = _octaves[octave];
+        // std::vector<sycl::event>& lvl_events = oct_obj._level_complete_events;
 
         // Just for print outs
         int w = _octaves[octave].getWidth();
@@ -222,21 +223,23 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
             {
                 if(octave == 0)
                 {
-                    horiz_from_input_image(conf, base_img, {sycl::event()});
-                    vert_from_interm(octave, 0, gaussTableChoice, sycl::event());
+                    sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                    // oct_obj.setLevelEvent(0, vert_from_interm(octave, 0, gaussTableChoice, horiz));
+                    oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
                 }
                 else
                 {
-                    // Octave& prev_oct_obj = _octaves[octave - 1];
-
-                    downscale_from_prev_octave(octave, sycl::event());
+                    // oct_obj.setLevelEvent(0, downscale_from_prev_octave(octave));
+                    oct_obj._level_complete_events[0] = downscale_from_prev_octave(octave);
                 }
             }
             else
             {
-                horiz_from_prev_level(octave, level, gaussTableChoice, sycl::event());
+                // Depends on set level event from prev level
+                sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
 
-                vert_from_interm_basic(octave, level, sycl::event()); // Use directly
+                // oct_obj.setLevelEvent(level, vert_from_interm_basic(octave, level, horiz));
+                oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
             }
         }
     }

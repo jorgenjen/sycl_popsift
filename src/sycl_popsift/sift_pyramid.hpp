@@ -136,16 +136,16 @@ class Pyramid
 
   private:
     // sycl::event horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
-    sycl::event horiz_from_input_image(const Config& conf, Image* base, std::vector<sycl::event> dependencies);
+    sycl::event horiz_from_input_image(const Config& conf,
+                                       Image* base,
+                                       sycl::event d_gauss_write,
+                                       sycl::event img_write);
 
-    inline sycl::event downscale_from_prev_octave(int octave, sycl::event prev_octave_done);
+    inline sycl::event downscale_from_prev_octave(int octave);
 
-    sycl::event horiz_from_prev_level_basic(int octave, int level, sycl::event prev_level_write);
+    sycl::event horiz_from_prev_level_basic(int octave, int level);
     void horiz_from_prev_level_pairs(int octave, int level); // Not implemented as of now
-    inline sycl::event horiz_from_prev_level(int octave,
-                                             int level,
-                                             GaussTableChoice useInterpolatedGauss,
-                                             sycl::event prev_level_write);
+    inline sycl::event horiz_from_prev_level(int octave, int level, GaussTableChoice useInterpolatedGauss);
     sycl::event vert_from_interm_basic(int octave, int level, sycl::event intm_write);
     // void vert_from_interm_pairs(int octave, int level, cudaStream_t stream);
     sycl::event vert_from_interm(int octave, int level, GaussTableChoice useInterpolatedGauss, sycl::event intm_write);

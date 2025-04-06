@@ -35,7 +35,8 @@ class Octave
     int _levels{};
     int _gauss_group{};
 
-    sycl::queue& _device_queue; // reference to  of device queue
+    // sycl::queue& _device_queue; // reference to  of device queue
+    sycl::queue _device_queue;
 
     // Intermediate
     // TODO: change to only use a float* _intm_data (or whatever) as we only need one!!!
@@ -82,9 +83,12 @@ class Octave
     sycl::event _data_array_write;
     sycl::event _dog_array_write;
 
+    // std::vector<sycl::event> _level_complete_events;
+
   public:
-    std::vector<sycl::event> _level_complete_events;
+    sycl::event* _level_complete_events;
     sycl::event _extrema_done_event;
+
     // Octave();
     Octave() = delete;
     Octave(sycl::queue& Q);
@@ -118,6 +122,38 @@ class Octave
     inline float** getDogArray() const { return _dog_array; }
     inline float** getDogArrayHost() const { return _dog_array_host; }
     inline sycl::event getDogArrayWriteEvent() const { return _dog_array_write; }
+
+    // std::move might be better than just assignment
+    // inline void setLevelEvent(int level, sycl::event e) { _level_complete_events[level] = std::move(e); }
+    // inline void setLevelEvent(int level, sycl::event e)
+    // {
+    //     if(level >= 0 && level < _level_complete_events.capacity())
+    //     {
+    //         _level_complete_events.push_back(e);
+    //     }
+    //     else
+    //     {
+    //         fprintf(
+    //           stderr, "\nHow in the fuck... level = %d -- vec size = %zu", level, _level_complete_events.capacity());
+    //     }
+    // }
+
+    // inline const std::vector<sycl::event>& getLevelCompleteEvents() const noexcept { return _level_complete_events; }
+
+    // inline sycl::event getLevelEvent(int level) const
+    // {
+    //     if(level >= 0 && level < _level_complete_events.capacity())
+    //     {
+    //         // return _level_complete_events[level];
+    //         return sycl::event();
+    //     }
+    //     else
+    //     {
+    //         fprintf(
+    //           stderr, "\nHow in the fuck... level = %d -- vec size = %zu", level, _level_complete_events.capacity());
+    //         return sycl::event{};
+    //     }
+    // }
 
     // inline cudaStream_t getStream( ) {
     //     return _stream;
