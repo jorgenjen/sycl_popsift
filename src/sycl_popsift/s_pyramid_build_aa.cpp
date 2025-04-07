@@ -19,38 +19,52 @@
 namespace popsift {
 namespace absoluteSource {
 
-template<int if_required>
+// SHould use this one instead of Horiz in absolute source as this one makes sense to use in both
+// situations and we dont need to divide the image initially, wasting performance.
+template<bool if_required, bool initial>
 class Horiz
 {
   private:
     float* src;
     float* dst_data;
-    // const float* filter;
-    // const int span;
     popsift::GaussInfo* d_gauss;
     const int width;
     const int height; // not sure if height was needed here (verify)
+    const int level;
 
   public:
-    // Horiz(float* src, float* dst_data, const float* filter, const int span, const int width, const int height)
-    Horiz(float* src, float* dst_data, popsift::GaussInfo* d_gauss, const int width, const int height)
+    Horiz(float* src, float* dst_data, popsift::GaussInfo* d_gauss, const int width, const int height, int level)
       : src(src)
       , dst_data(dst_data)
-      // , filter(filter)
-      // , span(span)
       , d_gauss(d_gauss)
       , width(width)
       , height(height)
+      , level(level)
+
     {}
 
     // Not sure if inlining makes this worse or better...
     // might remove function calls but not sure exactly
     inline void operator()(sycl::nd_item<2> it) const
     {
-        // sycl::ext::oneapi::experimental::printf("This runs in the kernel so invocation is fine");
-        // return;
         int x = it.get_global_id(1);
         int y = it.get_global_id(0);
+
+        const float* filter;
+        int span;
+        if(initial)
+        {
+            // is always from source image and level 0 // called once
+
+            // Look into packing the struct differntly to avoid splitting but this might be the best way(idk)
+            filter = &d_gauss->dd.filter[0];
+            span = d_gauss->dd.span[0];
+        }
+        else
+        {
+            filter = &d_gauss->inc.filter[level * GAUSS_ALIGN];
+            span = d_gauss->inc.span[level];
+        }
 
         const float* filter = &d_gauss->dd.filter[0];
         const int span = d_gauss->dd.span[0];
@@ -58,16 +72,16 @@ class Horiz
         // depending on if it is perfectly divisible by 128 but might not be worth it... Test
 
         // Using template so that we can call kernel without if if it's perfectly divisible by 128
-        // and hence would not be needed
-        switch(if_required)
+        // and hence would not be needed // hopefully it works like this look into
+        // NOTE: Look into if template makes this multiple kernels or not if not we might benefit from spliting them and
+        // having them as different kernels mby different namespace to separete them
+        if(if_required)
         {
-            case 1:
-                if(x >= width || y >= height)
-                {
-                    return;
-                }
-                break;
-            default: break; // do nothing
+            // Had switch before but I believe that if should server the same purpose
+            if(x >= width || y >= height)
+            {
+                return;
+            }
         }
 
         int idx;
@@ -105,8 +119,6 @@ class Vert
     float* intermediate; // or is it intermediate :D IDK
     float* dst_data;
     popsift::GaussInfo* d_gauss;
-    // const float* filter;
-    // const int span;
     const int width;
     const int height;
     const int level;
@@ -114,8 +126,6 @@ class Vert
   public:
     Vert(float* intermediate,
          float* dst_data,
-         // const float* filter,
-         // const int span,
          popsift::GaussInfo* d_gauss,
          const int width,
          const int height,
@@ -123,8 +133,6 @@ class Vert
       : intermediate(intermediate)
       , dst_data(dst_data)
       , d_gauss(d_gauss)
-      // , filter(filter)
-      // , span(span)
       , width(width)
       , height(height)
       , level(level)
@@ -139,6 +147,8 @@ class Vert
     // correct for now and move on
     inline void operator()(sycl::nd_item<2> it) const
     {
+        // int x = it.get_global_id(0);
+        // int y = it.get_global_id(1);
         int x = it.get_global_id(1);
         int y = it.get_global_id(0);
 
@@ -177,8 +187,11 @@ class Vert
 
 } // namespace absoluteSource
 
-// Moved from s_pyramid_build_ra.cpp as  I don't use normalized source when using USM
-sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std::vector<sycl::event> dependencies)
+sycl::event Pyramid::horiz_from_input_image(const Config& conf,
+                                            Image* base,
+                                            sycl::event d_gauss_write,
+                                            sycl::event img_write)
+
 {
     Octave& oct_obj = _octaves[0];
 
@@ -187,33 +200,28 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf, Image* base, std
 
     float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
 
-    // Need to be flipped due to the way sycl works
     sycl::range local{1, 128};
-    sycl::range global{(size_t)height, (size_t)grid_divide(width, local[0])};
+    sycl::range global{(size_t)height, (size_t)grid_divide(width, local[1])};
 
-    // Are on device so can't access them like this here
-    // const float* filter = &_d_gauss->dd.filter[0];
-    // const int span = _d_gauss->dd.span[0];
-
-    if(global[0] == width)
+    if(global[1] == width)
     {
+        fprintf(stderr, "Running no if\n");
         // width % 128 = 0 and hence we don't need if check in kernel
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
-          dependencies,
-          absoluteSource::Horiz<0>(base->getInput(), oct_obj.getIntermediate(), _d_gauss, width, height));
+          {d_gauss_write, img_write},
+          absoluteSource::Horiz<0, true>(base->getInput(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
     }
     else
     {
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
-          dependencies,
-          absoluteSource::Horiz<1>(base->getInput(), oct_obj.getIntermediate(), _d_gauss, width, height));
+          {d_gauss_write, img_write},
+          absoluteSource::Horiz<1, true>(base->getInput(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
     }
 }
 
-// Should only be called wiht a level > 0
-sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::event prev_level_write)
+sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level)
 {
     Octave& oct_obj = _octaves[octave];
 
@@ -224,18 +232,19 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level, sycl::ev
     // (32, 8) most stable good perf on GTX 980 TI -- need to test different for me sycl implementation
 
     sycl::range local{8, 32};
-    sycl::range global{(size_t)grid_divide(height, local.get(0)), (size_t)grid_divide(width, local.get(1))};
+    sycl::range global{(size_t)grid_divide(height, local[0]), (size_t)grid_divide(width, local[1])};
 
-    float* prev_level = oct_obj.getDataArray()[level - 1]; // src
-    float* cur_intm = oct_obj.getIntermediate();           // dst_data
+    // Should be fine to do arithmetic on getDaraArray as it's only first level of a pointer hence no dereferences
+    // needed and we can still use device memory and not shared
+    float* prev_level = oct_obj.getDataArrayHost()[level - 1]; // src
+    float* cur_intm = oct_obj.getIntermediate();               // dst_data
 
-    sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
-        cgh.depends_on(prev_level_write);
-        cgh.parallel_for(sycl::nd_range{global, local},
-                         absoluteSource::Horiz<1>(prev_level, cur_intm, _d_gauss, width, height));
-    });
-
-    return e;
+    // sycl::event dependency = oct_obj.getLevelEvent(level-1); // wrong
+    sycl::event prev_lvl_event = oct_obj._level_complete_events[level - 1]; // prev level
+    return _device_queue.parallel_for(
+      sycl::nd_range{global, local},
+      prev_lvl_event,
+      absoluteSource::Horiz<1, false>(prev_level, cur_intm, _d_gauss, width, height, level));
 }
 
 sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event intm_write)
@@ -245,38 +254,25 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     const int width = oct_obj.getWidth();
     const int height = oct_obj.getHeight();
 
-    // sycl::range local{64, 2};
-    // sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
-
-    // Need to be flipped due to sycl (sub grops are along second axis)
     sycl::range local{2, 64};
-    sycl::range global{(size_t)grid_divide(height, local.get(0)), (size_t)grid_divide(width, local.get(1))};
+    sycl::range global{(size_t)grid_divide(height, local[0]), (size_t)grid_divide(width, local[1])};
 
-    // printf("\n\n\tvert_from_interm_basic GLOBAL(%zu, %zu), LEVEL=%d\n", global[0], global[1], level);
-    // printf("\n\tSpan=%d \n", _d_gauss->inc.span[level]);
-
-    // float* intermediate = oct_obj.getIntermediateArray()[level];
     float* intermediate = oct_obj.getIntermediate();
-    float* dst_data = oct_obj.getDataArray()[level];
-    // const int span = _d_gauss->inc.span[level];
-    // const float* filter = &_d_gauss->inc.filter[level * GAUSS_ALIGN];
+    float* dst_data = oct_obj.getDataArrayHost()[level]; // Uses host array to get device pointer
 
-    return _device_queue.parallel_for(sycl::nd_range(global, local),
+    // fprintf(stderr,
+    //         "INSIDE VERT_FROM_INTERM_BASIC --> Event created: %p Status: %d\n",
+    //         &intm_write,
+    //         intm_write.get_info<sycl::info::event::command_execution_status>());
+
+    // _device_queue.wait_and_throw();
+
+    return _device_queue.parallel_for(sycl::nd_range{global, local},
                                       intm_write,
                                       absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
 
-    // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
-    //     cgh.depends_on(intm_write); // Set horiz write to intermediate as dependency --
-    //     // Sycl not in order queue by default hence needed
-    //     // std::cout << "Past intm dependency I think" << std::endl;
-    //     cgh.parallel_for(sycl::nd_range(global, local),
-    //                      absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
-    // });
-    // // e.wait();
-    //
-    // _device_queue.wait();
-    // fprintf(stderr, "\n\n\tMy current TESTER POINT\n");
-    // return e;
+    // TODO: Consider adding template argument like in Horiz and either have one for all, w, h and nothing but might be
+    // excessive need to test (and figure out if the templates works as I hope making separeate kernels or somother
+    // smart thing)
 }
-
 } // namespace popsift

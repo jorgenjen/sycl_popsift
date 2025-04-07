@@ -76,12 +76,28 @@ struct ConstInfo
     float desc_tile[16];
 };
 
-void init_constants(float sigma0,
-                    int levels,
-                    float threshold,
-                    float edge_limit,
-                    int max_extrema,
-                    int normalization_multiplier,
-                    ConstInfo* h_consts);
+// extern thread_local ConstInfo h_consts;
+// WARNING: NOT SURE IF THIS NEED TO BE THREAD_LOCAL
+extern ConstInfo h_consts;
+// TODO: Figure out how we want to store these in device global memory which is in beta or another better way in sycl
+// extern __device__ __constant__ ConstInfo d_consts;
+// Currently storing in buffer that has only read_only accessors so that the compiler can hopefully optimize it better
+
+// extern sycl::buffer<ConstInfo> d_consts;
+
+// const on device using USM device
+
+// Not sure if I should use extern or initilize to nullptr
+// extern ConstInfo* d_consts;
+// ConstInfo* d_consts = nullptr;
+
+sycl::event init_constants(float sigma0,
+                           int levels,
+                           float threshold,
+                           float edge_limit,
+                           int max_extrema,
+                           int normalization_multiplier,
+                           sycl::queue& Q,
+                           ConstInfo** d_consts);
 
 } // namespace popsift

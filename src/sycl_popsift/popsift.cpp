@@ -4,6 +4,7 @@
 #include "sycl/device_selector.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
+#include "sycl_popsift/malloc_devt.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
 
@@ -42,19 +43,42 @@ inline void PopSift::initQueue()
     }
 #else
     fprintf(stderr, "Running in CPU_ONLY mode\n");
-    sycl::device dev = sycl::device{sycl::cpu_selector_v};
-    _device_queue = sycl::queue(sycl::context{dev}, dev);
+    // sycl::device dev = sycl::device{sycl::cpu_selector_v};
+    // _device_queue = sycl::queue(sycl::context{dev}, dev);
+
+    // _device_queue =
+    //   sycl::queue{sycl::cpu_selector_v, sycl::property::queue::in_order{},
+    //   sycl::property::queue::enable_profiling{}};
+
+    // _device_queue =
+    //   sycl::queue(sycl::cpu_selector_v, sycl::property::queue::in_order{},
+    //   sycl::property::queue::enable_profiling{});
+
+    try
+    {
+        // sycl::device cpu_dev = sycl::device{sycl::cpu_selector_v};
+        // _device_queue = sycl::queue(
+        //   cpu_dev, sycl::property_list{sycl::property::queue::in_order{},
+        //   sycl::property::queue::enable_profiling{}});
+
+        sycl::device dev = sycl::device{sycl::cpu_selector_v};
+        _device_queue = sycl::queue(sycl::context{dev}, dev);
+    }
+    catch(const sycl::exception& e)
+    {
+        std::cerr << "Failed to create CPU queue: " << e.what() << std::endl;
+        throw;
+    }
+
     // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
 #endif
 }
 
-// std::shared_ptr<sycl::queue> create_queue(sycl::context ctx, sycl::device
-// dev) { dev) {
-//   return std::make_shared<sycl::queue>(ctx, dev);
-// }
-
 PopSift::PopSift(const popsift::Config& config)
 {
+    // should use the confige here to configure but requires that you have the
+    // pyramid and all that
+
     initQueue();
     configure(config);
 
@@ -66,8 +90,19 @@ PopSift::PopSift(const popsift::Config& config)
     std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
 
     // TODO(jorgejen): Setup these threads.
-    _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
-    _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
+    // _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
+    // _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
+
+    std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
+
+    if(_device_queue.is_in_order())
+    {
+        std::cout << "Queue is in-order" << std::endl;
+    }
+    else
+    {
+        std::cout << "Queue is out-of-order" << std::endl;
+    }
 
     // NOTE: Currently not supporting extraction and config like that
     // _pipe._thread_stage1.reset( new std::thread( &PopSift::uploadImages, this
@@ -81,6 +116,7 @@ PopSift::PopSift(const popsift::Config& config)
 
 PopSift::~PopSift()
 {
+    fprintf(stderr, "\n\tDESTROYING POPSIFT CLASS\n");
     if(_isInit)
     {
         uninit();
@@ -110,23 +146,92 @@ void PopSift::uninit()
         return;
     }
 
-    // _h_consts and _h_gauss are on the stack and no need to free
+    // Uncommeetn for now not in use an global...
+    // if(popsift::d_consts != nullptr)
+    //     sycl::free(popsift::d_consts, _device_queue);
+    // else
+    //     std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
+
+    fprintf(stderr, "\n\tINSIDE UNINIT OF POPSIFT\n");
+
     if(_d_gauss != nullptr)
         sycl::free(_d_gauss, _device_queue);
     else
         std::cout << "_d_gauss was a nullptr hennce not freeing" << std::endl;
 
-    fprintf(stderr, "After free _d_gauss");
+    fprintf(stderr, "\n\tFreed _d_gauss -- next is _d_consts = %p\n", _d_consts);
 
+    popsift::ConstInfo* me_consts = _d_consts;
+    // _device_queue
+    //   .single_task([=]() {
+    //       sycl::ext::oneapi::experimental::printf("\n\n\tinside uninit _d_donsts norm_multi %d -- edge_limit %f\n",
+    //                                               me_consts->norm_multi,
+    //                                               me_consts->edge_limit);
+    //   })
+    //   .wait();
+
+    // BUG: Segfaults here might be due to context going out of scope and hence freeing on _device_queue does not work?
+    // Migh be worth trying shared_ptr for the device_queue but I don't really think that is the issue...
     if(_d_consts != nullptr)
         sycl::free(_d_consts, _device_queue);
     else
         std::cout << "_d_consts was a nullptr hennce not freeing" << std::endl;
 
-    fprintf(stderr, "popsift uninit end\n");
+    fprintf(stderr, "\n\tFreed _d_consts\n");
+
     _pipe.uninit();
 
+    fprintf(stderr, "\n\tUninted the pipe\n");
+
     _isInit = false;
+}
+
+sycl::event PopSift::init_gauss_filter()
+{
+    fprintf(stderr, "In init_gauss_filter()\n");
+
+    // Crate gauss filter store it on host
+    popsift::init_filter(_config, &_h_gauss);
+
+    fprintf(stderr, "AT bottom off init_gauss_filter()\n");
+    // Transfer gauss filter to device
+    if(_d_gauss == nullptr)
+    {
+        _d_gauss = popsift::common_sycl::malloc_devT<popsift::GaussInfo>(
+          1, __FILE__, __LINE__, "Failed to allocate gauss filter on device", _device_queue);
+    }
+    else
+        std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl; // Remove down the line
+
+    // Look into partial updates for this one (currently any change to config would be expensive...) but again who
+    // updates config while it's running...
+    return _device_queue.memcpy(_d_gauss, &_h_gauss, sizeof(popsift::GaussInfo));
+}
+
+sycl::event PopSift::init_constants()
+{
+    fprintf(stderr, "in init contsatns\n");
+
+    popsift::init_constants(_config.sigma,
+                            _config.levels,
+                            _config.getPeakThreshold(),
+                            _config._edge_limit,
+                            _config.getMaxExtrema(),
+                            _config.getNormalizationMultiplier(),
+                            &_h_consts);
+
+    // Transfer constants to device
+    if(_d_consts == nullptr)
+    {
+        fprintf(stderr, "\n\n\n\t\t\tALLOC _d_consts \n\n");
+        _d_consts = popsift::common_sycl::malloc_devT<popsift::ConstInfo>(
+          1, __FILE__, __LINE__, "Failed to allocate constants on device", _device_queue);
+    }
+    else
+        std::cout << "\n\n\t\t_d_consts is set -- no malloc needed\n\n" << std::endl; // reomve in future
+
+    // Again look into partial update (but normaly updats won't be done)
+    return _device_queue.memcpy(_d_consts, &_h_consts, sizeof(popsift::ConstInfo));
 }
 
 // Apply configuration should reside here
@@ -134,36 +239,11 @@ bool PopSift::applyConfiguration(bool force)
 {
     if(force || (_config != _shadow_config))
     {
-        // TODO: Mby change the constants and filter to be tied to a class and not have host local
-        // and one that writes to a attribute of a class very odd way of doing it should be changesd
+        // for re ren we need to free and re malloc or change the size or not malloc again if it is already malloced
+        // _d_gauss_writPe = popsift::init_filter(_config, _config.sigma, _config.levels, _device_queue, &_d_gauss);
+        _d_gauss_write = this->init_gauss_filter();
 
-        // WARNING: Currently copying  queue (which I believe should be fine but from experiments NOT the case) but does
-        // seem to not alter the context hence should be fine but as stated above should be refactored
-
-        // for re run we need to free and re malloc or change the size or not malloc again if it is already malloced
-        _d_gauss_write = init_gauss_filter();
-        _d_consts_write = init_constants();
-        fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
-        _d_gauss_write.wait();
-
-        fprintf(
-          stderr, "Queue context: %d\n", _device_queue.get_context().get_info<sycl::info::context::reference_count>());
-
-        _device_queue
-          .submit([&](sycl::handler& cgh) {
-              popsift::GaussInfo* gauss = _d_gauss;
-              cgh.single_task([=]() {
-                  sycl::ext::oneapi::experimental::printf("\n\t\t_d_gauss.required_filter_stages = %d\n\n",
-                                                          gauss->required_filter_stages);
-              });
-          })
-          .wait();
-
-        // fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
-        // _d_consts_write.wait();
-
-        // _d_gauss_write = sycl::event();
-        _d_consts_write = sycl::event();
+        _d_consts_write = this->init_constants();
     }
     _shadow_config = _config;
     return true;
@@ -221,10 +301,7 @@ bool PopSift::private_init(int w, int h)
         return true;
     }
 
-    fprintf(stderr, "Before pyramid cration\n");
     p._pyramid = new popsift::Pyramid(_config, w, h, _device_queue, _d_gauss, _d_consts, _h_consts);
-
-    fprintf(stderr, "After pyramid cration\n");
 
     return true;
 }
@@ -296,7 +373,9 @@ void PopSift::uploadImages()
 
         // job->setImg( img );
         _pipe._queue_stage2.push(job);
+        break;
     }
+    fprintf(stderr, "\n\n\t\tDone uploading\n\n");
     // Push nullptr to stage2 queue to make that one terminates aswell
     // safe to do as we know know no more jobs will be pushed to stage 1 queue
     _pipe._queue_stage2.push(nullptr);
@@ -331,26 +410,30 @@ void PopSift::extractDownloadLoop()
     while((job = p._queue_stage2.pull()) != nullptr)
     {
         // will do nothing if configuraiton has not changed
-
         applyConfiguration();
 
-        // get the next job in queue or wait until a new job arrives
-
         popsift::Image* img = job->getImg();
-        // std::cout << "the job is --> ";
-        job->printJob();
+
+        job->printJob(); // Can probs remove
 
         fprintf(stderr, "Before priv init\n");
         private_init(img->getWidth(), img->getHeight());
 
-        fprintf(stderr, "After priv init\n");
+        // _device_queue.wait();
 
-        // img->print_region(4, 4, 20, 20);
+        fprintf(stderr, "\n\tBefore step one queue clear\n");
 
-        // DO THE JOB!!!
+        p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
-        std::vector<sycl::event> dependencies =
-          p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+        // p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+
+        // popsift::ConstInfo* me_consts = _d_consts;
+        // _device_queue
+        //   .single_task([=]() {
+        //       sycl::ext::oneapi::experimental::printf(
+        //         "_d_donsts norm_multi %d -- edge_limit %f", me_consts->norm_multi, me_consts->edge_limit);
+        //   })
+        //   .wait();
 
         // FUFULL THE PROMISE
 
@@ -365,9 +448,11 @@ void PopSift::extractDownloadLoop()
         // uploaded Image object is no longer needed, release for reuse
         p._unused.push(img);
 
-        p._pyramid->step2(_config, dependencies, _d_consts_write);
+        // p._pyramid->step2(_config, {sycl::event()}, _d_consts_write);
+        p._pyramid->step2(_config, _d_consts_write);
 
-        // _device_queue.wait();
+        _device_queue.wait_and_throw();
+        fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");
         fflush(stdout);
         fflush(stderr);
         job->jobDone(5);
@@ -400,7 +485,7 @@ SiftJob::SiftJob(int w, int h, const unsigned char* imageData)
 
 SiftJob::~SiftJob()
 {
-    fprintf(stderr, "Freeing _imageData\n");
+    fprintf(stderr, "\n\tDESTROYING SIFTJOB\n");
     free(_imageData);
 }
 
@@ -421,16 +506,17 @@ void SiftJob::setImg(popsift::Image* img, const float& upscaleFactor)
 
     img->resetDimensions(_w, _h, scaled_w, scaled_h);
 
-    img->copy_src_dev(_imageData).wait(); // copy src to device and wait for it to finish
+    sycl::event src_img_transfer = img->copy_src_dev(_imageData);
 
     // img->load(_imageData);
     // img->load_divide(_imageData);
     // img->load_divide_point(_imageData, scaled_w);
     // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
-    _img_transfer_event = img->load_linear(scaled_w);
-    // _img_transfer_event = img->load_divide_point(_imageData, scaled_w);
-    _img = img;
-    _img_transfer_event.wait(); // REMOVE no need to wait here
+    _img_transfer_event = img->load_linear(scaled_w, src_img_transfer);
+
+    // _img_transfer_event.wait();
+    // fprintf(stderr, "\n\tWe got past sending og image to device!!! and doing load lienar\n");
+    _img = img; // Why are you copying the image class pointer?
 }
 
 // Not sure if this is a good way of doing it
@@ -458,28 +544,132 @@ void PopSift::Pipe::uninit()
     }
 }
 
-sycl::event PopSift::init_gauss_filter()
+void PopSift::allMainThread()
 {
-    fprintf(stderr, "In init_gauss_filter()\n");
+#define break_in_uploadImages 1
 
-    // Crate gauss filter store it on host
-    popsift::init_filter(_config, &_h_gauss);
+#if break_in_uploadImages
+    uploadImages();
 
-    fprintf(stderr, "AT bottom off init_gauss_filter()\n");
-    // Transfer gauss filter to device
-    try
-    {
-        if(_d_gauss == nullptr)
-            _d_gauss = sycl::malloc_device<popsift::GaussInfo>(1, _device_queue);
-        else
-            std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl;
-    }
-    catch(const sycl::exception& e)
-    {
-        std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-    }
+    extractDownloadLoop();
+    _device_queue.wait_and_throw();
 
-    return _device_queue.memcpy(_d_gauss, &_h_gauss, sizeof(popsift::GaussInfo));
+#else
+
+    // START: uploadImages();
+    SiftJob* job = _pipe._queue_stage1.pull();
+
+    popsift::Image* img = _pipe._unused.pull(); // getting a unused Image (reusing it)
+
+    job->setImg(img, _device_queue, _config.getUpscaleFactor());
+
+    // _pipe._queue_stage2.push(job);
+    fprintf(stderr, "\n\n\t\tDone uploading you little DOGGY DOG\n\n");
+
+    // _device_queue.wait_and_throw();
+    // START extractDownloadLoop();
+
+    applyConfiguration(true); // Applies configuration is only run once as
+    Pipe& p = _pipe;
+
+    // SiftJob* job = p._queue_stage2.pull(); // Same job pointer as above
+
+    // popsift::Image* img = job->getImg(); // same img pointer as above
+
+    job->printJob(); // Can probs remove
+
+    private_init(img->getWidth(), img->getHeight());
+
+    // _device_queue.wait();
+
+    fprintf(stderr, "\n\tBefore step one queue clear\n");
+
+    std::vector<sycl::event> dependencies = p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+
+    popsift::ConstInfo* me_consts = _d_consts;
+    _device_queue
+      .single_task([=]() {
+          sycl::ext::oneapi::experimental::printf(
+            "_d_donsts norm_multi %d -- edge_limit %f", me_consts->norm_multi, me_consts->edge_limit);
+      })
+      .wait();
+
+    // FUFULL THE PROMISE
+
+    cout << "Jobby: -- " << endl;
+    job->printJob();
+
+    // uploaded input image no longer needed, release for reuse
+    p._unused.push(img);
+
+    // p._pyramid->step2(_config, dependencies, _d_consts_write);
+
+    // _device_queue.wait();
+    _device_queue.wait_and_throw();
+
+    fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");
+    fflush(stdout);
+    fflush(stderr);
+    job->jobDone(5);
+
+    // _device_queue.wait(); // Having a wait here before I have all events configured properly
+    private_uninit();
+#endif
+}
+
+// Helper function for development
+// ranges are inclusive on 0th dimension and exclusive on 1th dimension
+// void PopSift::printImageRegion(sycl::range<2> horiz, sycl::range<2> vert)
+// {
+//   // print out the first 10 bytes of the image
+//   using namespace sycl;
+//
+//   // wait for all previous enqued task to end before doing the print to show
+//   desired data _device_queue.wait();
+//
+//   host_accessor<unsigned char, 2, access::mode::read> h_acc(_imageData);
+//
+//   if (vert.get(0) > _w && vert.get(0) < 0 ||
+//       vert.get(1) > _w && vert.get(1) < 0 ||
+//       vert.get(0) >= vert.get(1)
+//   )
+//   {
+//     std::cout << "Image region is not legal" << std::endl;
+//   }
+//
+//   std::cout << "Image region: horiz = (" << horiz.get(0) << " -> " <<
+//   horiz.get(1)
+//             << ") vert = (" << vert.get(0) << " -> " << vert.get(1) << ")" <<
+//             std::endl;
+//   // using range in a odd way (I know :D)
+//   for (int i = vert.get(0); i < vert.get(1); ++i)
+//   {
+//     for (int j = horiz.get(0); j < horiz.get(1); ++j)
+//     {
+//          std::printf("%03u ", h_acc[j][i]);
+//     }
+//        std::cout << std::endl;
+//   }
+// }
+
+// Crate gauss filter store it on host
+popsift::init_filter(_config, &_h_gauss);
+
+fprintf(stderr, "AT bottom off init_gauss_filter()\n");
+// Transfer gauss filter to device
+try
+{
+    if(_d_gauss == nullptr)
+        _d_gauss = sycl::malloc_device<popsift::GaussInfo>(1, _device_queue);
+    else
+        std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl;
+}
+catch(const sycl::exception& e)
+{
+    std::cerr << "Memory allocation failed: " << e.what() << std::endl;
+}
+
+return _device_queue.memcpy(_d_gauss, &_h_gauss, sizeof(popsift::GaussInfo));
 }
 
 sycl::event PopSift::init_constants()

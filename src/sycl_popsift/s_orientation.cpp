@@ -350,6 +350,7 @@ void Pyramid::orientation(const Config& conf)
             sycl::range global{1, num * 32};
 
             _device_queue.submit([&](sycl::handler& cgh) {
+                cgh.depends_on({_dobuf_write});
                 // sycl::local_accessor<float, 1> -- is the type
                 auto hist = sycl::local_accessor<float, 1>(64, cgh);
                 auto sm_hist = sycl::local_accessor<float, 1>(64, cgh);

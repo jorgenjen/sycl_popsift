@@ -26,7 +26,7 @@ namespace popsift {
 
 // __align__(128) thread_local GaussInfo h_gauss;
 // thread_local GaussInfo h_gauss;
-GaussInfo h_gauss; // not sure if I need thread local and not sure how to do align
+// GaussInfo h_gauss; // not sure if I need thread local and not sure how to do align
 
 // TODO: Implement an equivalent print function that would work with sycl
 // void print_gauss_filter_symbol( int columns )
@@ -92,12 +92,11 @@ GaussInfo h_gauss; // not sure if I need thread local and not sure how to do ali
 //     printf("\n");
 // }
 
-/*************************************************************
- * Initialize the Gauss filter table in constant memory
- *************************************************************/
-
-// Modifies passed h_gauss
-void init_filter(const Config& conf, popsift::GaussInfo* h_gauss)
+// It is probably possible to do partial updates of _d_gauss if struct is packed but not sure if it is worth it
+// TODO: Look into partial update of struct on device side as currently the whole host is copied into device no matter
+// how small or large the change is (not sure if there are cases where it would be partial updates when config changes
+// so that is a prerquisite for doing partial updates)
+void init_filter(const Config& conf, GaussInfo* h_gauss) // modifies passed h_gauss
 {
     float sigma0 = conf.sigma;
     int levels = conf.levels;
@@ -176,11 +175,10 @@ void init_filter(const Config& conf, popsift::GaussInfo* h_gauss)
     h_gauss->dd.sigma[0] = b;
     h_gauss->dd.computeBlurTable(h_gauss);
 
-    // NOTE: Copy to device have been moved to popsift class method init_gauss_filter
+    // Copy of host struct have been moved to a method of PopSift class
 
-    // Copy h_gauss to device
-
-    // try
+    // TODO: Implement printGausstables function
+    // if(conf.ifPrintGaussTables())
     // {
     //     if(*d_gauss == nullptr)
     //         *d_gauss = sycl::malloc_device<GaussInfo>(1, Q);

@@ -5,6 +5,7 @@
 #include "sycl_popsift/sift_octave.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 
+#include <cstdio>
 #include <vector>
 
 /* It makes no sense whatsoever to change this value */
@@ -22,7 +23,7 @@ namespace popsift {
 // }
 
 // not sure if we want the se to be inline they were in CUDA popsift
-inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event prev_octave_done)
+inline sycl::event Pyramid::downscale_from_prev_octave(int octave)
 {
     Octave& oct_obj = _octaves[octave];
     Octave& prev_oct_obj = _octaves[octave - 1];
@@ -34,19 +35,23 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave, sycl::event p
     const int src_width = prev_oct_obj.getWidth();
     const int src_height = prev_oct_obj.getHeight();
 
-    float* src_data = prev_oct_obj.getDataArray()[_levels - PREV_LEVEL];
-    float* dst_data = oct_obj.getDataArray()[0]; // Level 0 is the subsampled result
+    float* src_data = prev_oct_obj.getDataArrayHost()[_levels - PREV_LEVEL];
+    float* dst_data = oct_obj.getDataArrayHost()[0];
 
     // sycl::range local{64, 2};
     // sycl::range global{(size_t)grid_divide(dst_width, local.get(0)), (size_t)grid_divide(dst_height, local.get(1))};
     sycl::range local{2, 64};
-    sycl::range global{(size_t)grid_divide(dst_height, local.get(0)), (size_t)grid_divide(dst_width, local.get(1))};
+    sycl::range global{(size_t)grid_divide(dst_height, local[0]), (size_t)grid_divide(dst_width, local[1])};
 
     // printf("\n\n\tIN downscale_from_prev_octave GLOBAL(%zu, %zu), OCTAVE=%d\n", global[0], global[1], octave);
+    // sycl::event dependency = prev_oct_obj.getLevelEvent(_levels - PREV_LEVEL);
+    sycl::event dependency = prev_oct_obj._level_complete_events[_levels - PREV_LEVEL];
 
     return _device_queue.submit([&](sycl::handler& cgh) {
-        cgh.depends_on(prev_octave_done);
+        cgh.depends_on(dependency);
         cgh.parallel_for(sycl::nd_range(global, local), [=](sycl::nd_item<2> it) {
+            // int x = it.get_global_id(0);
+            // int y = it.get_global_id(1);
             int x = it.get_global_id(1);
             int y = it.get_global_id(0);
 
@@ -83,38 +88,46 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
 
     // sycl::range local{1024, 1};
     // sycl::range global{(size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1))};
-
-    // sycl::range local{1, 1, 1024};
-    // sycl::range global{
-    //   (size_t)(max_level - 1), (size_t)grid_divide(height, local.get(0)), (size_t)grid_divide(width, local.get(1))};
-
-    // Two dimensional better as we can reuse prev level in loop
     sycl::range local{1, 1024};
-    // sycl::range global{(size_t)grid_divide(height, local.get(0)), (size_t)grid_divide(width, local.get(1))};
+    sycl::range global{(size_t)grid_divide(height, local[0]), (size_t)grid_divide(width, local[1])};
 
-    // no point in doing grid_divide when local is 1 for dim 0
-    sycl::range global{(size_t)height, (size_t)grid_divide(width, local.get(1))};
-
-    // NOTE: To utilize global_linear_id I need to have all levels in each octave to be in one contighous chunk of
-    // memory so that the indexing is correct (probably better anyways for performance)
+    // _device_queue.wait();
 
     float** data_array = oct_obj.getDataArray();
     float** dog_array = oct_obj.getDogArray();
-    // another way to call lambda IDK what is better
+
+#define reverse 1
+#if reverse
 
     // Having this go from highest to lowest level would probably be better for cache hits
     return _device_queue.parallel_for<make_dog>(
-      sycl::nd_range{global, local}, {octave_complete}, [=](sycl::nd_item<2> it) {
-          int d1 = it.get_global_id(1); // x
-          int d0 = it.get_global_id(0); // y
-          // int pos = it.get_global_linear_id(); // pixel position // Can't use combined in the case when widht !=
-          // global[1]
+      sycl::nd_range{global, local},
+      {octave_complete, oct_obj.getDataArrayWriteEvent(), oct_obj.getDogArrayWriteEvent()},
+      [=](sycl::nd_item<2> it) {
+          int x = it.get_global_id(1);
+          int y = it.get_global_id(0);
+          if(x >= width)
+              return;
 
-          int pos = d1 + d0 * width;
+          // Reverse for potentially more cache hits for first access
+          float upper = data_array[max_level - 1][x + y * width];
+          for(int level = max_level - 2; level >= 0; --level)
+          {
+              const float lower = data_array[level][x + y * width];
 
-          // Can probably template this out if local perfectly divides global (but  I guess it won't
-          // happen too often hence might not be worth?)
-          if(d1 > width)
+              dog_array[level][x + y * width] = upper - lower;
+              upper = lower;
+          }
+      });
+#else
+
+    return _device_queue.parallel_for<make_dog>(
+      sycl::nd_range{global, local},
+      {octave_complete, oct_obj.getDataArrayWriteEvent(), oct_obj.getDogArrayWriteEvent()},
+      [=](sycl::nd_item<2> it) {
+          int x = it.get_global_id(1);
+          int y = it.get_global_id(0);
+          if(x >= width)
               return;
 
           float upper = data_array[max_level - 1][pos];
@@ -125,65 +138,17 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
               upper = lower;
           }
       });
-
-    // return sycl::event();
-    // ======
-
-    // return _device_queue.parallel_for<make_dog>(
-    //   sycl::nd_range{global, local}, {octave_complete}, [=](sycl::nd_item<2> it) {
-    //       int x = it.get_global_id(0);
-    //       int y = it.get_global_id(1);
-    //       if(x > width)
-    //           return;
-    //
-    //       float a = data_array[0][x + y * width];
-    //       for(int level = 0; level < max_level - 1; level++)
-    //       {
-    //           const float b = data_array[level + 1][x + y * width];
-    //
-    //           dog_array[level][x + y * width] = b - a;
-    //           a = b;
-    //       }
-    //   });
-
-    // dim3 block(1024, 1);
-    // dim3 grid;
-    // grid.x = grid_divide(width, block.x);
-    // grid.y = grid_divide(height, block.y);
-    // grid.z = 1;
-    //
-    // gauss::make_dog<<<grid, block, 0, stream>>>(
-    //   oct_obj.getDataTexPoint(), oct_obj.getDogSurface(), oct_obj.getWidth(), oct_obj.getHeight(), max_level);
-
-    //     __global__ void make_dog(
-    //   cudaTextureObject_t src_data, cudaSurfaceObject_t dog_data, const int w, const int h, const int max_level)
-    // {
-    //     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    //     const int idy = blockIdx.y * blockDim.y + threadIdx.y;
-    //
-    //     float a = readTex(src_data, idx, idy, 0);
-    //     for(int level = 0; level < max_level - 1; level++)
-    //     {
-    //         const float b = readTex(src_data, idx, idy, level + 1);
-    //
-    //         surf2DLayeredwrite(b - a, dog_data, idx * 4, idy, level, cudaBoundaryModeZero);
-    //         a = b;
-    //     }
-    // }
-
-    // POP_SYNC_CHK;
+#endif
 }
 
-inline sycl::event Pyramid::horiz_from_prev_level(int octave,
-                                                  int level,
-                                                  GaussTableChoice useInterpolatedGauss,
-                                                  sycl::event prev_level_write)
+inline sycl::event Pyramid::horiz_from_prev_level(int octave, int level, GaussTableChoice useInterpolatedGauss)
+// sycl::event prev_level_write)
 {
     switch(useInterpolatedGauss)
     {
         // case Interpolated_FromPrevious: horiz_from_prev_level_pairs(octave, level, stream); break;
         case Interpolated_FromPrevious: cout << "horiz_from_prev_level_pairs not implemented yet"; break;
-        case NotInterpolated_FromPrevious: return horiz_from_prev_level_basic(octave, level, prev_level_write); break;
+        case NotInterpolated_FromPrevious: return horiz_from_prev_level_basic(octave, level); break;
         default: POP_FATAL("Missing case in horizontal Gauss filter from previous level"); break;
     }
     return sycl::event(); // just to return for now to avoid warning for compiler
@@ -212,10 +177,7 @@ sycl::event Pyramid::vert_from_interm(int octave,
     return sycl::event(); // just to return for now to avoid warning for compiler
 }
 
-std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
-                                                Image* base_img,
-                                                sycl::event d_gauss_write,
-                                                sycl::event img_transfer)
+void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_gauss_write, sycl::event img_transfer)
 {
     // #if (PYRAMID_PRINT_DEBUG==1)
     //     cerr << "Entering " << __FUNCTION__ << " with base image "  << endl
@@ -244,6 +206,11 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
     for(int octave = 0; octave < _num_octaves; octave++)
     {
         Octave& oct_obj = _octaves[octave];
+        // std::vector<sycl::event>& lvl_events = oct_obj._level_complete_events;
+
+        // Just for print outs
+        int w = _octaves[octave].getWidth();
+        int h = _octaves[octave].getHeight();
 
         for(int level = 0; level < _levels; level++)
         {
@@ -251,7 +218,8 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
             {
                 if(octave == 0)
                 {
-                    sycl::event horiz = horiz_from_input_image(conf, base_img, {d_gauss_write, img_transfer});
+                    sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                    // oct_obj.setLevelEvent(0, vert_from_interm(octave, 0, gaussTableChoice, horiz));
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
 
                     int w = _octaves[0].getWidth();
@@ -269,69 +237,46 @@ std::vector<sycl::event> Pyramid::build_pyramid(const Config& conf,
                 }
                 else
                 {
-                    // fprintf(stderr, "\n\n\nNow I run yes\n\n\n");
-                    Octave& prev_oct_obj = _octaves[octave - 1];
-
-                    // ensure event dependency is correct
-                    oct_obj._level_complete_events[0] =
-                      downscale_from_prev_octave(octave, prev_oct_obj._level_complete_events[_levels - PREV_LEVEL]);
+                    // oct_obj.setLevelEvent(0, downscale_from_prev_octave(octave));
+                    oct_obj._level_complete_events[0] = downscale_from_prev_octave(octave);
                 }
             }
             else
             {
-                // BUG: Horiz_from_prev_level causes seg fault -- or mby not??
+                // Depends on set level event from prev level
+                sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
 
-                sycl::event horiz =
-                  horiz_from_prev_level(octave, level, gaussTableChoice, oct_obj._level_complete_events[level - 1]);
-
-                // fprintf(stderr, "in octave %d at level %d -- Before event access %d\n", octave, level, level - 1);
-                oct_obj._level_complete_events[level] = vert_from_interm(octave, level, gaussTableChoice, horiz);
+                // oct_obj.setLevelEvent(level, vert_from_interm_basic(octave, level, horiz));
+                oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
             }
         }
     }
+    // _octaves[_num_octaves - 1]._level_complete_events[_levels - 1].wait();
+    // _device_queue.wait_and_throw();
+    fprintf(stderr, "\n\tFinal octave is done so pyramid is done!!\n\n");
 
-    fprintf(stderr, "\n\t\tPYRAMID BUILD BUILT NOW RETURN BEFROE DOGGOS\n");
-    _device_queue.wait(); // Add wait to see if event passing is the problem
-    // return {sycl::event()};
-
-#define INSPTECT_OCTAVE 1
-#define INSPTECT_LEVEL 0
-    Octave& obj = _octaves[INSPTECT_OCTAVE];
-    int w = obj.getWidth();
-    int h = obj.getHeight();
-
-    Octave& prev_obj = _octaves[INSPTECT_OCTAVE - 1];
-    int prev_w = prev_obj.getWidth();
-    int prev_h = prev_obj.getHeight();
-
-    float* src_data = prev_obj.getDataArray()[_levels - PREV_LEVEL];
-
-    popsift::sycl_common::print_region(prev_obj.getDataArray()[_levels - PREV_LEVEL],
-                                       "Sub sampling source... ",
-                                       prev_w - 8,
-                                       prev_w,
-                                       prev_h - 8,
-                                       prev_h,
-                                       prev_w,
-                                       _device_queue);
-
-    popsift::sycl_common::print_region(
-      obj.getDataArray()[INSPTECT_LEVEL], "Level 0 for octave 0 :D -- ", w - 8, w, h - 8, h, w, _device_queue);
-
-    std::vector<sycl::event> make_dog_events;
-    make_dog_events.reserve(_num_octaves);
-    fprintf(stderr, "num octave = %d -- _levels = %d\n", _num_octaves, _levels);
-    for(int octave = 0; octave < _num_octaves; octave++)
+    for(int octave = 0; octave < _num_octaves; octave++) //
     {
         Octave& oct_obj = _octaves[octave];
 
-        // Final level done of octave is dependend event for it to run
-        make_dog_events.push_back(dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]));
+        oct_obj._dog_done_event = dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]);
     }
 
-    // _device_queue.wait(); // remove in future when you pass events from dog_from_blurred
+    // _device_queue.wait_and_throw();
 
-    return make_dog_events;
+    fprintf(stderr, "\n\tDone with DoG's\n\n");
+
+    // #define me_oct 4
+    // #define me_lvl 5
+    //
+    //     Octave& oct = _octaves[me_oct];
+    //     int w = oct.getWidth();
+    //     int h = oct.getHeight();
+    //
+    //     popsift::sycl_common::print_region(
+    //       oct.getDataArrayHost()[me_lvl], "Me doggy dog dog  new -> ", w - 8, w, h - 8, h, w, _device_queue);
+
+    // return {sycl::event()};
 }
 
 } // namespace popsift
