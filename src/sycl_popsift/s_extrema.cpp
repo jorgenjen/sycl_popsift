@@ -33,9 +33,9 @@
 namespace popsift {
 #define LOCAL_X 32
 
-#define SUB_GROUP_COUNTING 0
+#define SUB_GROUP_COUNTING 1
 
-#if SUB_GROUP_COUNTING
+#if SUB_GROUP_COUNTING == 1
 // template<int HEIGHT> // did not do anything
 // Must take care here as sub-group will not be 32 in all cases like a warp in cuda
 // should also make the blocks based on sub-group multiplier(idk what the name was) preference of the device used
@@ -53,45 +53,52 @@ static inline unsigned int extrema_count(bool indicator, int* extrema_counter, s
       sub_group, indicator ? (1u << sub_group.get_local_id()[0]) : 0u, sycl::ext::oneapi::bit_or<uint32_t>());
     int group_count = sycl::popcount(mask);
 
-    int write_index = 0;   // Must be set to zero (Incorrect result otherwise)
+    int base = 0;          // Must be set to zero (Incorrect result otherwise)
     if(sub_group.leader()) // is always work-item with local_id 0 in the sub_group
     {
         // The atomic add returns the old value in extrema_coutner before the addition which is considered the base
         // As each thread uses this and adds to it's own counter (write_index) how many of the threads in the
         // sub-group before it had it's indicator to true
-        write_index = sycl::atomic_ref<int,
-                                       sycl::memory_order_relaxed,
-                                       sycl::memory_scope_device,
-                                       sycl::access::address_space::global_space>(*extrema_counter) += group_count;
+        base = sycl::atomic_ref<int,
+                                sycl::memory_order_relaxed,
+                                sycl::memory_scope_device,
+                                sycl::access::address_space::global_space>(*extrema_counter)
+                 .fetch_add(group_count);
     }
 
     // work-item 0 broadcassts to all other same as leader work-item
     // everyone now get's the base value that they can add to
-    write_index = sycl::group_broadcast(sub_group, write_index, 0);
+    base = sycl::group_broadcast(sub_group, base, 0);
 
     // Counts all 1 in mask with position lower than itself (exlusive) to start from zero for write array
-    return write_index + sycl::popcount(mask & ((1 << sub_group.get_local_id()[0]) - 1));
+    return base + sycl::popcount(mask & ((1 << sub_group.get_local_id()[0]) - 1));
 #else
     // Using scan
     int item_offset = sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
-    int write_index = 0; // Must be set to zero (Incorrect result otherwise)
-    if(sub_group.get_local_id()[0] == sub_group.get_local_range()[0] - 1) // Only last work-item has complete count
-    {
-        // The atomic add returns the old value in extrema_coutner before the addition which is considered the base
-        // As each thread uses this and adds to it's own counter (write_index) how many of the threads in the
-        // sub-group before it had it's indicator to true
-        write_index = sycl::atomic_ref<int,
-                                       sycl::memory_order_relaxed,
-                                       sycl::memory_scope_device,
-                                       sycl::access::address_space::global_space>(*extrema_counter) += item_offset;
-    }
-    // work-item 0 broadcassts to all other same as leader work-item
-    // everyone now get's the base value that they can add to
-    write_index = sycl::group_broadcast(sub_group, write_index, 0);
 
-    // Either have to subtract here or do exclusive scan and add for the atomic addition
-    // (not sure what is better probs the same - but should be better than scan and reduce)
-    return write_index + item_offset - (indicator ? 1 : 0); // Need to subtract self to have it zero based
+    int leader_index = sub_group.get_local_range()[0] - 1; // only last work-item in sub-group has final/complete value
+    int base = 0;
+    if(sub_group.get_local_id()[0] == leader_index)
+    {
+        base = sycl::atomic_ref<int,
+                                sycl::memory_order_relaxed,
+                                sycl::memory_scope_device,
+                                sycl::access::address_space::global_space>(*extrema_counter)
+                 .fetch_add(item_offset);
+        // += short hand for fetch_add does not work (why that is I have no clue??)
+        // It's says in documentation that they are equivalent but when  I use the shorthand it for some reason does not
+        // write to 0 and writes to one futher than it shoudl and one random location is zeroed which indicates one
+        // location was writn to twice
+    }
+    // leader broadcast to all other the value before the add (the base each use to get write_index to return)
+    // everyone now get's the base value that they can add to
+    base = sycl::group_broadcast(sub_group, base, leader_index);
+
+    // Write_index is base + inclusive offset minus 1 is fine as we should subtract when indicator is true to have
+    // exclusive and write to 0'th index but when indicator is false the returned write index is not used it won't write
+    // when it does not have extrema (hence we can just always subtract)
+    return base + item_offset - 1;
+
 #endif
 }
 #else
@@ -102,27 +109,28 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
     // Work group count only one does the add
     sycl::group<3> work_group = it.get_group();
     int local_linear = it.get_local_linear_id();
-    // reduce over the whole work group
-    // Final result is the count but we don't use it as write-index since it is zero based
+
+    // NOTE: Could also use inclusive scan and do minus - 1 for returned write index like non-mask sub_group version
+    // above (not sure what is best)
     int group_count = sycl::exclusive_scan_over_group(work_group, indicator ? 1 : 0, sycl::plus<>());
 
     // Could not find a built in way to compute this
     int last_work_item = it.get_local_range(0) * it.get_local_range(1) * it.get_local_range(2) - 1;
-    int write_index = 0; // Must be zero (completely wrong otherwise)
+    int base = 0; // Must be zero (completely wrong otherwise)
 
     if(local_linear == last_work_item) // only last has the complete value
     {
         // Need to add it's own value to the exclusive result making it inclusive for the atmoic add
         // Returns the base which is the value before tha this add was done(old value)
-        write_index = sycl::atomic_ref<int,
-                                       sycl::memory_order_relaxed,
-                                       sycl::memory_scope_device,
-                                       sycl::access::address_space::global_space>(*extrema_counter) +=
-          (group_count + (indicator ? 1 : 0));
+        base = sycl::atomic_ref<int,
+                                sycl::memory_order_relaxed,
+                                sycl::memory_scope_device,
+                                sycl::access::address_space::global_space>(*extrema_counter)
+                 .fetch_add((group_count + (indicator ? 1 : 0)));
     }
 
-    write_index = sycl::group_broadcast(work_group, write_index, last_work_item); // last broadcasts
-    return write_index + group_count;
+    base = sycl::group_broadcast(work_group, base, last_work_item); // last item broadcasts to everyone
+    return base + group_count;
 }
 
 #endif
@@ -771,20 +779,18 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
                                                                                          _d_consts,
                                                                                          _dct,
                                                                                          _dobuf));
-                    // _d_consts->max_extrema));
                 });
                 break;
         }
 
+#if 1
+        // To Debug som information Remove  when all good and working
         _device_queue.wait();
-
-#if true // seems to print similar value (float differences) to the cuda version from the few samples I've compared and
-         // the number of extrema is exactly the same for each octave
         _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, d_consts = _d_consts]() {
-            sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
             // For all octaves dct->ext_ct[octave] is 8 times what it should be for sub-group of 8 hance every thread
             // in sub-group must be doing the atomic add but I don't know how to make it stop doing that
             int max_extrema = d_consts->max_extrema;
+            sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
 
             if(octave == 0)
             {
@@ -809,6 +815,7 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
 #endif
     }
 
+#if 1
     _device_queue.wait();
     _device_queue.single_task([=, dct = _dct, num_octaves = _num_octaves]() {
         for(int o = 0; o < num_octaves; ++o)
@@ -820,9 +827,7 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
     for(auto size : sg_sizes)
         std::cout << size << " ";
     std::cout << std::endl;
-    // fflush(stderr);
-    // fflush(stdout);
-    // fprintf(stderr, "\n\n\t\tHello there mate how we doin");
+#endif
 }
 
 } // namespace popsift
