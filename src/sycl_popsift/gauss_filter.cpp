@@ -180,13 +180,34 @@ void init_filter(const Config& conf, GaussInfo* h_gauss) // modifies passed h_ga
     // TODO: Implement printGausstables function
     // if(conf.ifPrintGaussTables())
     // {
-    //     print_gauss_filter_symbol<<<1, 1>>>(10);
-    //
-    //     POP_SYNC_CHK;
-    //
-    //     err = cudaGetLastError();
-    //     POP_CUDA_FATAL_TEST(err, "Gauss Symbol info failed: ");
+    //     if(*d_gauss == nullptr)
+    //         *d_gauss = sycl::malloc_device<GaussInfo>(1, Q);
+    //     else
+    //         std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl;
     // }
+    // catch(const sycl::exception& e)
+    // {
+    //     std::cerr << "Memory allocation failed: " << e.what() << std::endl;
+    //     // Here, d_consts was never assigned, so there's no need to free it
+    // }
+    // // sycl::event write_gauss = Q.memcpy(d_consts, &h_consts, sizeof(GaussInfo));
+    //
+    // return Q.memcpy(*d_gauss, &h_gauss, sizeof(GaussInfo));
+    //
+    // // cudaError_t err;
+    // // err = cudaMemcpyToSymbol(d_gauss, &h_gauss, sizeof(GaussInfo), 0, cudaMemcpyHostToDevice);
+    // // POP_CUDA_FATAL_TEST(err, "cudaMemcpyToSymbol failed for Gauss kernel initialization: ");
+    //
+    // // TODO: Implement printGausstables function
+    // // if(conf.ifPrintGaussTables())
+    // // {
+    // //     print_gauss_filter_symbol<<<1, 1>>>(10);
+    // //
+    // //     POP_SYNC_CHK;
+    // //
+    // //     err = cudaGetLastError();
+    // //     POP_CUDA_FATAL_TEST(err, "Gauss Symbol info failed: ");
+    // // }
 }
 
 void GaussInfo::clearTables()

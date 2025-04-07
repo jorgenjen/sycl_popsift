@@ -10,7 +10,9 @@
 #include "gauss_filter.hpp"
 #include "sift_constants.hpp"
 #include "sift_pyramid.hpp"
+#include "sycl/kernel_bundle_enums.hpp"
 #include "sycl/nd_range.hpp"
+#include "sycl/usm.hpp"
 
 #include <cmath>
 
@@ -64,6 +66,8 @@ class Horiz
             span = d_gauss->inc.span[level];
         }
 
+        const float* filter = &d_gauss->dd.filter[0];
+        const int span = d_gauss->dd.span[0];
         // could have two different kernels one with this and one without
         // depending on if it is perfectly divisible by 128 but might not be worth it... Test
 

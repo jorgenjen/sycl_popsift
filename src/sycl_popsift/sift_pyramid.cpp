@@ -13,28 +13,10 @@
 
 namespace popsift {
 
-// T* malloc_devT(int num, sycl::queue& Q)
-// template<class T>
-// T* malloc_devT(int num, const char* file, int line, sycl::queue Q)
-// {
-//     T* ptr;
-//     try
-//     {
-//         ptr = sycl::malloc_device<T>(num, Q);
-//     }
-//     catch(const sycl::exception& e)
-//     {
-//         std::stringstream ss;
-//         ss << "Memory allocation failed" << e.what();
-//         POP_FATAL_FL(ss.str(), file, line);
-//     }
-//     return ptr;
-// }
-
 Pyramid::Pyramid(const Config& config,
                  int width,
                  int height,
-                 sycl::queue& Q,
+                 sycl::queue Q,
                  popsift::GaussInfo* d_gauss,
                  popsift::ConstInfo* d_consts,
                  popsift::ConstInfo& h_consts)
@@ -49,17 +31,21 @@ Pyramid::Pyramid(const Config& config,
     // _octaves = new Octave[_num_octaves];
     // Could not find a way to use C array so using vector
 
+    fprintf(stderr, "Before emplace back and reserve\n");
     _octaves.reserve(_num_octaves);
     for(int i = 0; i < _num_octaves; ++i)
     {
-        _octaves.emplace_back(Q);
+        // _octaves.emplace_back(_device_queue.get_context(), _device_queue.get_device());
+        _octaves.emplace_back(_device_queue);
     }
+    fprintf(stderr, "After emplace back and reserve\n");
 
     int w = width;
     int h = height;
     for(int o = 0; o < _num_octaves; o++)
     {
         _octaves[o].debugSetOctave(o);
+
         _octaves[o].alloc(config, w, h, _levels);
         w = ceilf(w / 2.0f);
         h = ceilf(h / 2.0f);
@@ -87,12 +73,19 @@ Pyramid::Pyramid(const Config& config,
     _dobuf = popsift::sycl_common::malloc_devT<DevBuffers>(
       1, __FILE__, __LINE__, "Allocating device DevBuffers struct failed", Q);
 
+    // TODO: Rethink structure of memory not sure if we actually want to use shared here as it results in a large
+    // penalty in terms of performance (potentially)
+    _dobuf = popsift::sycl_common::malloc_sharedT<DevBuffers>(
+      1, __FILE__, __LINE__, "Allocating device DevBuffers struct failed", _device_queue);
+
+    fprintf(stderr, "Before i_ext_dat\n");
     // For 7 octaves case the total memory useage for this array is 196MB
     // _dobuf->i_ext_dat[0] = popsift::sycl_common::malloc_devT<InitialExtremum>(
     //   sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", Q);
     _dobuf_host.i_ext_dat[0] = popsift::sycl_common::malloc_devT<InitialExtremum>(
       sz, __FILE__, __LINE__, "Device InitialExtremum array allocation failed", Q);
 
+    fprintf(stderr, "after i_ext_dat\n");
     // For 7 octaves case the total memory useage for this array is 2.8MB
     // _dobuf->i_ext_off[0] = popsift::sycl_common::malloc_devT<int>(
     // sz, __FILE__, __LINE__, "Device extremum offset array allocation failed", Q);
@@ -147,7 +140,7 @@ Pyramid::Pyramid(const Config& config,
 Pyramid::~Pyramid()
 {
     // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
-    printf("Destroying the Pyramid!\n");
+    fprintf(stderr, "Destroying the Pyramid!\n");
     sycl::free(_d_extrema_num_blocks, _device_queue);
     sycl::free(_dct, _device_queue);
 
@@ -205,6 +198,7 @@ void Pyramid::resetDimensions(const Config& conf, int width, int height)
     }
 }
 
+// Fine to use on device memory as it is just pointer arithmetic
 int* Pyramid::getNumberOfBlocks(int octave) { return &_d_extrema_num_blocks[octave]; }
 
 sycl::event Pyramid::readDescCountersFromDevice() { return _device_queue.memcpy(&_hct, _dct, sizeof(ExtremaCounters)); }

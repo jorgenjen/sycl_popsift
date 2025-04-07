@@ -68,7 +68,7 @@ class SiftJob
     int getHost(); // currently using int to have same pattern of
                    // initialization and such
 
-    void setImg(popsift::Image* img, sycl::queue q, const float& upscaleFactor);
+    void setImg(popsift::Image* img, const float& upscaleFactor);
 
     popsift::Image* getImg();
 

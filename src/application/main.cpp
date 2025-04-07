@@ -29,7 +29,7 @@ using namespace std;
 
 // should probably use a similar options struct as popsift in the future
 // revisions just for initial layout
-static void parseargs(int argc, char** argv, std::string& inputFile)
+static void parseargs(int argc, char** argv, popsift::Config* config, std::string& inputFile)
 {
     // using namespace boost::program_options;
     using boost::program_options::options_description;
@@ -49,10 +49,21 @@ static void parseargs(int argc, char** argv, std::string& inputFile)
 
           ("input-file,i", value<std::string>(&inputFile)->required(), "Input file");
     }
+    // options_description modes("Modes");
+    // {
+    //     modes.add_options()("cpu-only",
+    //                         boost::program_options::bool_switch()->notifier([&](bool a) {
+    //                             if(a)
+    //                                 config->setCpuOnly();
+    //                         }),
+    //                         "Use CPU only no accelerators.");
+    // }
+
     options_description all("Allowed options");
 
     // currently just options
     /* all.add(options).add(parameters).add(modes).add(informational); */
+    // all.add(options).add(modes);
     all.add(options);
     variables_map vm;
 
@@ -166,6 +177,7 @@ int main(int argc, char** argv)
     {
         parseargs(argc,
                   argv,
+                  &config,
                   inputFile); // Parse command line -- should add config
                               // as parameter so it can be modified
         std::cout << inputFile << std::endl;

@@ -9,13 +9,13 @@
 
 #include <string>
 
-#define MAX_OCTAVES   20
-#define MAX_LEVELS    10
+#define MAX_OCTAVES 20
+#define MAX_LEVELS 10
 
 #ifdef _MSC_VER
 #define DEPRECATED(func) __declspec(deprecated) func
 #elif defined(__GNUC__) || defined(__clang__)
-#define DEPRECATED(func) func __attribute__ ((deprecated))
+#define DEPRECATED(func) func __attribute__((deprecated))
 #else
 #endif
 
@@ -93,13 +93,14 @@ struct Config
 
     /**
      * @brief Filtering strategy.
-     * 
+     *
      * To reduce time used in descriptor extraction, some extrema can be filtered
      * immediately after finding them. It is possible to keep those with the largest
      * scale (LargestScaleFirst), smallest scale (SmallestScaleFirst), or a random
      * selection. Note that largest and smallest give a stable result, random does not.
      */
-    enum GridFilterMode {
+    enum GridFilterMode
+    {
         /// keep a random selection
         RandomScale,
         /// keep those with the largest scale
@@ -109,12 +110,13 @@ struct Config
     };
 
     /**
-     * @brief Processing mode. 
-     * 
+     * @brief Processing mode.
+     *
      * Determines which data is kept in the Job data structure after processing, which one is downloaded to the host,
      * which one is invalidated.
      */
-    enum ProcessingMode {
+    enum ProcessingMode
+    {
         ExtractingMode,
         MatchingMode
     };
@@ -124,67 +126,69 @@ struct Config
      * @param[in] m The string version of the GaussMode
      * @see GaussMode
      */
-    void setGaussMode( const std::string& m );
+    void setGaussMode(const std::string& m);
     /**
      * @brief Set the Gaussian mode.
      * @param[in] m The Gaussian mode to use.
      */
-    void setGaussMode( GaussMode m );
+    void setGaussMode(GaussMode m);
 
     /**
      * @brief Set the Sift mode.
      * @param[in] m The Sift mode
      * @see SiftMode
      */
-    void setMode( SiftMode m );
+    void setMode(SiftMode m);
 
     /**
      * @brief Set the log mode.
      * @param mode The log mode.
      * @see LogMode
      */
-    void setLogMode( LogMode mode = All );
+    void setLogMode(LogMode mode = All);
 
     /**
      * @brief Enable/desable verbose mode.
      * @param[in] on Whether to display additional information .
      */
-    void setVerbose( bool on = true );
+    void setVerbose(bool on = true);
 
     /**
      * @brief Set the descriptor mode by string.
      * @param[in] byname The string containing the descriptor mode.
      * @see DescMode
      */
-    void setDescMode( const std::string& byname );
+    void setDescMode(const std::string& byname);
 
     /**
-    * @brief Set the descriptor mode.
-    * @param[in] mode The descriptor mode.
-    * @see DescMode
-    */
-    void setDescMode( DescMode mode = Loop );
+     * @brief Set the descriptor mode.
+     * @param[in] mode The descriptor mode.
+     * @see DescMode
+     */
+    void setDescMode(DescMode mode = Loop);
 
-//    void setGaussGroup( int groupsize );
-//    int  getGaussGroup( ) const;
+    //    void setGaussGroup( int groupsize );
+    //    int  getGaussGroup( ) const;
 
-    void setDownsampling( float v );
-    void setOctaves( int v );
-    void setLevels( int v );
-    void setSigma( float v );
-    void setEdgeLimit( float v );
-    void setThreshold( float v );
-    void setInitialBlur( float blur );
-//    void setMaxExtreme( int m );
-    void setPrintGaussTables( );
-//    void setDPOrientation( bool on );
-    void setFilterMaxExtrema( int extrema );
-    void setFilterGridSize( int sz );
-    void setFilterSorting( const std::string& direction );
-    void setFilterSorting( GridFilterMode m );
+    void setDownsampling(float v);
+    void setOctaves(int v);
+    void setLevels(int v);
+    void setSigma(float v);
+    void setEdgeLimit(float v);
+    void setThreshold(float v);
+    void setInitialBlur(float blur);
+    //    void setMaxExtreme( int m );
+    void setPrintGaussTables();
+    //    void setDPOrientation( bool on );
+    void setFilterMaxExtrema(int extrema);
+    void setFilterGridSize(int sz);
+    void setFilterSorting(const std::string& direction);
+    void setFilterSorting(GridFilterMode m);
 
-    bool  hasInitialBlur( ) const;
-    float getInitialBlur( ) const;
+    void setCpuOnly();
+
+    bool hasInitialBlur() const;
+    float getInitialBlur() const;
 
     /// computes the actual peak threshold depending on the threshold
     /// parameter and the non-augmented number of levels
@@ -194,18 +198,17 @@ struct Config
     bool ifPrintGaussTables() const;
 
     /// What Gauss filter scan is desired?
-    GaussMode getGaussMode( ) const;
+    GaussMode getGaussMode() const;
 
     /// Call this from the constructor.
-    static GaussMode getGaussModeDefault( );
-
+    static GaussMode getGaussModeDefault();
 
     // Helper functions for the main program's usage string.
     /**
      * @brief Get a message with the strings to use for setting the values of \p GaussMode
      * @return  A message with the list of strings
      */
-    static const char* getGaussModeUsage( );
+    static const char* getGaussModeUsage();
 
     /**
      * @brief Get the SIFT mode for more detailed sub-modes
@@ -219,7 +222,7 @@ struct Config
 
     /// The number of octaves is chosen freely. If not specified,
     /// it is: log_2( min(x,y) ) - 3 - start_sampling
-    int      octaves;
+    int octaves;
 
     /// The number of levels per octave. This is actually the
     /// number of inner DoG levels where we can search for
@@ -229,50 +232,46 @@ struct Config
     /// the this is not the number of gauss-filtered picture
     /// layers (which is levels+3), but the number of DoG
     /// layers in which we can search for extrema.
-    int      levels;
-    float    sigma;
+    int levels;
+    float sigma;
 
     /// default edge_limit 16.0f from Celebrandil
     /// default edge_limit 10.0f from Bemap
-    float    _edge_limit;
+    float _edge_limit;
 
     /** Functions related to descriptor normalization: L2-like or RootSift
      */
-    void               setNormMode( NormMode m );
-    void               setNormMode( const std::string& m );
+    void setNormMode(NormMode m);
+    void setNormMode(const std::string& m);
     /**
      * @brief Set the normalization mode.
      * @param[in] on Use RootSift (\p true) or the L2-norm (\p false).
      * @deprecated
      * @see NormMode
      */
-    DEPRECATED(void    setUseRootSift( bool on ));
-    bool               getUseRootSift( ) const;
-    NormMode           getNormMode( NormMode m ) const;
-    static NormMode    getNormModeDefault( ); // Call this from the constructor.
-    static const char* getNormModeUsage( );  // Helper functions for the main program's usage string.
+    DEPRECATED(void setUseRootSift(bool on));
+    bool getUseRootSift() const;
+    NormMode getNormMode(NormMode m) const;
+    static NormMode getNormModeDefault();  // Call this from the constructor.
+    static const char* getNormModeUsage(); // Helper functions for the main program's usage string.
 
     /**
      * @brief Functions related to descriptor normalization: multiply with a power of 2
      */
-    int  getNormalizationMultiplier( ) const;
-    void setNormalizationMultiplier( int mul );
+    int getNormalizationMultiplier() const;
+    void setNormalizationMultiplier(int mul);
 
     /**
      * @brief The input image is stretched by 2^upscale_factor
      * before processing. The factor 1 is default.
      */
-    inline float getUpscaleFactor( ) const {
-        return _upscale_factor;
-    }
+    inline float getUpscaleFactor() const { return _upscale_factor; }
 
-    int getMaxExtrema( ) const {
-        return _max_extrema;
-    }
+    int getMaxExtrema() const { return _max_extrema; }
 
     /**
      * Have we enabled filtering? This is a compile time decision.
-     * The reason is that we use Thrust, which increases compile 
+     * The reason is that we use Thrust, which increases compile
      * considerably and can be deactivated at the CMake level when
      * you work on something else.
      */
@@ -309,35 +308,37 @@ struct Config
      */
     inline DescMode getDescMode() const { return _desc_mode; }
 
-    bool equal( const Config& other ) const;
+    inline bool getCpuOnly() const { return _cpu_only; }
 
-private:
+    bool equal(const Config& other) const;
+
+  private:
     /// default threshold 0.0 default of vlFeat
     /// default threshold 5.0 / 256.0
     /// default threshold 15.0 / 256.0 - it seems our DoG is really small ???
     /// default threshold 5.0 from Celebrandil, not happening in our data
     /// default threshold 0.04 / (_levels-3.0) / 2.0f * 255
     ///                   from Bemap -> 1.69 (makes no sense)
-    float    _threshold;
+    float _threshold;
 
     /// determine the image format of the first octave
     /// relative to the input image's size (x,y) as follows:
     /// (x / 2^start_sampling, y / 2^start_sampling )
-    float    _upscale_factor;
+    float _upscale_factor;
 
     /// default LogMode::None
-    LogMode  _log_mode;
+    LogMode _log_mode;
 
     /// default: DescMode::Loop
-    DescMode    _desc_mode;
+    DescMode _desc_mode;
 
     /// default: RandomScale
     GridFilterMode _grid_filter_mode;
 
-public:
-    bool     verbose;
+  public:
+    bool verbose;
 
-private:
+  private:
     /// The number of initial extrema that can be discovered in an octave.
     /// This parameter changes memory requirements.
     int _max_extrema;
@@ -350,7 +351,7 @@ private:
     /// Subdivide the image in this number of vertical and horizontal tiles,
     /// i.e. the grid is actually _grid_size X _grid_size tiles.
     /// default: 1
-    int  _filter_grid_size;
+    int _filter_grid_size;
 
     /// Modes are computation according to VLFeat or OpenCV,
     /// or fixed size. Default is VLFeat mode.
@@ -363,7 +364,7 @@ private:
     /// VLFeat code assumes that an initial input image is partially blurred.
     /// This changes the blur computation for the very first level of the first
     /// octave, turning it into a special case.
-    bool  _assume_initial_blur;
+    bool _assume_initial_blur;
     float _initial_blur;
 
     /// OpenMVG requires a normalization named rootSift, the
@@ -379,17 +380,12 @@ private:
     /// Call the debug functions in gauss_filter.cu to print Gauss
     /// filter width and Gauss tables in use.
     bool _print_gauss_tables;
+
+    bool _cpu_only;
 };
 
-inline bool operator==( const Config& l, const Config& r )
-{
-    return l.equal( r );
-}
+inline bool operator==(const Config& l, const Config& r) { return l.equal(r); }
 
-inline bool operator!=( const Config& l, const Config& r )
-{
-    return ! l.equal( r );
-}
+inline bool operator!=(const Config& l, const Config& r) { return !l.equal(r); }
 
 }; // namespace popsift
-

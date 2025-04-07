@@ -127,8 +127,8 @@ sycl::event Image::load_divide(unsigned char* input)
 // most of the time it takes prev like my implementation here but every now and then for a column it takes
 // next and I'm not sure why it does that. Subtracting 0.000001 makes it take left all the time hovever it seems like
 // but that makes the interpolation code wrong so can't be used in the cuda kernel.
-// Must also be 0.000001 adding one more zero before the one makes the float to small and it goes back to choosing next
-// in the odd cases
+// Must also be 0.000001 adding one more zero before the one makes the float to small and it goes back to choosing
+// next in the odd cases
 sycl::event Image::load_divide_point(unsigned char* input, const int& scaled_w)
 {
     return _device_queue.submit([&](sycl::handler& cgh) {
@@ -232,6 +232,7 @@ sycl::event Image::load_linear(const int& scaled_w, sycl::event src_img_transfer
         auto width = _w;
         auto height = _h;
         int step = scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
+        fprintf(stderr, "\n\tLoad linear before cuda kernel\n");
         cgh.parallel_for(sycl::range<2>(width, height), [=](sycl::id<2> idx) {
             auto in_pos = idx[0] + idx[1] * width;
 

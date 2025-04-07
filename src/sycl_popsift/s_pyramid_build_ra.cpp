@@ -42,8 +42,10 @@ class Horiz
     inline void operator()(sycl::nd_item<2> it) const
     {
         // kernel code
-        int x = it.get_global_id(0);
-        int y = it.get_global_id(1);
+        // int x = it.get_global_id(0);
+        // int y = it.get_global_id(1);
+        int x = it.get_global_id(1);
+        int y = it.get_global_id(0);
 
         // could have two different kernels one with this and one without
         // depending on if it is perfectly divisible by 128 but might not be worth it... Test

@@ -1,5 +1,7 @@
 #include "sycl_popsift/popsift.hpp"
 
+#include "sycl/device.hpp"
+#include "sycl/device_selector.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
@@ -79,19 +81,12 @@ PopSift::PopSift(const popsift::Config& config)
     initQueue();
     configure(config);
 
-    // Set the static memer pointers to nullptr
-    // _d_gauss = nullptr;
-
-    // sycl::queue _device_queue;
-    // sycl::buffer<unsigned char, 2> _imageData(imageData, sycl::range<2>(_w,
-    // _h));
-
-    // cout << "PopSift constructor" << endl;
-
     // Push two images as we use two one to load in data and other to compute
     // and they alter using the queue
     _pipe._unused.push(new popsift::Image(_device_queue));
     _pipe._unused.push(new popsift::Image(_device_queue));
+
+    std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
 
     // TODO(jorgejen): Setup these threads.
     // _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
@@ -117,6 +112,7 @@ PopSift::PopSift(const popsift::Config& config)
     //   _pipe._thread_stage2.reset( new std::thread(
     //   &PopSift::matchPrepareLoop, this ));
 }
+
 PopSift::~PopSift()
 {
     fprintf(stderr, "\n\tDESTROYING POPSIFT CLASS\n");
@@ -133,9 +129,7 @@ bool PopSift::configure(const popsift::Config& config, bool /*force*/)
         return false;
     }
 
-    // std::cout << "Before config" << std::endl;
     _config = config;
-    // std::cout << "AFTER config" << std::endl;
     _config.levels = max(2, config.levels);
 
     return true;
@@ -242,8 +236,6 @@ sycl::event PopSift::init_constants()
 // Apply configuration should reside here
 bool PopSift::applyConfiguration(bool force)
 {
-    // TODO: Figure out why on second image it returns mismatch on octaves when they in fact are the same
-    // so something seems to be wrong here. Once figured out revert the equal function back to the commented out one
     if(force || (_config != _shadow_config))
     {
         // for re ren we need to free and re malloc or change the size or not malloc again if it is already malloced
@@ -316,6 +308,7 @@ bool PopSift::private_init(int w, int h)
 // Don't see a purpose of returning true here as popsift did hence making it void
 void PopSift::private_uninit()
 {
+    fprintf(stderr, "priv unint\n");
     Pipe& p = _pipe;
 
     delete p._pyramid;
@@ -374,7 +367,8 @@ void PopSift::uploadImages()
 
         // cout << "Updated w=" << job->_w << " and h=" << job->_h << endl;
         // copy image to device
-        job->setImg(img, _device_queue, _config.getUpscaleFactor());
+        job->setImg(img, _config.getUpscaleFactor());
+        fprintf(stderr, "After setImg");
 
         // job->setImg( img );
         _pipe._queue_stage2.push(job);
@@ -391,7 +385,22 @@ void PopSift::extractDownloadLoop()
     // cudaSetDevice(_device);
     // std::cout << "Befoe apply conf conf dong" << std::endl;
     applyConfiguration(true); // Applies configuration is only run once as
-    // the thread is started
+                              // the thread is started
+
+    // fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
+    // _d_gauss_write.wait();
+    //
+    // // _device_queue
+    // //   ->submit([&](sycl::handler& cgh) {
+    // //       popsift::GaussInfo* gauss = _d_gauss;
+    // //       cgh.single_task([=]() {
+    // //           sycl::ext::oneapi::experimental::printf("\n\t\t_d_gauss.required_filter_stages = %d\n\n",
+    // //                                                   gauss->required_filter_stages);
+    // //       });
+    // //   })
+    // //   .wait();
+    //
+    // fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
 
     // std::cout << "Starting download loop thread" << std::endl;
     Pipe& p = _pipe;
@@ -406,6 +415,7 @@ void PopSift::extractDownloadLoop()
 
         job->printJob(); // Can probs remove
 
+        fprintf(stderr, "Before priv init\n");
         private_init(img->getWidth(), img->getHeight());
 
         // _device_queue.wait();
@@ -415,9 +425,11 @@ void PopSift::extractDownloadLoop()
         p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
         cout << "Jobby: -- " << endl;
-        job->printJob();
 
-        // uploaded input image no longer needed, release for reuse
+        // idk why this does not work
+        // job->printJob();
+
+        // uploaded Image object is no longer needed, release for reuse
         p._unused.push(img);
 
         // p._pyramid->step2(_config, {sycl::event()}, _d_consts_write);
@@ -470,11 +482,12 @@ void SiftJob::printJob() { std::printf("Width: %d -- height: %d\n", _w, _h); }
 
 int SiftJob::getHost() { return _f.get(); }
 
-void SiftJob::setImg(popsift::Image* img, sycl::queue q, const float& upscaleFactor)
+void SiftJob::setImg(popsift::Image* img, const float& upscaleFactor)
 {
     int scaled_w = _w;
     int scaled_h = _h;
     get_scale_factor(&scaled_w, &scaled_h, upscaleFactor);
+
     img->resetDimensions(_w, _h, scaled_w, scaled_h);
 
     sycl::event src_img_transfer = img->copy_src_dev(_imageData);
@@ -498,9 +511,6 @@ void PopSift::Pipe::uninit()
     }
     if(_thread_stage1 != nullptr)
     {
-        // should not really ever run as for stage2 to be nullptr
-        // stage1 has to have already become nullptr hence not needed
-        // as far as I understand...
         _thread_stage1->join();
         _thread_stage1.reset(nullptr);
     }

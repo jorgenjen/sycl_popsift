@@ -61,6 +61,7 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave)
             if(y >= dst_height)
                 return;
 
+            // Don't need clamp just an upper check not sure if it matters
             const int read_x = sycl::clamp(x << 1, 0, src_width);
             const int read_y = sycl::clamp(y << 1, 0, src_height);
 
@@ -74,7 +75,7 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave)
 }
 
 // Seems like a bit of an odd way to make the kernel?
-class make_dog;
+class make_dog; // Dont necessarily need to name it could also just stay anonymous
 
 // Not sure if thes shoould be inline or not...
 // inline void Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event octave_complete)
@@ -98,6 +99,7 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
 #define reverse 1
 #if reverse
 
+    // Having this go from highest to lowest level would probably be better for cache hits
     return _device_queue.parallel_for<make_dog>(
       sycl::nd_range{global, local},
       {octave_complete, oct_obj.getDataArrayWriteEvent(), oct_obj.getDogArrayWriteEvent()},
@@ -128,13 +130,12 @@ sycl::event Pyramid::dogs_from_blurred(int octave, int max_level, sycl::event oc
           if(x >= width)
               return;
 
-          float a = data_array[0][x + y * width];
-          for(int level = 0; level < max_level - 1; level++)
+          float upper = data_array[max_level - 1][pos];
+          for(int level = max_level - 2; level >= 0; --level)
           {
-              const float b = data_array[level + 1][x + y * width];
-
-              dog_array[level][x + y * width] = b - a;
-              a = b;
+              const float lower = data_array[level][pos];
+              dog_array[level][pos] = upper - lower;
+              upper = lower;
           }
       });
 #endif
@@ -193,8 +194,6 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
     //          << "x" << base->u_height << endl;
     // #endif // (PYRAMID_PRINT_DEBUG==1)
 
-    // cudaDeviceSynchronize();
-
     GaussTableChoice gaussTableChoice;
 
     if(conf.getGaussMode() == Config::VLFeat_Relative)
@@ -206,7 +205,6 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
               << std::endl;
     for(int octave = 0; octave < _num_octaves; octave++)
     {
-        // fprintf(stderr, "BEFORE ACCESS OF octave %d", octave);
         Octave& oct_obj = _octaves[octave];
         // std::vector<sycl::event>& lvl_events = oct_obj._level_complete_events;
 
@@ -223,6 +221,19 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
                     sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
                     // oct_obj.setLevelEvent(0, vert_from_interm(octave, 0, gaussTableChoice, horiz));
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+
+                    int w = _octaves[0].getWidth();
+                    int h = _octaves[0].getHeight();
+                    float* data = oct_obj.getDataArray()[level];
+
+                    popsift::sycl_common::print_region(oct_obj.getDataArray()[level],
+                                                       "First octave after vert -- ",
+                                                       w - 8,
+                                                       w,
+                                                       h - 8,
+                                                       h,
+                                                       w,
+                                                       _device_queue);
                 }
                 else
                 {

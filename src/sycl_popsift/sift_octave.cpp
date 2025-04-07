@@ -7,11 +7,12 @@
 
 namespace popsift {
 
-Octave::Octave(sycl::queue& Q)
+// Octave::Octave(sycl::context ctx, sycl::device dev)
+//   : _device_queue(sycl::queue(ctx, dev))
+// {}
+Octave::Octave(sycl::queue Q)
   : _device_queue(Q)
 {}
-
-// Octave::~Octave() { free_arrays(); }
 
 void Octave::alloc_arrays()
 {
@@ -98,6 +99,8 @@ void Octave::free_arrays()
     delete[] _dog_array_host;
 
     sycl::free(_intermediate, _device_queue);
+
+    // fprintf(stderr, "done freeing octave %d", _debug_octave_id);
 }
 
 // void Octave::alloc(const Config& conf, int width, int height, int levels, int gauss_group, sycl::queue& Q)
@@ -118,6 +121,7 @@ void Octave::alloc(const Config& conf, int width, int height, int levels)
 
     // could store them all in one malloc (single float array) but might be less readable
     // and don't think there is much performance penalty from doing it this way...
+    // fprintf(stderr, "Before alloc_arrays \n");
     alloc_arrays();
 
     // alloc_data_planes();
@@ -180,24 +184,6 @@ void Octave::resetDimensions(const Config& conf, int w, int h)
     _max_w = _w = w;
     _max_h = _h = h;
     alloc_arrays();
-
-    // free_dog_tex();
-    // free_dog_array();
-    //
-    // free_interm_tex();
-    // free_interm_array();
-    //
-    // free_data_tex();
-    // free_data_planes();
-    //
-    // alloc_data_planes();
-    // alloc_data_tex();
-    //
-    // alloc_interm_array();
-    // alloc_interm_tex();
-    //
-    // alloc_dog_array();
-    // alloc_dog_tex();
 }
 
 }

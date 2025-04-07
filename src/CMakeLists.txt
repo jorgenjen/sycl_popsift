@@ -46,6 +46,8 @@ target_link_libraries(sycl_popsift PUBLIC ${SYCL_FLAGS})
 
 # CPU target_link_libraries(sycl_popsift PUBLIC Threads::Threads )
 
+# CPU target_link_libraries(sycl_popsift PUBLIC Threads::Threads )
+
 # build directory containing the automatically generated files
 set(popsift_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
 

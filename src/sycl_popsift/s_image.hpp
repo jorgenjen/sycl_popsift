@@ -23,6 +23,8 @@ struct Image
     sycl::event copy_src_dev(unsigned char* input) { return _device_queue.memcpy(_device_src_img, input, _w * _h); }
 
     sycl::event load(void* input);
+    // Need to fix these thre similar to th way I did load_liear by using the copy_src_dev before and use that value in
+    // funciton
     sycl::event load_divide(unsigned char* input);
     sycl::event load_divide_point(unsigned char* input, const int& scaled_w);
     sycl::event load_divide_linear(unsigned char* input, const int& scaled_w);
@@ -46,7 +48,7 @@ struct Image
     int _init_w; // Host image widht -- could be differnet due to apply scale factor done early
     int _init_h; // host image height
 
-    sycl::queue& _device_queue; // reference to the queue
+    sycl::queue _device_queue;
 
     // TODO: Test sycl image that is said to utlizie texture memory when availabe
     // also look into codeplays extension of sycl with bindless images and see if
