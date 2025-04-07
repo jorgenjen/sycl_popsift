@@ -4,7 +4,6 @@
 #include "sycl/device_selector.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
-#include "sycl_popsift/malloc_devt.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
 
@@ -197,7 +196,7 @@ sycl::event PopSift::init_gauss_filter()
     // Transfer gauss filter to device
     if(_d_gauss == nullptr)
     {
-        _d_gauss = popsift::common_sycl::malloc_devT<popsift::GaussInfo>(
+        _d_gauss = popsift::sycl_common::malloc_devT<popsift::GaussInfo>(
           1, __FILE__, __LINE__, "Failed to allocate gauss filter on device", _device_queue);
     }
     else
@@ -224,7 +223,7 @@ sycl::event PopSift::init_constants()
     if(_d_consts == nullptr)
     {
         fprintf(stderr, "\n\n\n\t\t\tALLOC _d_consts \n\n");
-        _d_consts = popsift::common_sycl::malloc_devT<popsift::ConstInfo>(
+        _d_consts = popsift::sycl_common::malloc_devT<popsift::ConstInfo>(
           1, __FILE__, __LINE__, "Failed to allocate constants on device", _device_queue);
     }
     else
@@ -425,21 +424,6 @@ void PopSift::extractDownloadLoop()
 
         p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
-        // p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
-
-        // popsift::ConstInfo* me_consts = _d_consts;
-        // _device_queue
-        //   .single_task([=]() {
-        //       sycl::ext::oneapi::experimental::printf(
-        //         "_d_donsts norm_multi %d -- edge_limit %f", me_consts->norm_multi, me_consts->edge_limit);
-        //   })
-        //   .wait();
-
-        // FUFULL THE PROMISE
-
-        //
-        fprintf(stderr, "before the wait \n");
-        _device_queue.wait();
         cout << "Jobby: -- " << endl;
 
         // idk why this does not work
@@ -508,15 +492,9 @@ void SiftJob::setImg(popsift::Image* img, const float& upscaleFactor)
 
     sycl::event src_img_transfer = img->copy_src_dev(_imageData);
 
-    // img->load(_imageData);
-    // img->load_divide(_imageData);
-    // img->load_divide_point(_imageData, scaled_w);
-    // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
     _img_transfer_event = img->load_linear(scaled_w, src_img_transfer);
 
-    // _img_transfer_event.wait();
-    // fprintf(stderr, "\n\tWe got past sending og image to device!!! and doing load lienar\n");
-    _img = img; // Why are you copying the image class pointer?
+    _img = img;
 }
 
 // Not sure if this is a good way of doing it
@@ -615,87 +593,4 @@ void PopSift::allMainThread()
     // _device_queue.wait(); // Having a wait here before I have all events configured properly
     private_uninit();
 #endif
-}
-
-// Helper function for development
-// ranges are inclusive on 0th dimension and exclusive on 1th dimension
-// void PopSift::printImageRegion(sycl::range<2> horiz, sycl::range<2> vert)
-// {
-//   // print out the first 10 bytes of the image
-//   using namespace sycl;
-//
-//   // wait for all previous enqued task to end before doing the print to show
-//   desired data _device_queue.wait();
-//
-//   host_accessor<unsigned char, 2, access::mode::read> h_acc(_imageData);
-//
-//   if (vert.get(0) > _w && vert.get(0) < 0 ||
-//       vert.get(1) > _w && vert.get(1) < 0 ||
-//       vert.get(0) >= vert.get(1)
-//   )
-//   {
-//     std::cout << "Image region is not legal" << std::endl;
-//   }
-//
-//   std::cout << "Image region: horiz = (" << horiz.get(0) << " -> " <<
-//   horiz.get(1)
-//             << ") vert = (" << vert.get(0) << " -> " << vert.get(1) << ")" <<
-//             std::endl;
-//   // using range in a odd way (I know :D)
-//   for (int i = vert.get(0); i < vert.get(1); ++i)
-//   {
-//     for (int j = horiz.get(0); j < horiz.get(1); ++j)
-//     {
-//          std::printf("%03u ", h_acc[j][i]);
-//     }
-//        std::cout << std::endl;
-//   }
-// }
-
-// Crate gauss filter store it on host
-popsift::init_filter(_config, &_h_gauss);
-
-fprintf(stderr, "AT bottom off init_gauss_filter()\n");
-// Transfer gauss filter to device
-try
-{
-    if(_d_gauss == nullptr)
-        _d_gauss = sycl::malloc_device<popsift::GaussInfo>(1, _device_queue);
-    else
-        std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl;
-}
-catch(const sycl::exception& e)
-{
-    std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-}
-
-return _device_queue.memcpy(_d_gauss, &_h_gauss, sizeof(popsift::GaussInfo));
-}
-
-sycl::event PopSift::init_constants()
-{
-    fprintf(stderr, "in init contsatns\n");
-
-    popsift::init_constants(_config.sigma,
-                            _config.levels,
-                            _config.getPeakThreshold(),
-                            _config._edge_limit,
-                            _config.getMaxExtrema(),
-                            _config.getNormalizationMultiplier(),
-                            &_h_consts);
-
-    // Transfer constants to device
-    try
-    {
-        if(_d_consts == nullptr)
-            _d_consts = sycl::malloc_device<popsift::ConstInfo>(1, _device_queue);
-        else
-            std::cout << "\n\n\t\t_d_consts is set -- no malloc needed\n\n" << std::endl;
-    }
-    catch(const sycl::exception& e)
-    {
-        std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-    }
-
-    return _device_queue.memcpy(_d_consts, &_h_consts, sizeof(popsift::ConstInfo));
 }
