@@ -10,11 +10,10 @@ struct Image
 {
     Image() = delete;
 
-    // Image(sycl::context ctx, sycl::device dev);
-    Image(sycl::queue Q);
+    Image(sycl::queue& Q);
 
     /** Create a device-sided buffer of the given dimensions */
-    Image(int w, int h, sycl::queue Q);
+    Image(int w, int h, sycl::queue& Q);
 
     ~Image();
 
@@ -29,8 +28,8 @@ struct Image
     sycl::event load_divide(unsigned char* input);
     sycl::event load_divide_point(unsigned char* input, const int& scaled_w);
     sycl::event load_divide_linear(unsigned char* input, const int& scaled_w);
-
-    sycl::event load_linear(const int& scaled_w);
+    sycl::event load_linear(const int& scaled_w, sycl::event src_img_transfer);
+    // TODO: Should only be load_linear and load_point
 
     inline int getWidth() const { return _w; }
     inline int getHeight() const { return _h; }

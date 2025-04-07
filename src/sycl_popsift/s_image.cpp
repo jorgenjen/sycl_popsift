@@ -1,12 +1,16 @@
 #include "s_image.hpp"
 
+#include "common/debug_macros.hpp"
+#include "sycl_popsift/malloc_devt.hpp"
+
 #include <sycl/sycl.hpp>
 
+#include <cstdio>
 #include <iostream>
 
 namespace popsift {
 
-Image::Image(sycl::queue Q)
+Image::Image(sycl::queue& Q)
   : _w(0)
   , _h(0)
   , _max_w(0)
@@ -14,28 +18,30 @@ Image::Image(sycl::queue Q)
   , _device_queue(Q)
 {}
 
-Image::Image(int w, int h, sycl::queue Q)
+Image::Image(int w, int h, sycl::queue& Q)
   : _w(w)
   , _h(h)
   , _max_w(w)
   , _max_h(h)
   , _device_queue(Q)
 {
-    // allocate( w, h );
-    // need to allocate malloc_device
-    // _device_img = sycl::malloc_device<unsigned char>(w * h, q);
-    _device_img = sycl::malloc_device<float>(w * h, _device_queue);
-    if(_device_img == nullptr)
-        std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
-                  << std::endl;
+    // Not sure if using w and h is correct need to refactor the whole scaling thing as it is kinda confusing
+    // Should probably just use the scaled size and nothing else when using USM
+    _device_src_img = popsift::common_sycl::malloc_devT<unsigned char>(
+      w * h, __FILE__, __LINE__, "Could not allocate memory for image on device", Q);
+
+    _device_img = popsift::common_sycl::malloc_devT<float>(
+      w * h, __FILE__, __LINE__, "Could not allocate memory for float representation of image on device", Q);
 }
 
 Image::~Image()
 {
+    fprintf(stderr, "\n\tDESTROYING IMAGE\n");
     if(_max_w == 0)
         return;
 
     sycl::free(_device_img, _device_queue);
+    sycl::free(_device_src_img, _device_queue);
     // destroyTexture( );
     // _input_image_d.freeDev( );
     // _input_image_h.freeHost( popsift::CudaAllocated );
@@ -50,16 +56,16 @@ void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
         _max_w = _w = w;
         _max_h = _h = h;
 
-        _device_src_img = sycl::malloc_device<unsigned char>(w * h, _device_queue);
-        if(_device_src_img == nullptr)
-            std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
-                      << std::endl;
+        _device_src_img = popsift::common_sycl::malloc_devT<unsigned char>(
+          scaled_w * scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
 
-        // allocate( w, h );
-        _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _device_queue);
-        if(_device_img == nullptr)
-            std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
-                      << std::endl;
+        _device_img = popsift::common_sycl::malloc_devT<float>(
+          scaled_w * scaled_h,
+          __FILE__,
+          __LINE__,
+          "Could not allocate memory for float representation of image on device",
+          _device_queue);
+
         return;
     }
 
@@ -76,20 +82,28 @@ void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
         return;
     }
 
-    // larger than current segment hence need to free and remalloc
+    // larger than current segment hence need to free and re-malloc
 
-    // TODO: See if sycl has realloc -- could not find it
     sycl::free(_device_img, _device_queue);
+    sycl::free(_device_src_img, _device_queue);
 
     _max_w = _w = w;
     _max_h = _h = h;
-    _device_img = sycl::malloc_device<float>(scaled_w * scaled_h, _device_queue);
-    if(_device_img == nullptr)
-        std::cout << "Could not allocate segment -- failsafe not implemented so odd bahaviour could happen"
-                  << std::endl;
+
+    _device_src_img = popsift::common_sycl::malloc_devT<unsigned char>(
+      scaled_w * scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
+
+    _device_img =
+      popsift::common_sycl::malloc_devT<float>(scaled_w * scaled_h,
+                                               __FILE__,
+                                               __LINE__,
+                                               "Could not allocate memory for float representation of image on device",
+                                               _device_queue);
 }
 
-sycl::event Image::load(void* input) { return _device_queue.memcpy(_device_img, input, _w * _h); }
+// This is wrong can't transfer a char image into a float pointer it would make store 4 pixels into one causing the
+// result to be very wrong
+// sycl::event Image::load(void* input) { return _device_queue.memcpy(_device_img, input, _w * _h); }
 
 // directly making it normalized
 sycl::event Image::load_divide(unsigned char* input)
@@ -207,9 +221,12 @@ sycl::event Image::load_divide_linear(unsigned char* input, const int& scaled_w)
 //     });
 // }
 
-sycl::event Image::load_linear(const int& scaled_w)
+// Only valid of the load functions others pass a host pointer to use which don't work on gpu need to transfer the image
+// to device first before kernel launch
+sycl::event Image::load_linear(const int& scaled_w, sycl::event src_img_transfer)
 {
     return _device_queue.submit([&](sycl::handler& cgh) {
+        cgh.depends_on(src_img_transfer);
         auto img = _device_img; // needed to avoid implicitly capturing this which
                                 // is not allowed
         auto input = _device_src_img;
@@ -242,62 +259,62 @@ sycl::event Image::load_linear(const int& scaled_w)
     });
 }
 
-// only for printing and debugging
-sycl::event Image::host_move(void* output) { return _device_queue.memcpy(output, _device_img, _w * _h); };
-
-// only for printing and debugging -- quite inefficient
-void Image::print_region(int start_x, int start_y, int end_x, int end_y)
-{
-    using std::cout;
-    using std::endl;
-    using std::printf;
-    cout << "Inside of Print_region of Image" << endl << endl << endl;
-
-    unsigned char* img = (unsigned char*)malloc(_w * _h * sizeof(unsigned char));
-    if(img == NULL)
-    {
-        cout << "Memory allocation failed" << endl;
-        return;
-    }
-    sycl::event write_event = host_move(img);
-
-    if(start_x > _w || end_x > _w || start_y > _h || end_y > _h)
-    {
-        cout << "Region coordinates are outisde of bounds of Image" << endl;
-        return;
-    }
-    if(start_x > end_x || start_y > end_y)
-    {
-        cout << "Invalid region" << endl;
-        return;
-    }
-    if(start_x < 0 || start_y < 0 || end_x < 0 || end_y < 0)
-    {
-        cout << "Cannot have negative position of region" << endl;
-        return;
-    }
-    printf("Image region (%d, %d) -> (%d, %d)\n", start_x, start_y, end_x, end_y);
-
-    try
-    {
-        write_event.wait();
-    }
-    catch(const sycl::exception& e)
-    {
-        std::cerr << "SYCL exception caught: " << e.what() << std::endl;
-        return;
-    }
-    // _device_queue.wait(); // wait for memcpy to finish
-    for(int i = start_y; i < end_y; ++i)
-    {
-        for(int j = start_x; j < end_x; ++j)
-        {
-            printf("%03u ", img[i * _w + j]);
-        }
-        cout << endl;
-    }
-    cout << endl << endl;
-    free(img);
-}
+// // only for printing and debugging
+// sycl::event Image::host_move(void* output) { return _device_queue.memcpy(output, _device_img, _w * _h); };
+//
+// // only for printing and debugging -- quite inefficient
+// void Image::print_region(int start_x, int start_y, int end_x, int end_y)
+// {
+//     using std::cout;
+//     using std::endl;
+//     using std::printf;
+//     cout << "Inside of Print_region of Image" << endl << endl << endl;
+//
+//     unsigned char* img = (unsigned char*)malloc(_w * _h * sizeof(unsigned char));
+//     if(img == NULL)
+//     {
+//         cout << "Memory allocation failed" << endl;
+//         return;
+//     }
+//     sycl::event write_event = host_move(img);
+//
+//     if(start_x > _w || end_x > _w || start_y > _h || end_y > _h)
+//     {
+//         cout << "Region coordinates are outisde of bounds of Image" << endl;
+//         return;
+//     }
+//     if(start_x > end_x || start_y > end_y)
+//     {
+//         cout << "Invalid region" << endl;
+//         return;
+//     }
+//     if(start_x < 0 || start_y < 0 || end_x < 0 || end_y < 0)
+//     {
+//         cout << "Cannot have negative position of region" << endl;
+//         return;
+//     }
+//     printf("Image region (%d, %d) -> (%d, %d)\n", start_x, start_y, end_x, end_y);
+//
+//     try
+//     {
+//         write_event.wait();
+//     }
+//     catch(const sycl::exception& e)
+//     {
+//         std::cerr << "SYCL exception caught: " << e.what() << std::endl;
+//         return;
+//     }
+//     // _device_queue.wait(); // wait for memcpy to finish
+//     for(int i = start_y; i < end_y; ++i)
+//     {
+//         for(int j = start_x; j < end_x; ++j)
+//         {
+//             printf("%03u ", img[i * _w + j]);
+//         }
+//         cout << endl;
+//     }
+//     cout << endl << endl;
+//     free(img);
+// }
 
 } // namespace popsift

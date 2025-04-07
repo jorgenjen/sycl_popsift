@@ -159,14 +159,13 @@ class PopSift
     int _h;
     // sycl::buffer<unsigned char, 2> _imageData;
     sycl::queue _device_queue;
-    // std::shared_ptr<sycl::queue> _device_queue;
 
     popsift::GaussInfo* _d_gauss = nullptr;
-    popsift::GaussInfo _h_gauss{}; // initialize it so we can pass it's address
+    popsift::GaussInfo _h_gauss{};
+    sycl::event _d_gauss_write;
+
     popsift::ConstInfo* _d_consts = nullptr;
     popsift::ConstInfo _h_consts{};
-
-    sycl::event _d_gauss_write;
     sycl::event _d_consts_write;
 
     popsift::Config _config;
@@ -174,7 +173,7 @@ class PopSift
     /* Keep a copy of the config to avoid unnecessary re-configurations
      * in configure()
      */
-    popsift::Config _shadow_config; // Not sure if I want this
+    popsift::Config _shadow_config;
 
     Pipe _pipe;
     /// whether the object is initialized

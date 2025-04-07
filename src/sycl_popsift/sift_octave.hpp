@@ -35,6 +35,7 @@ class Octave
     int _levels{};
     int _gauss_group{};
 
+    // sycl::queue& _device_queue; // reference to  of device queue
     sycl::queue _device_queue;
 
     // Intermediate
@@ -46,8 +47,10 @@ class Octave
 
     float* _intermediate; // should not need an array
 
-    float** _data_array; // Gaussians stored _levels
-    float** _dog_array;  // DoG stored _levels - 1
+    float** _data_array;      // Gaussians stored _levels
+    float** _data_array_host; // Just for memory management
+    float** _dog_array;       // DoG stored _levels - 1
+    float** _dog_array_host;  // Just for memory maangemrnt
 
     // cudaArray_t _data{};
     // cudaChannelFormatDesc _data_desc{};
@@ -77,14 +80,28 @@ class Octave
     // cudaEvent_t _ori_done{};
     // cudaEvent_t _desc_done{};
 
+    sycl::event _data_array_write;
+    sycl::event _dog_array_write;
+
+    // std::vector<sycl::event> _level_complete_events;
+
   public:
-    std::vector<sycl::event> _level_complete_events;
+    // NOTE: consider making the evnt array private and have getter and setter
+    // so that it's abit more safe but I would not want to have to safe guard as it's not needed as long as
+    // only library code modifies it. Could make Pyramid and PopSift friend classes
+    // which would solve that problem of outsider modifying this pointer but agai why would they
+    sycl::event* _level_complete_events;
+    sycl::event _dog_done_event;
     sycl::event _extrema_done_event;
+
     // Octave();
     Octave() = delete;
-    // Octave(sycl::context ctx, sycl::device dev);
-    Octave(sycl::queue Q);
-    ~Octave() { this->free_arrays(); }
+    Octave(sycl::queue& Q);
+    ~Octave()
+    {
+        fprintf(stderr, "\n\tDESTROY OCTAVE\n");
+        this->free_arrays();
+    }
     // ~Octave();
 
     void resetDimensions(const Config& conf, int w, int h);
@@ -104,7 +121,44 @@ class Octave
     inline float* getIntermediate() const { return _intermediate; }
     // inline float** getIntermediateArray() const { return _intm_array; }
     inline float** getDataArray() const { return _data_array; }
+    inline float** getDataArrayHost() const { return _data_array_host; }
+    inline sycl::event getDataArrayWriteEvent() const { return _data_array_write; }
+
     inline float** getDogArray() const { return _dog_array; }
+    inline float** getDogArrayHost() const { return _dog_array_host; }
+    inline sycl::event getDogArrayWriteEvent() const { return _dog_array_write; }
+
+    // std::move might be better than just assignment
+    // inline void setLevelEvent(int level, sycl::event e) { _level_complete_events[level] = std::move(e); }
+    // inline void setLevelEvent(int level, sycl::event e)
+    // {
+    //     if(level >= 0 && level < _level_complete_events.capacity())
+    //     {
+    //         _level_complete_events.push_back(e);
+    //     }
+    //     else
+    //     {
+    //         fprintf(
+    //           stderr, "\nHow in the fuck... level = %d -- vec size = %zu", level, _level_complete_events.capacity());
+    //     }
+    // }
+
+    // inline const std::vector<sycl::event>& getLevelCompleteEvents() const noexcept { return _level_complete_events; }
+
+    // inline sycl::event getLevelEvent(int level) const
+    // {
+    //     if(level >= 0 && level < _level_complete_events.capacity())
+    //     {
+    //         // return _level_complete_events[level];
+    //         return sycl::event();
+    //     }
+    //     else
+    //     {
+    //         fprintf(
+    //           stderr, "\nHow in the fuck... level = %d -- vec size = %zu", level, _level_complete_events.capacity());
+    //         return sycl::event{};
+    //     }
+    // }
 
     // inline cudaStream_t getStream( ) {
     //     return _stream;

@@ -9,13 +9,8 @@
 
 #include "sycl/queue.hpp"
 #include "sycl/usm.hpp"
-#include "sycl_popsift/common/debug_macros.hpp"
-
-// #include <cuda_runtime.h>
 
 #include <cmath>
-#include <iostream>
-#include <sstream>
 
 using namespace std;
 
@@ -56,7 +51,7 @@ void init_constants(float sigma0,
     }
 
     // TODO: look into the sycl::ext::oneapi::device_global
-    // could be better than havin it part of the class
+    // could be better than having it part of the class (also true for gauss filter)
 
     // send constantst to device is moved to calee (method of PopSift class)
 }

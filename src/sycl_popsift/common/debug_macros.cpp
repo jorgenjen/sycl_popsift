@@ -1,6 +1,7 @@
 #include "sycl_popsift/common/debug_macros.hpp"
 
-#include "sycl/queue.hpp"
+// #include "sycl/queue.hpp"
+// #include "sycl/sycl.hpp"
 
 namespace popsift {
 namespace sycl_common {
@@ -9,9 +10,9 @@ void print_region(
   float* ptr, const char* identifier, int start_x, int end_x, int start_y, int end_y, int width, sycl::queue Q)
 {
     int str_len = std::strlen(identifier) + 1;
-    fprintf(stderr, "hello\n");
 
-    char* dev_msg = malloc_devT<char>(str_len, __FILE__, __LINE__, "Could not allocate print identifier", Q);
+    // char* dev_msg = malloc_devT<char>(str_len, __FILE__, __LINE__, "Could not allocate print identifier", Q);
+    char* dev_msg = sycl::malloc_device<char>(str_len, Q);
     Q.memcpy(dev_msg, identifier, (size_t)str_len).wait();
 
     Q.single_task([=]() {
@@ -54,48 +55,3 @@ void print_region(
 }
 }
 }
-
-//
-// // #include "sycl/queue.hpp"
-//
-// // #include <sycl/sycl.hpp>
-//
-// // #include <sstream>
-//
-// template<class T>
-// T* malloc_devT(int num, const char* file, int line, const char* error_message, sycl::queue Q)
-// {
-//     T* ptr;
-//     try
-//     {
-//         ptr = sycl::malloc_device<T>(num, Q);
-//         std::stringstream ss;
-//     }
-//     catch(const sycl::exception& e)
-//     {
-//         std::stringstream ss;
-//         ss << error_message << e.what();
-//         std::string error_msg = ss.str(); // seems to be required to have given message show up
-//         POP_FATAL_FL(ss.str(), file, line);
-//     }
-//     return ptr;
-// }
-//
-// template<class T>
-// T* malloc_sharedT(int num, const char* file, int line, const char* error_message, sycl::queue Q)
-// {
-//     T* ptr;
-//     try
-//     {
-//         ptr = sycl::malloc_shared<T>(num, Q);
-//         std::stringstream ss;
-//     }
-//     catch(const sycl::exception& e)
-//     {
-//         std::stringstream ss;
-//         ss << error_message << e.what();
-//         std::string error_msg = ss.str(); // seems to be required to have given message show up
-//         POP_FATAL_FL(ss.str(), file, line);
-//     }
-//     return ptr;
-// }

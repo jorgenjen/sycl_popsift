@@ -89,7 +89,6 @@ struct GaussInfo
 
 /* init_filter must be called early to initialize the Gauss tables.
  */
-// void init_filter(const Config& conf, float sigma0, int levels);
 void init_filter(const Config& conf, popsift::GaussInfo* h_gauss);
 
 } // namespace popsift

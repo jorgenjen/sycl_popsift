@@ -33,19 +33,19 @@
 namespace popsift {
 #define LOCAL_X 32
 
-#define SUB_GROUP_COUNTING 0
+#define SUB_GROUP_COUNTING 1
 
-#if SUB_GROUP_COUNTING
+#if SUB_GROUP_COUNTING == 1
 // template<int HEIGHT> // did not do anything
 // Must take care here as sub-group will not be 32 in all cases like a warp in cuda
 // should also make the blocks based on sub-group multiplier(idk what the name was) preference of the device used
 // Not sure why indicator was not bool ??
-static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
+static inline unsigned int extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
 {
     // sub_grousp is undergoing change and not recomended to use but seems most fitting in this case
     sycl::sub_group sub_group = it.get_sub_group();
 
-#define USE_MASK 1
+#define USE_MASK 0
 #if USE_MASK == 1
     // Should be the same as ballot_sync and __popc
     // Will work as long as sub-group is not larger than 32
@@ -57,42 +57,19 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
 #else
     // basic reduce to sum indicators being true
     // int ct = sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
-    int ct = sycl::reduce_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
+    int group_count = sycl::reduce_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
+    // int item_offset = sycl::exclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
 #endif
-    int write_index;
+    int write_index = 0;   // Must be set to zero (Incorrect result otherwise)
     if(sub_group.leader()) // is always work-item with local_id 0 in the sub_group
     {
-        // SHould probably query first to ensure the memory scope and order is supported by the device
-        // see page 540 (560 in pdf) // using memory_order_relaxed which any device should support
-
-        // BUG: Seems to run for all work-items in sub-group and not only one as required hence resulting in adding the
-        // ct value 8 times causing the end value to be 8 times greater than it should be
-        //      Can see that this is the case as it prints for all sub_group.get_group_linear_id so [0-8] in my
-
         // The atomic add returns the old value in extrema_coutner before the addition which is considered the base
         // As each thread uses this and adds to it's own counter (write_index) how many of the threads in the
         // sub-group before it had it's indicator to true
-        if(sub_group.get_local_linear_id() == 0) // should be same as leader()
-        {
-            write_index = sycl::atomic_ref<int,
-                                           sycl::memory_order_relaxed,
-                                           sycl::memory_scope_device,
-                                           sycl::access::address_space::global_space>(*extrema_counter) += ct;
-
-            // if(sub_group.get_group_linear_id() == 89 &&
-            if(it.get_group_linear_id() == 20000 && it.get_global_range(2) == 1280)
-            {
-                // Why in tha lordy lordy does this print when it prints out that sub_group.get_local_linear_id == [1-7]
-                // the value is printed corectly but this code should only run when it is 0... must be something wrong
-                // with my system  I guess I don't understand this
-                sycl::ext::oneapi::experimental::printf(
-                  "\n\t HOYY:: Sub_group.get_local_id()[0] = %d = %d -- ct = %d, write_index = %d",
-                  sub_group.get_local_linear_id(),
-                  sub_group.get_local_id()[0],
-                  ct,
-                  write_index);
-            }
-        }
+        write_index = sycl::atomic_ref<int,
+                                       sycl::memory_order_relaxed,
+                                       sycl::memory_scope_device,
+                                       sycl::access::address_space::global_space>(*extrema_counter) += group_count;
     }
 
     // work-item 0 broadcassts to all other same as leader work-item
@@ -101,9 +78,45 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
 
     // Adds the sum of set bits in mask that has sub_grop local id lower than the current (exclusive)
     //  this provides the 0 result and every result up to ct
-    write_index += sycl::popcount(mask & ((1 << sub_group.get_local_id()[0]) - 1)); // breaks if USE_MASK != 1
 
+#if USE_MASK
+    write_index += sycl::popcount(mask & ((1 << sub_group.get_local_id()[0]) - 1)); // breaks if USE_MASK != 1
     return write_index;
+#else
+    // write_index += sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
+    int item_offset = sycl::exclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
+    return write_index + item_offset;
+
+#endif
+}
+#elif SUB_GROUP_COUNTING == 2
+static inline unsigned int extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
+{
+    sycl::sub_group sub_group = it.get_sub_group();
+
+    // First, compute the local count of indicators in the sub-group
+    int local_count = sycl::reduce_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
+
+    // Compute local inclusive scan for the write offset within the sub-group
+    int local_offset = sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
+
+    // Only the leader updates the global counter
+    int global_offset = 0;
+    if(sub_group.leader())
+    {
+        global_offset = sycl::atomic_ref<int,
+                                         sycl::memory_order_relaxed,
+                                         sycl::memory_scope_device,
+                                         sycl::access::address_space::global_space>(*extrema_counter)
+                          .fetch_add(local_count);
+    }
+
+    // Broadcast the global offset to all work-items in the sub-group
+    global_offset = sycl::group_broadcast(sub_group, global_offset, 0);
+
+    // The final write index is the global offset plus the local offset
+    // Subtract 1 because inclusive_scan includes the current element
+    return indicator ? (global_offset + local_offset - 1) : 0;
 }
 #else
 // Do the counting for the whole work-group will be less efficient but hopefully work correctly
@@ -647,7 +660,7 @@ class find_extrema_in_dog
     const popsift::ConstInfo* d_consts;
     ExtremaCounters* dct;
     DevBuffers* dobuf;
-    // int max_extrema;
+    // const int max_extrema;
 
   public:
     find_extrema_in_dog(float** dog,
@@ -663,7 +676,7 @@ class find_extrema_in_dog
                         const popsift::ConstInfo* d_consts,
                         ExtremaCounters* dct,
                         DevBuffers* dobuf)
-      // int max_extrema)
+      // const int max_extrema)
       : dog(dog)
       , octave(octave)
       , width(width)
@@ -684,7 +697,18 @@ class find_extrema_in_dog
     {
         InitialExtremum ec;
         ec.ignore = false;
-        int max_extrema = d_consts->max_extrema;
+        const int max_extrema = d_consts->max_extrema;
+
+        if(it.get_global_linear_id() == 0)
+        {
+            sycl::sub_group sub_group = it.get_sub_group();
+            sycl::ext::oneapi::experimental::printf(
+              "\n\nNUMBER OF WORK GROUPS %zu -- IN OCTAVE %d -- sub_group size %zu -- max_sub_group_size %zu \n\n ",
+              it.get_group_range().size(),
+              octave,
+              sub_group.get_local_range()[0],
+              sub_group.get_max_local_range()[0]);
+        }
 
         bool indicator = find_extrema_in_dog_sub<sift_mode>(
           dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, &ec, it, d_consts);
@@ -718,7 +742,8 @@ class find_extrema_in_dog
             //   ec.lpos,
             //   ec.sigma,
             //   ec.cell);
-            // sycl::ext::oneapi::experimental::printf("indicator = %d -- write_index = %d\n", indicator, write_index);
+            // sycl::ext::oneapi::experimental::printf("indicator = %d -- write_index = %d\n", indicator,
+            // write_index);
             ec.write_index = write_index;
             // store the initial extremum in an array
             d_extrema[write_index] = ec;
@@ -734,16 +759,21 @@ class find_extrema_in_dog
         // in non-(0,0) threads and increase barrier count too early
         // work-group barrier
         sycl::group_barrier(it.get_group()); // from book -- barrier on the group same as __syncthreads();
-                                             // can also be done for sub-groups by passing that group like __syncwarp
+        // can also be done for sub-groups by passing that group like __syncwarp
 
         // We only want one of the threads in a work-group to execute this code
+
+        /// TESTING
         if(it.get_local_linear_id() == 0) // work-item 0 in work-group
         {
+            // TOdo make ct and d_number_of_blocks unsigned int
             int ct = sycl::atomic_ref<int,
                                       sycl::memory_order_relaxed,
                                       sycl::memory_scope_device,
                                       sycl::access::address_space::global_space>(*d_number_of_blocks)++;
-            if(ct >= number_of_blocks - 1)
+            // consider using size_t for d_number_of_blocks but 64 bit is more than needed...
+            // if(ct >= static_cast<int>(it.get_group_range().size() - 1))
+            if(ct >= (number_of_blocks - 1))
             {
                 // Final 0 work-item that executes this code, so num_extrema count is finished computing and we ensure
                 // it is not larger than the max if it is, it's set to the max value
@@ -754,13 +784,18 @@ class find_extrema_in_dog
                   .fetch_min(max_extrema);
 
                 sycl::ext::oneapi::experimental::printf(
-                  "\n\t Octave: %d extrema_count = %d\n", octave, dct->ext_ct[octave]);
+                  "\n\t Octave: %d extrema_count = %d --> ct = %d && number_of_blocks - 1 = %d  \n",
+                  octave,
+                  dct->ext_ct[octave],
+                  ct,
+                  static_cast<int>(it.get_group_range().size()) - 1);
             }
         }
     }
 };
 
-void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write)
+// void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
+void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
 {
     static const int HEIGHT = 4;
 
@@ -768,31 +803,10 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
     {
         Octave& oct_obj = _octaves[octave];
 
-        // int* extrema_num_blocks = getNumberOfBlocks(octave); // not ready for this :C
-
-        // dim3 block(32, HEIGHT);
-        // dim3 grid;
-        // grid.x = grid_divide(cols, block.x);
-        // grid.y = grid_divide(rows, block.y);
-        // grid.z = _levels - 3;
-
-        // cudaStream_t oct_str = oct_obj.getStream();
-
-        // Currently this barrier is shared but I'm not sure if that is needed
         int* num_blocks = getNumberOfBlocks(octave);
 
         int width = oct_obj.getWidth();
         int height = oct_obj.getHeight();
-
-        // Think z needs to be same for global and local (local needs to divide global perfectly)
-        // z == 1 does also compile... strange that
-        // sycl::range local{32, HEIGHT, 1};
-        // sycl::range local{32, HEIGHT, (size_t)_levels - 3};
-        // sycl::range local{LOCAL_X, HEIGHT, (size_t)_levels - 3};
-        // // sycl::range local{LOCAL_X, HEIGHT, 1};
-        // sycl::range global{
-        //   (size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1)), (size_t)_levels -
-        //   3};
 
         fprintf(stderr, "\tWidht=%d, height=%d", width, height);
 
@@ -801,12 +815,14 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
         // currently same as cuda
         sycl::range local{1, HEIGHT, LOCAL_X};
         sycl::range global{
-          (size_t)_levels - 3, (size_t)grid_divide(height, local.get(1)), (size_t)grid_divide(width, local.get(2))};
+          (size_t)_levels - 3, (size_t)grid_divide(height, local[1]), (size_t)grid_divide(width, local[2])};
 
         int work_group_count = grid_divide_cuda(height, local[1]) * grid_divide_cuda(width, local[2]) * (_levels - 3);
+        sycl::event dog_done = oct_obj._dog_done_event;
 
-        printf("\nFIND EXTREMA: Local(%zu, %zu, %zu) --- --- Global(%zu, %zu, %zu) work_group(%d, %d, %d) "
+        printf("\nFIND EXTREMA octave %d: Local(%zu, %zu, %zu) --- --- Global(%zu, %zu, %zu) work_group(%d, %d, %d) "
                "Work_group_count = %d\n\n",
+               octave,
                local[0],
                local[1],
                local[2],
@@ -839,7 +855,7 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
             default:
                 printf("RefineInOctave type popsift default\n");
                 oct_obj._extrema_done_event = _device_queue.submit([&](sycl::handler& cgh) {
-                    cgh.depends_on({dependencies[octave], d_consts_write});
+                    cgh.depends_on({dog_done, d_consts_write, _dobuf_write, _zero_dct, _zero_extrema_num_blocks});
                     cgh.parallel_for(sycl::nd_range{global, local},
                                      find_extrema_in_dog<HEIGHT, Config::RefineInOctave>(oct_obj.getDogArray(),
                                                                                          octave,
@@ -854,18 +870,20 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
                                                                                          _d_consts,
                                                                                          _dct,
                                                                                          _dobuf));
+                    // _d_consts->max_extrema));
                 });
                 break;
         }
 
         _device_queue.wait();
 
-#if false // seems to print similar value (float differences) to the cuda version from the few samples I've compared and
-          // the number of extrema is exactly the same for each octave
-        _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, max_extrema = _d_consts->max_extrema]() {
+#if true // seems to print similar value (float differences) to the cuda version from the few samples I've compared and
+         // the number of extrema is exactly the same for each octave
+        _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, d_consts = _d_consts]() {
             sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
             // For all octaves dct->ext_ct[octave] is 8 times what it should be for sub-group of 8 hance every thread
             // in sub-group must be doing the atomic add but I don't know how to make it stop doing that
+            int max_extrema = d_consts->max_extrema;
 
             if(octave == 0)
             {
@@ -891,6 +909,16 @@ void Pyramid::find_extrema(const Config& conf, std::vector<sycl::event> dependen
     }
 
     _device_queue.wait();
+    _device_queue.single_task([=, dct = _dct, num_octaves = _num_octaves]() {
+        for(int o = 0; o < num_octaves; ++o)
+            sycl::ext::oneapi::experimental::printf("\nOCTAVE %d --> Num extrema %d\n", o, dct->ext_ct[o]);
+    });
+
+    auto sg_sizes = _device_queue.get_device().get_info<sycl::info::device::sub_group_sizes>();
+    std::cout << "Supported subgroup sizes: ";
+    for(auto size : sg_sizes)
+        std::cout << size << " ";
+    std::cout << std::endl;
     // fflush(stderr);
     // fflush(stdout);
     // fprintf(stderr, "\n\n\t\tHello there mate how we doin");
