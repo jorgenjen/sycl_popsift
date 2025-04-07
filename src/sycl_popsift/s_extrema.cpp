@@ -647,7 +647,7 @@ class find_extrema_in_dog
     const popsift::ConstInfo* d_consts;
     ExtremaCounters* dct;
     DevBuffers* dobuf;
-    const int max_extrema;
+    // const int max_extrema;
 
   public:
     find_extrema_in_dog(float** dog,
@@ -662,8 +662,8 @@ class find_extrema_in_dog
                         const int grid_width,
                         const popsift::ConstInfo* d_consts,
                         ExtremaCounters* dct,
-                        DevBuffers* dobuf,
-                        const int max_extrema)
+                        DevBuffers* dobuf)
+      // const int max_extrema)
       : dog(dog)
       , octave(octave)
       , width(width)
@@ -677,13 +677,14 @@ class find_extrema_in_dog
       , d_consts(d_consts)
       , dct(dct)
       , dobuf(dobuf)
-      , max_extrema(max_extrema)
+    // , max_extrema(max_extrema)
     {}
 
     inline void operator()(sycl::nd_item<3> it) const
     {
         InitialExtremum ec;
         ec.ignore = false;
+        const int max_extrema = d_consts->max_extrema;
 
         if(it.get_global_linear_id() == 0)
         {
@@ -728,7 +729,8 @@ class find_extrema_in_dog
             //   ec.lpos,
             //   ec.sigma,
             //   ec.cell);
-            // sycl::ext::oneapi::experimental::printf("indicator = %d -- write_index = %d\n", indicator, write_index);
+            // sycl::ext::oneapi::experimental::printf("indicator = %d -- write_index = %d\n", indicator,
+            // write_index);
             ec.write_index = write_index;
             // store the initial extremum in an array
             d_extrema[write_index] = ec;
@@ -854,8 +856,8 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
                                                                                          conf.getFilterGridSize(),
                                                                                          _d_consts,
                                                                                          _dct,
-                                                                                         _dobuf,
-                                                                                         _d_consts->max_extrema));
+                                                                                         _dobuf));
+                    // _d_consts->max_extrema));
                 });
                 break;
         }
