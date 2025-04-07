@@ -88,6 +88,8 @@ class Pyramid
     DevBuffers* _dobuf;       // device
     DevBuffers _dobuf_host{}; // needed for memory management
     sycl::event _dobuf_write;
+    sycl::event _zero_dct;
+    sycl::event _zero_extrema_num_blocks;
 
     /* the download of converted descriptors should be asynchronous */
     // cudaStream_t _download_stream;

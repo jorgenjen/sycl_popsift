@@ -66,18 +66,20 @@ Pyramid::Pyramid(const Config& config,
         h = ceilf(h / 2.0f);
     }
 
-    memset(&_hct, 0, sizeof(ExtremaCounters)); // might have a puprpose on the host side
+    // Seems to be used alot but need to sync with dct when it is set to use I think so should
+    // not be needed to zero it out
+    // memset(&_hct, 0, sizeof(ExtremaCounters)); // might have a puprpose on the host side
 
     // NOTE: Not sure if we want to have the custom error message for each malloc not sure if it gives any usefull
     // information and it might slightly slow us down...
 
     _dct = popsift::sycl_common::malloc_devT<ExtremaCounters>(
       1, __FILE__, __LINE__, "Device Extrema counter allocation failed", Q);
-    Q.memset(_dct, 0, sizeof(ExtremaCounters)); // Should be a dependency for extrema?
+    // Q.memset(_dct, 0, sizeof(ExtremaCounters)); // Should be a dependency for extrema?
 
     _d_extrema_num_blocks = popsift::sycl_common::malloc_devT<int>(
       _num_octaves, __FILE__, __LINE__, "Global octave barrier allocation failed", Q);
-    Q.memset(_d_extrema_num_blocks, 0, sizeof(int) * _num_octaves); // shoud be a dependecy for extrema
+    // Q.memset(_d_extrema_num_blocks, 0, sizeof(int) * _num_octaves);
 
     // don't see the purpose of dobuf_shadow, so not using it untill I see a purpose for it (I probs will in future :D)
     // I think it's mainly for some memory optimizations in cuda but might be wrong!
@@ -162,6 +164,7 @@ void Pyramid::step1(const Config& conf, popsift::Image* img, sycl::event d_gauss
 {
     // TODO: Implement the reset -- far down the line need to find extrema first
     // reset_extrema_mgmt();
+
     build_pyramid(conf, img, d_gauss_write, img_transfer);
 }
 
@@ -169,6 +172,13 @@ void Pyramid::step1(const Config& conf, popsift::Image* img, sycl::event d_gauss
 // void Pyramid::step2(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write)
 void Pyramid::step2(const Config& conf, sycl::event d_consts_write)
 {
+    // TODO: Ensure no waits before this point
+
+    // Was in step1 before build_pyramid before
+    // Moved here as nothing in step1 requies this to be done and nothing blocks before this so it will be scheduled
+    // quite quickly so should not add wait time but I mght be wrong (profile)
+    reset_extrema_mgmt(); // Required for first run aswell
+
     // find_extrema(conf, dependencies, d_consts_write);
     find_extrema(conf, d_consts_write);
 
@@ -177,15 +187,11 @@ void Pyramid::step2(const Config& conf, sycl::event d_consts_write)
     // descriptors( conf );
 }
 
-// void Pyramid::reset_extrema_mgmt()
-// {
-//     memset(&hct, 0, sizeof(ExtremaCounters));
-//     cudaMemcpyToSymbol(dct, &hct, sizeof(ExtremaCounters), 0,
-//     cudaMemcpyHostToDevice);
-//
-//     popcuda_memset_sync(_d_extrema_num_blocks, 0, _num_octaves *
-//     sizeof(int));
-// }
+void Pyramid::reset_extrema_mgmt()
+{
+    _zero_dct = _device_queue.memset(_dct, 0, sizeof(popsift::ExtremaCounters));
+    _zero_extrema_num_blocks = _device_queue.memset(_d_extrema_num_blocks, 0, sizeof(int) * _num_octaves);
+}
 
 void Pyramid::resetDimensions(const Config& conf, int width, int height)
 {
