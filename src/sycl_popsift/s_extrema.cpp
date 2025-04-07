@@ -33,9 +33,9 @@
 namespace popsift {
 #define LOCAL_X 32
 
-#define SUB_GROUP_COUNTING 1
+#define SUB_GROUP_COUNTING 0
 
-#if SUB_GROUP_COUNTING == 1
+#if SUB_GROUP_COUNTING
 // template<int HEIGHT> // did not do anything
 // Must take care here as sub-group will not be 32 in all cases like a warp in cuda
 // should also make the blocks based on sub-group multiplier(idk what the name was) preference of the device used
@@ -45,21 +45,14 @@ static inline unsigned int extrema_count(bool indicator, int* extrema_counter, s
     // sub_grousp is undergoing change and not recomended to use but seems most fitting in this case
     sycl::sub_group sub_group = it.get_sub_group();
 
-#define USE_MASK 0
+#define USE_MASK 1
 #if USE_MASK == 1
     // Should be the same as ballot_sync and __popc
     // Will work as long as sub-group is not larger than 32
     uint32_t mask = sycl::reduce_over_group(
-      sub_group,
-      indicator ? (1u << sub_group.get_local_id()[0]) : 0u,
-      sycl::ext::oneapi::bit_or<uint32_t>()); // better to get_local_id from sub group or it? should be same
-    int ct = sycl::popcount(mask);
-#else
-    // basic reduce to sum indicators being true
-    // int ct = sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
-    int group_count = sycl::reduce_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
-    // int item_offset = sycl::exclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
-#endif
+      sub_group, indicator ? (1u << sub_group.get_local_id()[0]) : 0u, sycl::ext::oneapi::bit_or<uint32_t>());
+    int group_count = sycl::popcount(mask);
+
     int write_index = 0;   // Must be set to zero (Incorrect result otherwise)
     if(sub_group.leader()) // is always work-item with local_id 0 in the sub_group
     {
@@ -76,84 +69,47 @@ static inline unsigned int extrema_count(bool indicator, int* extrema_counter, s
     // everyone now get's the base value that they can add to
     write_index = sycl::group_broadcast(sub_group, write_index, 0);
 
-    // Adds the sum of set bits in mask that has sub_grop local id lower than the current (exclusive)
-    //  this provides the 0 result and every result up to ct
-
-#if USE_MASK
-    write_index += sycl::popcount(mask & ((1 << sub_group.get_local_id()[0]) - 1)); // breaks if USE_MASK != 1
-    return write_index;
+    // Counts all 1 in mask with position lower than itself (exlusive) to start from zero for write array
+    return write_index + sycl::popcount(mask & ((1 << sub_group.get_local_id()[0]) - 1));
 #else
-    // write_index += sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
-    int item_offset = sycl::exclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
-    return write_index + item_offset;
-
-#endif
-}
-#elif SUB_GROUP_COUNTING == 2
-static inline unsigned int extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
-{
-    sycl::sub_group sub_group = it.get_sub_group();
-
-    // First, compute the local count of indicators in the sub-group
-    int local_count = sycl::reduce_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
-
-    // Compute local inclusive scan for the write offset within the sub-group
-    int local_offset = sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
-
-    // Only the leader updates the global counter
-    int global_offset = 0;
-    if(sub_group.leader())
+    // Using scan
+    int item_offset = sycl::inclusive_scan_over_group(sub_group, indicator ? 1 : 0, sycl::plus<>());
+    int write_index = 0; // Must be set to zero (Incorrect result otherwise)
+    if(sub_group.get_local_id()[0] == sub_group.get_local_range()[0] - 1) // Only last work-item has complete count
     {
-        global_offset = sycl::atomic_ref<int,
-                                         sycl::memory_order_relaxed,
-                                         sycl::memory_scope_device,
-                                         sycl::access::address_space::global_space>(*extrema_counter)
-                          .fetch_add(local_count);
+        // The atomic add returns the old value in extrema_coutner before the addition which is considered the base
+        // As each thread uses this and adds to it's own counter (write_index) how many of the threads in the
+        // sub-group before it had it's indicator to true
+        write_index = sycl::atomic_ref<int,
+                                       sycl::memory_order_relaxed,
+                                       sycl::memory_scope_device,
+                                       sycl::access::address_space::global_space>(*extrema_counter) += item_offset;
     }
+    // work-item 0 broadcassts to all other same as leader work-item
+    // everyone now get's the base value that they can add to
+    write_index = sycl::group_broadcast(sub_group, write_index, 0);
 
-    // Broadcast the global offset to all work-items in the sub-group
-    global_offset = sycl::group_broadcast(sub_group, global_offset, 0);
-
-    // The final write index is the global offset plus the local offset
-    // Subtract 1 because inclusive_scan includes the current element
-    return indicator ? (global_offset + local_offset - 1) : 0;
+    // Either have to subtract here or do exclusive scan and add for the atomic addition
+    // (not sure what is better probs the same - but should be better than scan and reduce)
+    return write_index + item_offset - (indicator ? 1 : 0); // Need to subtract self to have it zero based
+#endif
 }
 #else
 // Do the counting for the whole work-group will be less efficient but hopefully work correctly
 // eventhoug I  believe that it is my system causing the sub-group not to work
-#define every_body_add 1
-#if every_body_add
-
 static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
 {
-    sycl::group<3> work_group = it.get_group();
-    int local_linear = it.get_local_linear_id();
-
-    // int write_index = sycl::
-    //   atomic_ref<int, sycl::memory_order_relaxed, sycl::memory_scope_device,
-    //   sycl::access::address_space::global_space>(
-    //     *extrema_counter) += (indicator ? 1 : 0);
-    int write_index = sycl::atomic_ref<int,
-                                       sycl::memory_order_seq_cst,
-                                       sycl::memory_scope_device,
-                                       sycl::access::address_space::global_space>(*extrema_counter)
-                        .fetch_add(indicator ? 1 : 0);
-    return write_index;
-}
-#else
-static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl::nd_item<3>& it)
-{
+    // Work group count only one does the add
     sycl::group<3> work_group = it.get_group();
     int local_linear = it.get_local_linear_id();
     // reduce over the whole work group
-    // int ct = sycl::reduce_over_group(work_group, indicator ? 1 : 0, sycl::plus<>());
-    // Final result is the count but we don't use it as write-index since it is zero based -- note to self
-    int ct = sycl::exclusive_scan_over_group(work_group, indicator ? 1 : 0, sycl::plus<>());
+    // Final result is the count but we don't use it as write-index since it is zero based
+    int group_count = sycl::exclusive_scan_over_group(work_group, indicator ? 1 : 0, sycl::plus<>());
 
+    // Could not find a built in way to compute this
     int last_work_item = it.get_local_range(0) * it.get_local_range(1) * it.get_local_range(2) - 1;
-    int write_index;
+    int write_index = 0; // Must be zero (completely wrong otherwise)
 
-    // I would assume that there is no need to have a barrier here
     if(local_linear == last_work_item) // only last has the complete value
     {
         // Need to add it's own value to the exclusive result making it inclusive for the atmoic add
@@ -162,26 +118,13 @@ static inline uint32_t extrema_count(bool indicator, int* extrema_counter, sycl:
                                        sycl::memory_order_relaxed,
                                        sycl::memory_scope_device,
                                        sycl::access::address_space::global_space>(*extrema_counter) +=
-          (ct + (indicator ? 1 : 0));
-
-        if(it.get_group_linear_id() == 13558)
-        // if(ct > 1)
-        {
-            // sycl::ext::oneapi::experimental::printf("group_linear = %d", it.get_group_linear_id());
-            sycl::ext::oneapi::experimental::printf(
-              "work-item id in work-group %d == %d -- ct = %d  --- indicator = %d\n",
-              local_linear,
-              last_work_item,
-              ct,
-              indicator ? 1 : 0);
-        }
+          (group_count + (indicator ? 1 : 0));
     }
 
     write_index = sycl::group_broadcast(work_group, write_index, last_work_item); // last broadcasts
-    return write_index + ct;
+    return write_index + group_count;
 }
 
-#endif
 #endif
 
 static inline void extremum_cmp(float val, float f, uint32_t& gt, uint32_t& lt, uint32_t mask)
