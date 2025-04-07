@@ -252,15 +252,6 @@ bool PopSift::applyConfiguration(bool force)
         _d_gauss_write = this->init_gauss_filter();
 
         _d_consts_write = this->init_constants();
-
-        // _d_consts_write = popsift::init_constants(_config.sigma,
-        //                                           _config.levels,
-        //                                           _config.getPeakThreshold(),
-        //                                           _config._edge_limit,
-        //                                           _config.getMaxExtrema(),
-        //                                           _config.getNormalizationMultiplier(),
-        //                                           _device_queue,
-        //                                           &_d_consts);
     }
     _shadow_config = _config;
     return true;

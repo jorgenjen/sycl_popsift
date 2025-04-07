@@ -647,7 +647,7 @@ class find_extrema_in_dog
     const popsift::ConstInfo* d_consts;
     ExtremaCounters* dct;
     DevBuffers* dobuf;
-    int max_extrema;
+    const int max_extrema;
 
   public:
     find_extrema_in_dog(float** dog,
@@ -663,7 +663,7 @@ class find_extrema_in_dog
                         const popsift::ConstInfo* d_consts,
                         ExtremaCounters* dct,
                         DevBuffers* dobuf,
-                        int max_extrema)
+                        const int max_extrema)
       : dog(dog)
       , octave(octave)
       , width(width)
@@ -684,6 +684,17 @@ class find_extrema_in_dog
     {
         InitialExtremum ec;
         ec.ignore = false;
+
+        if(it.get_global_linear_id() == 0)
+        {
+            sycl::sub_group sub_group = it.get_sub_group();
+            sycl::ext::oneapi::experimental::printf(
+              "\n\nNUMBER OF WORK GROUPS %zu -- IN OCTAVE %d -- sub_group size %zu -- max_sub_group_size %zu \n\n ",
+              it.get_group_range().size(),
+              octave,
+              sub_group.get_local_range()[0],
+              sub_group.get_max_local_range()[0]);
+        }
 
         bool indicator = find_extrema_in_dog_sub<sift_mode>(
           dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, &ec, it, d_consts);
@@ -733,16 +744,21 @@ class find_extrema_in_dog
         // in non-(0,0) threads and increase barrier count too early
         // work-group barrier
         sycl::group_barrier(it.get_group()); // from book -- barrier on the group same as __syncthreads();
-                                             // can also be done for sub-groups by passing that group like __syncwarp
+        // can also be done for sub-groups by passing that group like __syncwarp
 
         // We only want one of the threads in a work-group to execute this code
+
+        /// TESTING
         if(it.get_local_linear_id() == 0) // work-item 0 in work-group
         {
+            // TOdo make ct and d_number_of_blocks unsigned int
             int ct = sycl::atomic_ref<int,
                                       sycl::memory_order_relaxed,
                                       sycl::memory_scope_device,
                                       sycl::access::address_space::global_space>(*d_number_of_blocks)++;
-            if(ct >= number_of_blocks - 1)
+            // consider using size_t for d_number_of_blocks but 64 bit is more than needed...
+            // if(ct >= static_cast<int>(it.get_group_range().size() - 1))
+            if(ct >= (number_of_blocks - 1))
             {
                 // Final 0 work-item that executes this code, so num_extrema count is finished computing and we ensure
                 // it is not larger than the max if it is, it's set to the max value
@@ -757,7 +773,7 @@ class find_extrema_in_dog
                   octave,
                   dct->ext_ct[octave],
                   ct,
-                  number_of_blocks - 1);
+                  static_cast<int>(it.get_group_range().size()) - 1);
             }
         }
     }
@@ -772,30 +788,10 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
     {
         Octave& oct_obj = _octaves[octave];
 
-        // int* extrema_num_blocks = getNumberOfBlocks(octave); // not ready for this :C
-
-        // dim3 block(32, HEIGHT);
-        // dim3 grid;
-        // grid.x = grid_divide(cols, block.x);
-        // grid.y = grid_divide(rows, block.y);
-        // grid.z = _levels - 3;
-
-        // cudaStream_t oct_str = oct_obj.getStream();
-
         int* num_blocks = getNumberOfBlocks(octave);
 
         int width = oct_obj.getWidth();
         int height = oct_obj.getHeight();
-
-        // Think z needs to be same for global and local (local needs to divide global perfectly)
-        // z == 1 does also compile... strange that
-        // sycl::range local{32, HEIGHT, 1};
-        // sycl::range local{32, HEIGHT, (size_t)_levels - 3};
-        // sycl::range local{LOCAL_X, HEIGHT, (size_t)_levels - 3};
-        // // sycl::range local{LOCAL_X, HEIGHT, 1};
-        // sycl::range global{
-        //   (size_t)grid_divide(width, local.get(0)), (size_t)grid_divide(height, local.get(1)), (size_t)_levels -
-        //   3};
 
         fprintf(stderr, "\tWidht=%d, height=%d", width, height);
 
@@ -809,8 +805,9 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
         int work_group_count = grid_divide_cuda(height, local[1]) * grid_divide_cuda(width, local[2]) * (_levels - 3);
         sycl::event dog_done = oct_obj._dog_done_event;
 
-        printf("\nFIND EXTREMA: Local(%zu, %zu, %zu) --- --- Global(%zu, %zu, %zu) work_group(%d, %d, %d) "
+        printf("\nFIND EXTREMA octave %d: Local(%zu, %zu, %zu) --- --- Global(%zu, %zu, %zu) work_group(%d, %d, %d) "
                "Work_group_count = %d\n\n",
+               octave,
                local[0],
                local[1],
                local[2],
@@ -866,7 +863,7 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
         _device_queue.wait();
 
 #if false // seems to print similar value (float differences) to the cuda version from the few samples I've compared and
-          // the number of extrema is exactly the same for each octave
+         // the number of extrema is exactly the same for each octave
         _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, max_extrema = _d_consts->max_extrema]() {
             sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
             // For all octaves dct->ext_ct[octave] is 8 times what it should be for sub-group of 8 hance every thread

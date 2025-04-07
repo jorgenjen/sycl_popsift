@@ -73,10 +73,11 @@ Pyramid::Pyramid(const Config& config,
 
     _dct = popsift::sycl_common::malloc_devT<ExtremaCounters>(
       1, __FILE__, __LINE__, "Device Extrema counter allocation failed", Q);
-    Q.memset(_dct, 0, sizeof(ExtremaCounters));
+    Q.memset(_dct, 0, sizeof(ExtremaCounters)); // Should be a dependency for extrema?
 
     _d_extrema_num_blocks = popsift::sycl_common::malloc_devT<int>(
       _num_octaves, __FILE__, __LINE__, "Global octave barrier allocation failed", Q);
+    Q.memset(_d_extrema_num_blocks, 0, sizeof(int) * _num_octaves); // shoud be a dependecy for extrema
 
     // don't see the purpose of dobuf_shadow, so not using it untill I see a purpose for it (I probs will in future :D)
     // I think it's mainly for some memory optimizations in cuda but might be wrong!
