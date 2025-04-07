@@ -1,7 +1,6 @@
 #include "s_image.hpp"
 
 #include "common/debug_macros.hpp"
-#include "sycl_popsift/malloc_devt.hpp"
 
 #include <sycl/sycl.hpp>
 
@@ -27,10 +26,10 @@ Image::Image(int w, int h, sycl::queue& Q)
 {
     // Not sure if using w and h is correct need to refactor the whole scaling thing as it is kinda confusing
     // Should probably just use the scaled size and nothing else when using USM
-    _device_src_img = popsift::common_sycl::malloc_devT<unsigned char>(
+    _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
       w * h, __FILE__, __LINE__, "Could not allocate memory for image on device", Q);
 
-    _device_img = popsift::common_sycl::malloc_devT<float>(
+    _device_img = popsift::sycl_common::malloc_devT<float>(
       w * h, __FILE__, __LINE__, "Could not allocate memory for float representation of image on device", Q);
 }
 
@@ -56,10 +55,10 @@ void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
         _max_w = _w = w;
         _max_h = _h = h;
 
-        _device_src_img = popsift::common_sycl::malloc_devT<unsigned char>(
+        _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
           scaled_w * scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
 
-        _device_img = popsift::common_sycl::malloc_devT<float>(
+        _device_img = popsift::sycl_common::malloc_devT<float>(
           scaled_w * scaled_h,
           __FILE__,
           __LINE__,
@@ -90,11 +89,11 @@ void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
     _max_w = _w = w;
     _max_h = _h = h;
 
-    _device_src_img = popsift::common_sycl::malloc_devT<unsigned char>(
+    _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
       scaled_w * scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
 
     _device_img =
-      popsift::common_sycl::malloc_devT<float>(scaled_w * scaled_h,
+      popsift::sycl_common::malloc_devT<float>(scaled_w * scaled_h,
                                                __FILE__,
                                                __LINE__,
                                                "Could not allocate memory for float representation of image on device",

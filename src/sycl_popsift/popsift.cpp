@@ -4,7 +4,6 @@
 #include "sycl/device_selector.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
-#include "sycl_popsift/malloc_devt.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
 
@@ -197,7 +196,7 @@ sycl::event PopSift::init_gauss_filter()
     // Transfer gauss filter to device
     if(_d_gauss == nullptr)
     {
-        _d_gauss = popsift::common_sycl::malloc_devT<popsift::GaussInfo>(
+        _d_gauss = popsift::sycl_common::malloc_devT<popsift::GaussInfo>(
           1, __FILE__, __LINE__, "Failed to allocate gauss filter on device", _device_queue);
     }
     else
@@ -224,7 +223,7 @@ sycl::event PopSift::init_constants()
     if(_d_consts == nullptr)
     {
         fprintf(stderr, "\n\n\n\t\t\tALLOC _d_consts \n\n");
-        _d_consts = popsift::common_sycl::malloc_devT<popsift::ConstInfo>(
+        _d_consts = popsift::sycl_common::malloc_devT<popsift::ConstInfo>(
           1, __FILE__, __LINE__, "Failed to allocate constants on device", _device_queue);
     }
     else

@@ -130,26 +130,3 @@ T* new_hostT(int num, const char* file, int line, const char* error_message)
 
 } // namespace common
 } // namespace popsift
-
-// Cannot include sycl.hpp here and hence can't find sycl::queu so can't have the function here IDK why that is so it is
-// moved to ../malloc_devt.hpp
-// namespace popsift::common_sycl {
-//
-// template<class T>
-// T* malloc_devT(int num, const char* file, int line, sycl::queue Q)
-// {
-//     T* ptr;
-//     try
-//     {
-//         ptr = sycl::malloc_device<T>(num, Q);
-//     }
-//     catch(const sycl::exception& e)
-//     {
-//         std::stringstream ss;
-//         ss << "Memory allocation failed: " << e.what();
-//         POP_FATAL_FL(ss.str(), file, line);
-//     }
-//     return ptr;
-// }
-//
-// } // namespace popsift::common_sycl

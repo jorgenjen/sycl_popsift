@@ -2,7 +2,6 @@
 
 #include "sycl/usm.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
-#include "sycl_popsift/malloc_devt.hpp"
 
 #include <sstream>
 
@@ -24,13 +23,13 @@ void Octave::alloc_arrays()
     _dog_array_host =
       popsift::common::new_hostT<float*>(_levels - 1, __FILE__, __LINE__, "Host allocation for DoG array failed");
 
-    _data_array = popsift::common_sycl::malloc_devT<float*>(
+    _data_array = popsift::sycl_common::malloc_devT<float*>(
       _levels, __FILE__, __LINE__, "Device allocation for data array failed", _device_queue);
 
-    _dog_array = popsift::common_sycl::malloc_devT<float*>(
+    _dog_array = popsift::sycl_common::malloc_devT<float*>(
       _levels - 1, __FILE__, __LINE__, "Device allocation for DoG array failed", _device_queue);
 
-    _intermediate = popsift::common_sycl::malloc_devT<float>(
+    _intermediate = popsift::sycl_common::malloc_devT<float>(
       _w * _h, __FILE__, __LINE__, "Intermediate allocation for octave failed", _device_queue);
 
     // Allocate all in one chunck (might be better to have it in multiple to have less chance of it failing but this is
@@ -40,14 +39,14 @@ void Octave::alloc_arrays()
     // data_msg << "Could not allocate all data levels as one segment of of size " << (_w * _h * _levels) / 1000 <<
     // "kB";
 
-    _data_array_host[0] = popsift::common_sycl::malloc_devT<float>(
+    _data_array_host[0] = popsift::sycl_common::malloc_devT<float>(
       _w * _h * _levels, __FILE__, __LINE__, "Could not allocate all data levels as one segment", _device_queue);
 
     // std::stringstream dog_msg; // could use std::forat if c++20
     // dog_msg << "Could not allocate DoG levels as one segment of of size " << (_w * _h * (_levels - 1)) / 1000 <<
     // "kB";
 
-    _dog_array_host[0] = popsift::common_sycl::malloc_devT<float>(
+    _dog_array_host[0] = popsift::sycl_common::malloc_devT<float>(
       _w * _h * (_levels - 1), __FILE__, __LINE__, "Could not allocate DoG levels as one segment", _device_queue);
 
     // Set the pointer positions for indexing
