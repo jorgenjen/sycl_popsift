@@ -157,6 +157,7 @@ void Pyramid::step1(const Config& conf, popsift::Image* img, sycl::event d_gauss
     // TODO: Implement the reset -- far down the line need to find extrema first
     // reset_extrema_mgmt();
 
+    reset_extrema_mgmt(); // Required for first run aswell
     build_pyramid(conf, img, d_gauss_write, img_transfer);
 }
 
@@ -169,7 +170,7 @@ void Pyramid::step2(const Config& conf, sycl::event d_consts_write)
     // Was in step1 before build_pyramid before
     // Moved here as nothing in step1 requies this to be done and nothing blocks before this so it will be scheduled
     // quite quickly so should not add wait time but I mght be wrong (profile)
-    reset_extrema_mgmt(); // Required for first run aswell
+    // reset_extrema_mgmt(); // Required for first run aswell
 
     // find_extrema(conf, dependencies, d_consts_write);
     find_extrema(conf, d_consts_write);

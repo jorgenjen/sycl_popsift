@@ -96,7 +96,7 @@ class Octave
 
     // Octave();
     Octave() = delete;
-    Octave(sycl::queue& Q);
+    Octave(sycl::queue Q);
     ~Octave()
     {
         fprintf(stderr, "\n\tDESTROY OCTAVE\n");

@@ -105,7 +105,7 @@ class Pyramid
     Pyramid(const Config& config,
             int w,
             int h,
-            sycl::queue& Q,
+            sycl::queue Q,
             popsift::GaussInfo* d_gauss,
             popsift::ConstInfo* d_consts,
             popsift::ConstInfo& h_consts);

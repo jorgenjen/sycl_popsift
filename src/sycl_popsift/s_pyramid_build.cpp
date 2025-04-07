@@ -219,25 +219,10 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
                 if(octave == 0)
                 {
                     sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
-                    // oct_obj.setLevelEvent(0, vert_from_interm(octave, 0, gaussTableChoice, horiz));
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
-
-                    int w = _octaves[0].getWidth();
-                    int h = _octaves[0].getHeight();
-                    float* data = oct_obj.getDataArray()[level];
-
-                    popsift::sycl_common::print_region(oct_obj.getDataArray()[level],
-                                                       "First octave after vert -- ",
-                                                       w - 8,
-                                                       w,
-                                                       h - 8,
-                                                       h,
-                                                       w,
-                                                       _device_queue);
                 }
                 else
                 {
-                    // oct_obj.setLevelEvent(0, downscale_from_prev_octave(octave));
                     oct_obj._level_complete_events[0] = downscale_from_prev_octave(octave);
                 }
             }
@@ -246,13 +231,10 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
                 // Depends on set level event from prev level
                 sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
 
-                // oct_obj.setLevelEvent(level, vert_from_interm_basic(octave, level, horiz));
                 oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
             }
         }
     }
-    // _octaves[_num_octaves - 1]._level_complete_events[_levels - 1].wait();
-    // _device_queue.wait_and_throw();
     fprintf(stderr, "\n\tFinal octave is done so pyramid is done!!\n\n");
 
     for(int octave = 0; octave < _num_octaves; octave++) //
@@ -262,21 +244,7 @@ void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_g
         oct_obj._dog_done_event = dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]);
     }
 
-    // _device_queue.wait_and_throw();
-
     fprintf(stderr, "\n\tDone with DoG's\n\n");
-
-    // #define me_oct 4
-    // #define me_lvl 5
-    //
-    //     Octave& oct = _octaves[me_oct];
-    //     int w = oct.getWidth();
-    //     int h = oct.getHeight();
-    //
-    //     popsift::sycl_common::print_region(
-    //       oct.getDataArrayHost()[me_lvl], "Me doggy dog dog  new -> ", w - 8, w, h - 8, h, w, _device_queue);
-
-    // return {sycl::event()};
 }
 
 } // namespace popsift

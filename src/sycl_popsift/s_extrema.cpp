@@ -660,7 +660,6 @@ class find_extrema_in_dog
     const popsift::ConstInfo* d_consts;
     ExtremaCounters* dct;
     DevBuffers* dobuf;
-    // const int max_extrema;
 
   public:
     find_extrema_in_dog(float** dog,
@@ -676,7 +675,6 @@ class find_extrema_in_dog
                         const popsift::ConstInfo* d_consts,
                         ExtremaCounters* dct,
                         DevBuffers* dobuf)
-      // const int max_extrema)
       : dog(dog)
       , octave(octave)
       , width(width)
@@ -690,7 +688,6 @@ class find_extrema_in_dog
       , d_consts(d_consts)
       , dct(dct)
       , dobuf(dobuf)
-    // , max_extrema(max_extrema)
     {}
 
     inline void operator()(sycl::nd_item<3> it) const
@@ -699,35 +696,9 @@ class find_extrema_in_dog
         ec.ignore = false;
         const int max_extrema = d_consts->max_extrema;
 
-        if(it.get_global_linear_id() == 0)
-        {
-            sycl::sub_group sub_group = it.get_sub_group();
-            sycl::ext::oneapi::experimental::printf(
-              "\n\nNUMBER OF WORK GROUPS %zu -- IN OCTAVE %d -- sub_group size %zu -- max_sub_group_size %zu \n\n ",
-              it.get_group_range().size(),
-              octave,
-              sub_group.get_local_range()[0],
-              sub_group.get_max_local_range()[0]);
-        }
-
         bool indicator = find_extrema_in_dog_sub<sift_mode>(
           dog, octave, width, height, max_level, w_grid_divider, h_grid_divider, grid_width, &ec, it, d_consts);
 
-        // if(indicator)
-        // {
-        //     sycl::ext::oneapi::experimental::printf("\n\t xpos = %f ypos = %f -- lpos = %d -- sigma = %f  -- cell =
-        //     %d",
-        //                                             ec.xpos,
-        //                                             ec.ypos,
-        //                                             ec.lpos,
-        //                                             ec.sigma,
-        //                                             ec.cell);
-        // }
-
-        // if (indicator
-
-        // Don't think the tamplate argument does anything
-        // uint32_t write_index = extrema_count<HEIGHT>(indicator, &dct.ext_ct[octave]);
         uint32_t write_index = extrema_count(indicator, &dct->ext_ct[octave], it);
 
         InitialExtremum* d_extrema = dobuf->i_ext_dat[octave];
@@ -735,31 +706,18 @@ class find_extrema_in_dog
 
         if(indicator && write_index < max_extrema)
         {
-            // sycl::ext::oneapi::experimental::printf(
-            //   "\n\t\t xpos = %f ypos = %f -- lpos = %d -- sigma = %f  -- cell = % d ",
-            //   ec.xpos,
-            //   ec.ypos,
-            //   ec.lpos,
-            //   ec.sigma,
-            //   ec.cell);
-            // sycl::ext::oneapi::experimental::printf("indicator = %d -- write_index = %d\n", indicator,
-            // write_index);
             ec.write_index = write_index;
-            // store the initial extremum in an array
             d_extrema[write_index] = ec;
-            // if(write_index == 0)
-            //     sycl::ext::oneapi::experimental::printf("ec --> xpos = %f  ypos = %f", ec.xpos, ec.ypos);
 
             // index for indirect access to d_extrema, to enable
             // access after filtering some initial extrema
             d_ext_off[write_index] = write_index; // not sure how this is usefull... yet...
         }
 
-        // without syncthreads, (0,0) threads may precede some calls to extrema_count()
-        // in non-(0,0) threads and increase barrier count too early
-        // work-group barrier
-        sycl::group_barrier(it.get_group()); // from book -- barrier on the group same as __syncthreads();
-        // can also be done for sub-groups by passing that group like __syncwarp
+        // Need to synchronize the work group as if not for last work-group one sub-group could increment the barrier
+        // too early (only dangerous for the last few as what we need to avoid is write extrema count before every
+        // extrema has been counted) (reword...)
+        sycl::group_barrier(it.get_group());
 
         // We only want one of the threads in a work-group to execute this code
 

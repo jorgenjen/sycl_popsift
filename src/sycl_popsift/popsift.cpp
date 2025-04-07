@@ -92,8 +92,6 @@ PopSift::PopSift(const popsift::Config& config)
     // _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
     // _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
 
-    std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
-
     if(_device_queue.is_in_order())
     {
         std::cout << "Queue is in-order" << std::endl;
@@ -614,87 +612,4 @@ void PopSift::allMainThread()
     // _device_queue.wait(); // Having a wait here before I have all events configured properly
     private_uninit();
 #endif
-}
-
-// Helper function for development
-// ranges are inclusive on 0th dimension and exclusive on 1th dimension
-// void PopSift::printImageRegion(sycl::range<2> horiz, sycl::range<2> vert)
-// {
-//   // print out the first 10 bytes of the image
-//   using namespace sycl;
-//
-//   // wait for all previous enqued task to end before doing the print to show
-//   desired data _device_queue.wait();
-//
-//   host_accessor<unsigned char, 2, access::mode::read> h_acc(_imageData);
-//
-//   if (vert.get(0) > _w && vert.get(0) < 0 ||
-//       vert.get(1) > _w && vert.get(1) < 0 ||
-//       vert.get(0) >= vert.get(1)
-//   )
-//   {
-//     std::cout << "Image region is not legal" << std::endl;
-//   }
-//
-//   std::cout << "Image region: horiz = (" << horiz.get(0) << " -> " <<
-//   horiz.get(1)
-//             << ") vert = (" << vert.get(0) << " -> " << vert.get(1) << ")" <<
-//             std::endl;
-//   // using range in a odd way (I know :D)
-//   for (int i = vert.get(0); i < vert.get(1); ++i)
-//   {
-//     for (int j = horiz.get(0); j < horiz.get(1); ++j)
-//     {
-//          std::printf("%03u ", h_acc[j][i]);
-//     }
-//        std::cout << std::endl;
-//   }
-// }
-
-// Crate gauss filter store it on host
-popsift::init_filter(_config, &_h_gauss);
-
-fprintf(stderr, "AT bottom off init_gauss_filter()\n");
-// Transfer gauss filter to device
-try
-{
-    if(_d_gauss == nullptr)
-        _d_gauss = sycl::malloc_device<popsift::GaussInfo>(1, _device_queue);
-    else
-        std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl;
-}
-catch(const sycl::exception& e)
-{
-    std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-}
-
-return _device_queue.memcpy(_d_gauss, &_h_gauss, sizeof(popsift::GaussInfo));
-}
-
-sycl::event PopSift::init_constants()
-{
-    fprintf(stderr, "in init contsatns\n");
-
-    popsift::init_constants(_config.sigma,
-                            _config.levels,
-                            _config.getPeakThreshold(),
-                            _config._edge_limit,
-                            _config.getMaxExtrema(),
-                            _config.getNormalizationMultiplier(),
-                            &_h_consts);
-
-    // Transfer constants to device
-    try
-    {
-        if(_d_consts == nullptr)
-            _d_consts = sycl::malloc_device<popsift::ConstInfo>(1, _device_queue);
-        else
-            std::cout << "\n\n\t\t_d_consts is set -- no malloc needed\n\n" << std::endl;
-    }
-    catch(const sycl::exception& e)
-    {
-        std::cerr << "Memory allocation failed: " << e.what() << std::endl;
-    }
-
-    return _device_queue.memcpy(_d_consts, &_h_consts, sizeof(popsift::ConstInfo));
 }
