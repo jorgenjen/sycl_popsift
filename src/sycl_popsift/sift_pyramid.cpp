@@ -3,7 +3,6 @@
 #include "sycl/usm.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
-// #include "sycl_popsift/malloc_devt.hpp"
 #include "sycl_popsift/s_image.hpp" // not sure if needed to include here aswell clean up #includes at some point
 #include "sycl_popsift/sift_constants.hpp"
 
