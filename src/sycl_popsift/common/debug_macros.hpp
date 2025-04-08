@@ -18,13 +18,6 @@
 #include <stdexcept>
 #include <string>
 
-// namespace popsift {
-// namespace sycl_helpers {
-// template<class T>
-// T* malloc_devT(int num, const char* file, int line, sycl::queue Q);
-// }
-// }
-//
 #define POP_FATAL(s)                                                                                                   \
     {                                                                                                                  \
         std::stringstream ss;                                                                                          \
@@ -55,17 +48,20 @@
 namespace popsift {
 namespace sycl_common {
 
+// TODO: Move to cpp file keep declarations
+// NOTE: Might be loosing some performance by passing custom error message to each malloc... PopSift does not do that so
+// mby  I should not have done that for fair comparison (but should not matter much I think :D)
+
 void print_region(
   float* ptr, const char* identifier, int start_x, int end_x, int start_y, int end_y, int width, sycl::queue Q);
 
-template<class T>
+template<typename T>
 T* malloc_devT(int num, const char* file, int line, const char* error_message, sycl::queue& Q)
 {
     T* ptr;
     try
     {
         ptr = sycl::malloc_device<T>(num, Q);
-        std::stringstream ss; // why here?
     }
     catch(const sycl::exception& e)
     {
@@ -82,14 +78,33 @@ T* malloc_devT(int num, const char* file, int line, const char* error_message, s
     // #endif // NDEBUG
 }
 
-template<class T>
-T* malloc_sharedT(int num, const char* file, int line, const char* error_message, sycl::queue Q)
+template<typename T>
+T* alloc_aligned_deviceT(
+  size_t alignment, size_t num, const char* file, int line, const char* error_message, sycl::queue& Q)
+{
+    T* ptr;
+    try
+    {
+        ptr = sycl::aligned_alloc_device<T>(alignment, num, Q);
+    }
+    catch(const sycl::exception& e)
+    {
+        std::stringstream ss;
+        ss << error_message << e.what();
+        // TODO: Verify that this line is needed makes no sense...
+        std::string error_msg = ss.str(); // seems to be required to have given message show up
+        POP_FATAL_FL(ss.str(), file, line);
+    }
+    return ptr;
+}
+
+template<typename T>
+T* malloc_sharedT(size_t num, const char* file, int line, const char* error_message, sycl::queue& Q)
 {
     T* ptr;
     try
     {
         ptr = sycl::malloc_shared<T>(num, Q);
-        std::stringstream ss;
     }
     catch(const sycl::exception& e)
     {
@@ -104,6 +119,43 @@ T* malloc_sharedT(int num, const char* file, int line, const char* error_message
     // #ifdef DEBUG_INIT_DEVICE_ALLOCATIONS
     //     popsift::cuda::memset_sync(*ptr, 0, sz, file, line);
     // #endif // NDEBUG
+}
+
+template<typename T>
+T* malloc_hostT(size_t num, const char* file, int line, const char* error_message, sycl::queue& Q)
+{
+    T* ptr;
+    try
+    {
+        ptr = sycl::malloc_host<T>(num, Q);
+    }
+    catch(const sycl::exception& e)
+    {
+        std::stringstream ss;
+        ss << error_message << e.what();
+        std::string error_msg = ss.str(); // seems to be required to have given message show up
+        POP_FATAL_FL(ss.str(), file, line);
+    }
+    return ptr;
+}
+
+template<typename T>
+T* alloc_aligned_hostT(
+  size_t alignment, size_t num, const char* file, int line, const char* error_message, sycl::queue& Q)
+{
+    T* ptr;
+    try
+    {
+        ptr = sycl::aligned_alloc_host<T>(alignment, num, Q);
+    }
+    catch(const sycl::exception& e)
+    {
+        std::stringstream ss;
+        ss << error_message << e.what();
+        std::string error_msg = ss.str(); // seems to be required to have given message show up
+        POP_FATAL_FL(ss.str(), file, line);
+    }
+    return ptr;
 }
 
 } // namespace sycl_common
@@ -111,7 +163,7 @@ T* malloc_sharedT(int num, const char* file, int line, const char* error_message
 namespace common {
 
 // Could also use sycl::malloc_host but that is also accsesible on device so might be overhead
-template<class T>
+template<typename T>
 T* new_hostT(int num, const char* file, int line, const char* error_message)
 {
     try

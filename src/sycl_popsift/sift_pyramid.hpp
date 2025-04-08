@@ -38,12 +38,13 @@ struct ExtremaCounters
     int ori_total;
 };
 
-// struct ExtremaBuffers {
-//     Descriptor *desc;
-//     int ext_allocated;
-//     int ori_allocated;
-// };
-//
+struct ExtremaBuffers
+{
+    Descriptor* desc;
+    int ext_allocated;
+    int ori_allocated;
+};
+
 struct DevBuffers
 {
     InitialExtremum* i_ext_dat[MAX_OCTAVES];
@@ -85,9 +86,15 @@ class Pyramid
     ExtremaCounters _hct;  // host
     ExtremaCounters* _dct; // device
 
+    ExtremaBuffers* _dbuf;       // device
+    ExtremaBuffers _dbuf_host{}; // for memory management
+    ExtremaBuffers _hbuf{};      // keeps host allocations (so fully host struct)
+    sycl::event _dbuf_write;
+
     DevBuffers* _dobuf;       // device
     DevBuffers _dobuf_host{}; // needed for memory management
     sycl::event _dobuf_write;
+
     sycl::event _zero_dct;
     sycl::event _zero_extrema_num_blocks;
 

@@ -299,8 +299,12 @@ void Pyramid::orientation(const Config& conf)
 {
     // Wait so that the computation is done before the memcpy
     // Look for ways to make this part faster (less waits the better)
+    fprintf(stderr, "\n\tWAITING IN ORIENTATION FOR EXTREMA FOR ALL OCTAVE TO FINISH\n");
     _device_queue.wait();
 
+    // Need to think about if this is really necessary?
+    // As now we neet to wait for all octaes to do extrema before we can do orientation
+    // Not sure if we actually need to do this...
     readDescCountersFromDevice().wait();
 
     int ext_total = 0;
@@ -312,9 +316,10 @@ void Pyramid::orientation(const Config& conf)
         }
     }
 
-    // Something is wrong...
-    printf("\n\text_total for all octaves = %d", ext_total);
+    // Works as expected
+    printf("\n\text_total for all octaves = %d\n", ext_total);
 
+    // TODO: It is set up to do nothing in current configuration but should consider adding support for it
     // Seems to do nothing in my case...
 
     // Filter functions are only called if necessary. They are very expensive,
@@ -324,8 +329,15 @@ void Pyramid::orientation(const Config& conf)
     //     ext_total = extrema_filter_grid(conf, ext_total);
     // }
 
+    // Again not osure if this is needed pretty sure it can't happen as it is set up now hence realloc will never happen
+    // But look into it as we can't get more extremas than max that is ensured in the extrema_code both for writing and
+    // counting
     // TODO: ADd spport for this one -- unlikely to run but need it it will only do something if ext_total is larger
     // than the max_extrema per octave 100 000 by default
+
+    // After looking at it we can end up in the case where this function does reallocate as the max_extrema is per
+    // octave and hence the sum of extrema in the octaes could exceed the max and then we would need to realloc this
+    // memory (it's unlikely to happen but case need to be covered)
     // reallocExtrema(ext_total);
 
     int ext_ct_prefix_sum = 0;
@@ -350,8 +362,8 @@ void Pyramid::orientation(const Config& conf)
             sycl::range global{1, num * 32};
 
             _device_queue.submit([&](sycl::handler& cgh) {
-                cgh.depends_on({_dobuf_write});
-                // sycl::local_accessor<float, 1> -- is the type
+                cgh.depends_on({_dobuf_write, oct_obj._extrema_done_event});
+                // sycl::local_accessor<float, 1> -- is the type (using auto as it's so long)
                 auto hist = sycl::local_accessor<float, 1>(64, cgh);
                 auto sm_hist = sycl::local_accessor<float, 1>(64, cgh);
                 auto refined_angle = sycl::local_accessor<float, 1>(64, cgh);

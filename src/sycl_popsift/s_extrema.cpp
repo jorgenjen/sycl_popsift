@@ -815,7 +815,7 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
 #endif
     }
 
-#if 1
+#if 0
     _device_queue.wait();
     _device_queue.single_task([=, dct = _dct, num_octaves = _num_octaves]() {
         for(int o = 0; o < num_octaves; ++o)

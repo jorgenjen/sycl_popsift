@@ -306,7 +306,7 @@ bool PopSift::private_init(int w, int h)
 // Don't see a purpose of returning true here as popsift did hence making it void
 void PopSift::private_uninit()
 {
-    fprintf(stderr, "priv unint\n");
+    fprintf(stderr, "\npriv unint\n");
     Pipe& p = _pipe;
 
     delete p._pyramid;

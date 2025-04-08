@@ -52,34 +52,6 @@ class Octave
     float** _dog_array;       // DoG stored _levels - 1
     float** _dog_array_host;  // Just for memory maangemrnt
 
-    // cudaArray_t _data{};
-    // cudaChannelFormatDesc _data_desc{};
-    // cudaExtent _data_ext{};
-    // cudaSurfaceObject_t _data_surf{};
-    // cudaTextureObject_t _data_tex_point{};
-    // LinearTexture _data_tex_linear{};
-
-    // cudaArray_t _intm{};
-    // cudaChannelFormatDesc _intm_desc{};
-    // cudaExtent _intm_ext{};
-    // cudaSurfaceObject_t _intm_surf{};
-    // cudaTextureObject_t _intm_tex_point{};
-    // LinearTexture _intm_tex_linear{};
-    //
-    // cudaArray_t _dog_3d{};
-    // cudaChannelFormatDesc _dog_3d_desc{};
-    // cudaExtent _dog_3d_ext{};
-    // cudaSurfaceObject_t _dog_3d_surf{};
-    // cudaTextureObject_t _dog_3d_tex_point{};
-    //
-    // // one CUDA stream per level
-    // // consider whether some of them can be removed
-    // cudaStream_t _stream{};
-    // cudaEvent_t _scale_done{};
-    // cudaEvent_t _extrema_done{};
-    // cudaEvent_t _ori_done{};
-    // cudaEvent_t _desc_done{};
-
     sycl::event _data_array_write;
     sycl::event _dog_array_write;
 
