@@ -7,5 +7,5 @@ cd ./build_cpu/
 make || exit 1
 cd ./Linux-x86_64/
 
-./popsift-demo --input-file ../../sample_640×426.pgm
+time ./popsift-demo --input-file ../../sample_640×426.pgm
 

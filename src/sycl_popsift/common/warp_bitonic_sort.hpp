@@ -17,16 +17,19 @@ namespace BitonicSort {
 
 // Currently working for work-groups should make a versio for sub_groups for better performance Might be hard to make
 // generic so might need to switch between implemntation based on sub_group size or the multiplier it gives
-template<class T>
+// template<typename T, typename GroupType> // add later on
+template<typename T>
 class Warp32
 {
     sycl::local_accessor<T, 1> _array;
     sycl::nd_item<2> _it;
+    sycl::sub_group _group;
 
   public:
-    inline Warp32(sycl::local_accessor<T, 1> array, sycl::nd_item<2> it)
+    inline Warp32(sycl::local_accessor<T, 1> array, sycl::nd_item<2> it, sycl::sub_group group)
       : _array(array)
       , _it(it)
+      , _group(group)
     {}
 
     inline int sort32(int my_index)
@@ -72,7 +75,12 @@ class Warp32
         // const T other_val = popsift::shuffle_xor(my_val, 1 << shift);
         // Work group
         // const T other_val = sycl::select_from_group(_it.get_group(), my_val, _it.get_local_id(1) ^ (1 << shift));
-        const T other_val = sycl::select_from_group(_it.get_sub_group(), my_val, _it.get_local_id(1) ^ (1 << shift));
+        // const T other_val = sycl::select_from_group(_group, my_val, _it.get_local_id(1) ^ (1 << shift));
+
+        // takes the work-item id in the group and xor with the mask (1 << shift)
+        // This decides which work_items exchange data (butterfly pattern)
+
+        const T other_val = sycl::permute_group_by_xor(_group, my_val, 1 << shift);
 
         const bool reverse = (_it.get_local_id(1) & (1 << direction));
 
@@ -86,13 +94,19 @@ class Warp32
         // xor my_more with reverse and then xor that with increasing ^ is bitwise xor but onely one bit for bool
         const bool must_swap = !(my_more ^ reverse ^ increasing);
 
-        // int lane = must_swap ? (1 << shift) : 0;
-        int remote_id = must_swap ? (_it.get_local_id(1) ^ (1 << shift)) : _it.get_local_id(1);
+        // If we must swap we pass the mask so we swap with the assigned lane
+        // otherwise we pass 0 and we don't (not sure if using different masks is alowed in sycl for a permute)
+        int lane = must_swap ? (1 << shift) : 0;
+        // int remote_id = must_swap ? (_it.get_local_id(1) ^ (1 << shift)) : _it.get_local_id(1);
 
         // Returns wether or not the index need to swap if lane == 0 it will keep it's value
         // return popsift::shuffle_xor(my_index, lane);
         // return sycl::select_from_group(_it.get_group(), my_index, remote_id);
-        return sycl::select_from_group(_it.get_sub_group(), my_index, remote_id);
+        // return sycl::select_from_group(_group, my_index, remote_id);
+
+        // Should not be allowed according to docs but seem to work...
+        return sycl::permute_group_by_xor(_group, my_val, lane);
+        // return must_swap ? other_val : my_val;
     }
 
     inline void swap(int& l, int& r)

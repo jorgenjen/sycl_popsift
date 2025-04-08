@@ -189,15 +189,9 @@ class ori_par
         // then everyone can read the value from global memory(and it will be cached) could also mby help reduce
         // register pressure if that is a problem
 
-        sycl::group_barrier(it.get_group());
+        sycl::group_barrier(group);
 
-        // TODO: Make sub-group version
-        // Doing the loop for the whole work_group instead of sub-group might make anothe version later that uses the
-        // sub_group
-
-        // CUDA code is using the fact that a warp is 32 threads but in sycl we need it to support any...
-        // could template to have one that wokrs like cuda and one that works for any sub_group size
-        for(int i = it.get_local_id(1); sycl::any_of_group(it.get_group(), i < loops); i += it.get_local_range(1))
+        for(int i = it.get_local_id(1); sycl::any_of_group(group, i < loops); i += it.get_local_range(1))
         // I think we can just use the condition don't see why they all must enter the loop
         // to then have the condition checked in the first if and does nothing more and exits ... so threads will
         // diverge anyways...
@@ -237,30 +231,43 @@ class ori_par
 
                     bidx = (bidx == ORI_NBINS) ? 0 : bidx;
 
-                    sycl::atomic_ref<float,
-                                     sycl::memory_order_relaxed,
-                                     sycl::memory_scope_work_group, // Change to sub_group for sub_group version
-                                     sycl::access::address_space::local_space>(hist[bidx]) += weight;
+                    if constexpr(useSubGroup)
+                    {
+                        sycl::atomic_ref<float,
+                                         sycl::memory_order_relaxed,
+                                         sycl::memory_scope_sub_group,
+                                         sycl::access::address_space::local_space>(hist[bidx])
+                          .fetch_add(weight);
+                    }
+                    else
+                    {
+                        // Work grup version
+                        sycl::atomic_ref<float,
+                                         sycl::memory_order_relaxed,
+                                         sycl::memory_scope_work_group, // Change to sub_group for sub_group version
+                                         sycl::access::address_space::local_space>(hist[bidx])
+                          .fetch_add(weight);
+                    }
                 }
             }
         }
 
-        sycl::group_barrier(it.get_group());
+        sycl::group_barrier(group);
 
 #ifdef WITH_VLFEAT_SMOOTHING
         for(int i = 0; i < 3; i++)
         {
             sm_hist[it.get_local_id(1) + 0] = smoothe(hist, it.get_local_id(1) + 0);
             sm_hist[it.get_local_id(1) + 32] = smoothe(hist, it.get_local_id(1) + 32);
-            sycl::group_barrier(it.get_group());
+            sycl::group_barrier(group);
             hist[it.get_local_id(1) + 0] = smoothe(sm_hist, it.get_local_id(1) + 0);
             hist[it.get_local_id(1) + 32] = smoothe(sm_hist, it.get_local_id(1) + 32);
-            sycl::group_barrier(it.get_group());
+            sycl::group_barrier(group);
         }
 
         sm_hist[it.get_local_id(1) + 0] = hist[it.get_local_id(1) + 0];
         sm_hist[it.get_local_id(1) + 32] = hist[it.get_local_id(1) + 32];
-        sycl::group_barrier(it.get_group());
+        sycl::group_barrier(group);
 #else  // not WITH_VLFEAT_SMOOTHING
        // TODO: Implement this version aswell
         for(int bin = threadIdx.x; bin < ORI_NBINS; bin += blockDim.x)
@@ -285,8 +292,7 @@ class ori_par
         // sub-cell refinement of the histogram cell index, yielding the angle
         // not necessary to initialize, every cell is computed
 
-        for(int bin = it.get_local_id(1); sycl::any_of_group(it.get_group(), bin < ORI_NBINS);
-            bin += it.get_local_range(1))
+        for(int bin = it.get_local_id(1); sycl::any_of_group(group, bin < ORI_NBINS); bin += it.get_local_range(1))
         {
             const int prev = bin == 0 ? ORI_NBINS - 1 : bin - 1;
             const int next = bin == ORI_NBINS - 1 ? 0 : bin + 1;
@@ -307,12 +313,21 @@ class ori_par
             refined_angle[bin] = predicate ? prev + newbin : -1;
             yval[bin] = predicate ? -(num * num) / (4.0f * denB) + sm_hist[prev] : -INFINITY;
         }
-        sycl::group_barrier(it.get_group());
-
-        sycl::vec<int, 2> best_index(it.get_local_id(1), it.get_local_id(1) + 32);
+        sycl::group_barrier(group);
 
         // BitonicSort
-        BitonicSort::Warp32<float> sorter(yval, it);
+        if constexpr(useSubGroup)
+        {
+            // BitonicSort::Warp32<float, sycl::sub_group> sorter(yval, it, group);
+            sycl::vec<int, 2> best_index(it.get_local_id(1), it.get_local_id(1) + 32);
+            BitonicSort::Warp32<float> sorter(yval, it, group);
+            sorter.sort64(best_index);
+        }
+        else
+        {
+            // BitonicSort::Warp32<float, sycl::group<2>> sorter(yval, it, group);
+            // sorter.sort64(best_index);
+        }
     }
 };
 
