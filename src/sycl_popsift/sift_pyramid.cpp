@@ -13,6 +13,9 @@
 
 namespace popsift {
 
+// TODO: Refactor by making a version of the malloc_devT etc that does not take mesage as I'm not sure how helpful they
+// are and could take some performance
+// Could in that case ifdef include the message parameter (but that would be ugly and not too readable so not sure :D)
 Pyramid::Pyramid(const Config& config,
                  int width,
                  int height,
@@ -127,53 +130,71 @@ Pyramid::Pyramid(const Config& config,
     _dbuf_write = _device_queue.memcpy(_dbuf, &_dbuf_host, sizeof(ExtremaBuffers));
 }
 
-// void Pyramid::reallocExtrema(int numExtrema)
-// {
-//     // Can happen as ext_allocated is same as max extrema per octave hence sum of octaves
-//     // extrema could be higher than allocated (don't like that we need to sync up (blocking) after all extrema
-//     compute)
-//     // to do this. As we could otherwise just continue for orientation having only it's octave doing the extrema as
-//     // dependency
-//     if(numExtrema > hbuf.ext_allocated)
-//     {
-//         // Makes adds 1024 to size and removes all set bits that is below 1024 position in binary resulting in the
-//         // segment being a multiple of 1024 (Probs yields better performance)
-//         numExtrema = ((numExtrema + 1024) & (~(1024 - 1)));
-//         cudaFree(dobuf_shadow.extrema);
-//         cudaFree(dobuf_shadow.features);
-//
-//         int sz = numExtrema;
-//         dobuf_shadow.extrema = popsift::cuda::malloc_devT<Extremum>(sz, __FILE__, __LINE__);
-//         dobuf_shadow.features = popsift::cuda::malloc_devT<Feature>(sz, __FILE__, __LINE__);
-//         hbuf.ext_allocated = sz;
-//         dbuf_shadow.ext_allocated = sz;
-//
-//         numExtrema *= 2;
-//         if(numExtrema > hbuf.ori_allocated)
-//         {
-//             cudaFreeHost(hbuf.desc);
-//             cudaFree(dbuf_shadow.desc);
-//             cudaFree(dobuf_shadow.feat_to_ext_map);
-//
-//             sz = numExtrema;
-//             hbuf.desc = popsift::cuda::malloc_hstT<Descriptor>(sz, __FILE__, __LINE__);
-//             dbuf_shadow.desc = popsift::cuda::malloc_devT<Descriptor>(sz, __FILE__, __LINE__);
-//             dobuf_shadow.feat_to_ext_map = popsift::cuda::malloc_devT<int>(sz, __FILE__, __LINE__);
-//             hbuf.ori_allocated = sz;
-//             dbuf_shadow.ori_allocated = sz;
-//         }
-//
-//         cudaMemcpyToSymbol(dbuf, &dbuf_shadow, sizeof(ExtremaBuffers), 0, cudaMemcpyHostToDevice);
-//         cudaMemcpyToSymbol(dobuf, &dobuf_shadow, sizeof(DevBuffers), 0, cudaMemcpyHostToDevice);
-//     }
-// }
+void Pyramid::reallocExtrema(int numExtrema)
+{
+    // Can happen as ext_allocated is same as max extrema per octave hence sum of octaves
+    // extrema could be higher than allocated (don't like that we need to sync up (blocking) after all extrema compute)
+    // to do this. As we could otherwise just continue for orientation having only it's octave doing the extrema as
+    // dependency
+    if(numExtrema > _hbuf.ext_allocated)
+    {
+        // Makes adds 1024 to size and removes all set bits that is below 1024 position in binary resulting in the
+        // segment being a multiple of 1024 (Probs yields better performance)
+        numExtrema = ((numExtrema + 1024) & (~(1024 - 1)));
+        // cudaFree(dobuf_shadow.extrema);
+        // cudaFree(dobuf_shadow.features);
+        sycl::free(_dobuf_host.extrema, _device_queue);
+        sycl::free(_dobuf_host.features, _device_queue);
+
+        int size = numExtrema;
+        // dobuf_shadow.extrema = popsift::cuda::malloc_devT<Extremum>(sz, __FILE__, __LINE__);
+        // dobuf_shadow.features = popsift::cuda::malloc_devT<Feature>(sz, __FILE__, __LINE__);
+        _dobuf_host.extrema = popsift::sycl_common::malloc_devT<Extremum>(
+          numExtrema, __FILE__, __LINE__, "Realloc of extrema array failed", _device_queue);
+        _dobuf_host.features = popsift::sycl_common::malloc_devT<Feature>(
+          numExtrema, __FILE__, __LINE__, "Realloc of feature array failed", _device_queue);
+        _hbuf.ext_allocated = numExtrema;
+        _dbuf_host.ext_allocated = numExtrema;
+
+        numExtrema *= 2;
+        if(numExtrema > _hbuf.ori_allocated)
+        {
+            // cudaFreeHost(hbuf.desc);
+            // cudaFree(dbuf_shadow.desc);
+            // cudaFree(dobuf_shadow.feat_to_ext_map);
+            sycl::free(_hbuf.desc, _device_queue);
+            sycl::free(_dbuf_host.desc, _device_queue);
+            sycl::free(_dobuf_host.feat_to_ext_map, _device_queue);
+
+            // hbuf.desc = popsift::cuda::malloc_hstT<Descriptor>(sz, __FILE__, __LINE__);
+            // dbuf_shadow.desc = popsift::cuda::malloc_devT<Descriptor>(sz, __FILE__, __LINE__);
+            // dobuf_shadow.feat_to_ext_map = popsift::cuda::malloc_devT<int>(sz, __FILE__, __LINE__);
+            _hbuf.desc = popsift::sycl_common::malloc_hostT<Descriptor>(
+              numExtrema, __FILE__, __LINE__, "Realloc of host descriptor array falied", _device_queue);
+            _dbuf_host.desc = popsift::sycl_common::malloc_hostT<Descriptor>(
+              numExtrema, __FILE__, __LINE__, "Realloc of device descriptor array falied", _device_queue);
+            _dobuf_host.feat_to_ext_map = popsift::sycl_common::malloc_hostT<int>(
+              numExtrema, __FILE__, __LINE__, "Realloc of integer array falied", _device_queue);
+            _hbuf.ori_allocated = numExtrema;
+            _dbuf_host.ori_allocated = numExtrema;
+        }
+
+        // cudaMemcpyToSymbol(dbuf, &dbuf_shadow, sizeof(ExtremaBuffers), 0, cudaMemcpyHostToDevice);
+        // cudaMemcpyToSymbol(dobuf, &dobuf_shadow, sizeof(DevBuffers), 0, cudaMemcpyHostToDevice);
+
+        // NOTE: Again like in constructor consider moving one memcpy earlier so we can do malloc while it happens for
+        // next memcpy
+        _dobuf_write = _device_queue.memcpy(_dobuf, &_dobuf_host, sizeof(DevBuffers));
+        _dbuf_write = _device_queue.memcpy(_dbuf, &_dbuf_host, sizeof(ExtremaBuffers));
+    }
+}
 
 Pyramid::~Pyramid()
 {
     // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
     fprintf(stderr, "Destroying the Pyramid!\n");
-    sycl::free(_d_extrema_num_blocks, _device_queue);
     sycl::free(_dct, _device_queue);
+    sycl::free(_d_extrema_num_blocks, _device_queue);
 
     sycl::free(_dobuf_host.i_ext_dat[0], _device_queue);
     sycl::free(_dobuf_host.i_ext_off[0], _device_queue);
@@ -183,6 +204,9 @@ Pyramid::~Pyramid()
 
     sycl::free(_dbuf_host.desc, _device_queue);
     sycl::free(_hbuf.desc, _device_queue);
+
+    sycl::free(_dbuf, _device_queue);
+    sycl::free(_dobuf, _device_queue);
 
     // sycl::free(_dobuf_host, _device_queue); // No need as it's a struct not malloced
 }
