@@ -138,17 +138,14 @@ void Pyramid::reallocExtrema(int numExtrema)
     // dependency
     if(numExtrema > _hbuf.ext_allocated)
     {
+        fprintf(stderr, "\n\tNeed to do realloc!\n");
         // Makes adds 1024 to size and removes all set bits that is below 1024 position in binary resulting in the
         // segment being a multiple of 1024 (Probs yields better performance)
         numExtrema = ((numExtrema + 1024) & (~(1024 - 1)));
-        // cudaFree(dobuf_shadow.extrema);
-        // cudaFree(dobuf_shadow.features);
+
         sycl::free(_dobuf_host.extrema, _device_queue);
         sycl::free(_dobuf_host.features, _device_queue);
 
-        int size = numExtrema;
-        // dobuf_shadow.extrema = popsift::cuda::malloc_devT<Extremum>(sz, __FILE__, __LINE__);
-        // dobuf_shadow.features = popsift::cuda::malloc_devT<Feature>(sz, __FILE__, __LINE__);
         _dobuf_host.extrema = popsift::sycl_common::malloc_devT<Extremum>(
           numExtrema, __FILE__, __LINE__, "Realloc of extrema array failed", _device_queue);
         _dobuf_host.features = popsift::sycl_common::malloc_devT<Feature>(
@@ -159,16 +156,10 @@ void Pyramid::reallocExtrema(int numExtrema)
         numExtrema *= 2;
         if(numExtrema > _hbuf.ori_allocated)
         {
-            // cudaFreeHost(hbuf.desc);
-            // cudaFree(dbuf_shadow.desc);
-            // cudaFree(dobuf_shadow.feat_to_ext_map);
             sycl::free(_hbuf.desc, _device_queue);
             sycl::free(_dbuf_host.desc, _device_queue);
             sycl::free(_dobuf_host.feat_to_ext_map, _device_queue);
 
-            // hbuf.desc = popsift::cuda::malloc_hstT<Descriptor>(sz, __FILE__, __LINE__);
-            // dbuf_shadow.desc = popsift::cuda::malloc_devT<Descriptor>(sz, __FILE__, __LINE__);
-            // dobuf_shadow.feat_to_ext_map = popsift::cuda::malloc_devT<int>(sz, __FILE__, __LINE__);
             _hbuf.desc = popsift::sycl_common::malloc_hostT<Descriptor>(
               numExtrema, __FILE__, __LINE__, "Realloc of host descriptor array falied", _device_queue);
             _dbuf_host.desc = popsift::sycl_common::malloc_hostT<Descriptor>(
@@ -178,9 +169,6 @@ void Pyramid::reallocExtrema(int numExtrema)
             _hbuf.ori_allocated = numExtrema;
             _dbuf_host.ori_allocated = numExtrema;
         }
-
-        // cudaMemcpyToSymbol(dbuf, &dbuf_shadow, sizeof(ExtremaBuffers), 0, cudaMemcpyHostToDevice);
-        // cudaMemcpyToSymbol(dobuf, &dobuf_shadow, sizeof(DevBuffers), 0, cudaMemcpyHostToDevice);
 
         // NOTE: Again like in constructor consider moving one memcpy earlier so we can do malloc while it happens for
         // next memcpy

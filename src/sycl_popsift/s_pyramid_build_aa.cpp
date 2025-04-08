@@ -19,8 +19,9 @@
 namespace popsift {
 namespace absoluteSource {
 
-// SHould use this one instead of Horiz in absolute source as this one makes sense to use in both
-// situations and we dont need to divide the image initially, wasting performance.
+// Could also use sycl::specialization constaants that would make the decision in JIT compilation stage
+// But not sure how well that would work for this kernel setup that is depends on octave w and h
+// Think it is better with template and constexpr (should make multiple kernels as set up now)
 template<bool if_required, bool initial>
 class Horiz
 {
@@ -52,7 +53,7 @@ class Horiz
 
         const float* filter;
         int span;
-        if(initial)
+        if constexpr(initial)
         {
             // is always from source image and level 0 // called once
 
@@ -73,9 +74,9 @@ class Horiz
         // and hence would not be needed // hopefully it works like this look into
         // NOTE: Look into if template makes this multiple kernels or not if not we might benefit from spliting them and
         // having them as different kernels mby different namespace to separete them
-        if(if_required)
+        if constexpr(if_required)
         {
-            // Had switch before but I believe that if should server the same purpose
+            // Using contexpr so it is evaluated at compile time (should force it to make multiple kernels I think)
             if(x >= width || y >= height)
             {
                 return;

@@ -7,3 +7,4 @@ tmp_imgs
 compile_commands.json
 src/sycl_popsift/.cache/clangd/index
 src/application/.cache/clangd/index
+build_cpu

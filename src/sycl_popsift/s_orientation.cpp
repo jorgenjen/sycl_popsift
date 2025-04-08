@@ -82,6 +82,7 @@ inline static float smoothe(const sycl::local_accessor<float, 1> src, const int 
     return f;
 }
 
+template<bool useSubGroup>
 class ori_par
 {
   private:
@@ -95,6 +96,7 @@ class ori_par
     sycl::local_accessor<float, 1> refined_angle;
     sycl::local_accessor<float, 1> yval;
     DevBuffers* dobuf;
+    ExtremaCounters* dct;
 
   public:
     ori_par(const int octave,
@@ -106,7 +108,8 @@ class ori_par
             sycl::local_accessor<float, 1> sm_hist,
             sycl::local_accessor<float, 1> refined_angle,
             sycl::local_accessor<float, 1> yval,
-            DevBuffers* dobuf)
+            DevBuffers* dobuf,
+            ExtremaCounters* dct)
       : octave(octave)
       , ext_prefix_sum(ext_prefix_sum)
       , layer(layer)
@@ -117,16 +120,36 @@ class ori_par
       , refined_angle(refined_angle)
       , yval(yval)
       , dobuf(dobuf)
+      , dct(dct)
     {}
 
     inline void operator()(sycl::nd_item<2> it) const
     {
+        // Should be optimized away during compile time
+        auto group = [&]() {
+            if constexpr(useSubGroup)
+                return it.get_sub_group();
+            else
+                return it.get_group();
+        }();
+
+        // My cpu reports it supports 4 8 16 32 64 sizes subgroups
+        // So the largest is 64 but it uses 8 in the kernel hence need re think this
+
+        if(it.get_global_linear_id() == 0)
+        {
+            if constexpr(useSubGroup)
+                sycl::ext::oneapi::experimental::printf("Sub group sieze %d\n", group.get_local_range()[0]);
+            else
+                sycl::ext::oneapi::experimental::printf("work group sieze %d\n",
+                                                        group.get_local_range()[0] * group.get_local_range()[1]);
+        }
+
         // Possition in the grid but 0 is always 1 so should be same as it.get_group(1)
         const int extremum_index = it.get_group(1) * it.get_group(0);
 
-        // Implement this I suppose
-        // if(popsift::all(extremum_index >= dct.ext_ct[octave]))
-        //     return; // a few trailing warps
+        if(sycl::all_of_group(group, extremum_index >= dct->ext_ct[octave]))
+            return; // A few trailing sub groups
 
         const int iext_off = dobuf->i_ext_off[octave][extremum_index];
         const InitialExtremum* iext = &dobuf->i_ext_dat[octave][iext_off];
@@ -293,15 +316,37 @@ class ori_par
     }
 };
 
+struct ori_par_subgroup;
+
+// Computes the actual sub_group size that will be used for the ori_par kernel
+auto get_ori_par_subgroup_size(sycl::queue& Q)
+{
+    auto kernel_id = sycl::get_kernel_id<ori_par_subgroup>();
+    auto kernel_bundle = sycl::get_kernel_bundle<sycl::bundle_state::executable>(Q.get_context());
+    auto kernel = kernel_bundle.get_kernel(kernel_id);
+    return kernel.get_info<sycl::info::kernel_device_specific::max_sub_group_size>(Q.get_device());
+}
+
 }
 
 void Pyramid::orientation(const Config& conf)
 {
+    // auto max_subgroup = _device_queue.get_device().get_info<sycl::info::device::max_sub_group_size>();
+
+    // returns all slupported and not what it will use for the kernel (my cpu gave 4 8 16 32 64) but used
+    // 8 so not too valuable
+    // auto max_subgroup = _device_queue.get_device().get_info<sycl::info::device::sub_group_sizes>().back();
+
+    // Hopefully evaluated at compile time
+    auto max_subgroup = get_ori_par_subgroup_size(_device_queue);
+    bool useSubGroup = max_subgroup >= 32;
+
+    fprintf(stderr, "\n\tWAITING IN ORIENTATION FOR EXTREMA FOR ALL OCTAVE TO FINISH\n");
     // Wait so that the computation is done before the memcpy
     // Look for ways to make this part faster (less waits the better)
-    fprintf(stderr, "\n\tWAITING IN ORIENTATION FOR EXTREMA FOR ALL OCTAVE TO FINISH\n");
     _device_queue.wait();
 
+    fprintf(stderr, "Sub group kernel mas sub_group_size %d", max_subgroup);
     // Need to think about if this is really necessary?
     // As now we neet to wait for all octaes to do extrema before we can do orientation
     // Not sure if we actually need to do this...
@@ -329,16 +374,7 @@ void Pyramid::orientation(const Config& conf)
     //     ext_total = extrema_filter_grid(conf, ext_total);
     // }
 
-    // Again not osure if this is needed pretty sure it can't happen as it is set up now hence realloc will never happen
-    // But look into it as we can't get more extremas than max that is ensured in the extrema_code both for writing and
-    // counting
-    // TODO: ADd spport for this one -- unlikely to run but need it it will only do something if ext_total is larger
-    // than the max_extrema per octave 100 000 by default
-
-    // After looking at it we can end up in the case where this function does reallocate as the max_extrema is per
-    // octave and hence the sum of extrema in the octaes could exceed the max and then we would need to realloc this
-    // memory (it's unlikely to happen but case need to be covered)
-    // reallocExtrema(ext_total);
+    reallocExtrema(ext_total);
 
     int ext_ct_prefix_sum = 0;
     for(int octave = 0; octave < _num_octaves; octave++)
@@ -361,25 +397,62 @@ void Pyramid::orientation(const Config& conf)
             sycl::range local{1, 32};
             sycl::range global{1, num * 32};
 
-            _device_queue.submit([&](sycl::handler& cgh) {
-                cgh.depends_on({_dobuf_write, oct_obj._extrema_done_event});
-                // sycl::local_accessor<float, 1> -- is the type (using auto as it's so long)
-                auto hist = sycl::local_accessor<float, 1>(64, cgh);
-                auto sm_hist = sycl::local_accessor<float, 1>(64, cgh);
-                auto refined_angle = sycl::local_accessor<float, 1>(64, cgh);
-                auto yval = sycl::local_accessor<float, 1>(64, cgh);
-                cgh.parallel_for(sycl::nd_range{global, local},
-                                 popsift::ori_par(octave,
-                                                  _hct.ext_ps[octave],
-                                                  oct_obj.getDataArray(),
-                                                  oct_obj.getWidth(),
-                                                  oct_obj.getHeight(),
-                                                  hist,
-                                                  sm_hist,
-                                                  refined_angle,
-                                                  yval,
-                                                  _dobuf));
-            });
+            // NOTE: Need to make modificatons when sub-group is not 32
+            // as is normaly the case on cpu's
+
+            if(useSubGroup)
+            {
+                fprintf(stderr, "\n\tUSING SUBGOUP for Orientation\n");
+                // Uses sub-group(warp) for synchronization and communication
+                _device_queue.submit([&](sycl::handler& cgh) {
+                    cgh.depends_on({_dobuf_write, oct_obj._extrema_done_event});
+                    // sycl::local_accessor<float, 1> -- is the type (using auto as it's so long)
+                    auto hist = sycl::local_accessor<float, 1>(64, cgh);
+                    auto sm_hist = sycl::local_accessor<float, 1>(64, cgh);
+                    auto refined_angle = sycl::local_accessor<float, 1>(64, cgh);
+                    auto yval = sycl::local_accessor<float, 1>(64, cgh);
+
+                    cgh.parallel_for<ori_par_subgroup>(sycl::nd_range{global, local},
+                                                       popsift::ori_par<true>(octave,
+                                                                              _hct.ext_ps[octave],
+                                                                              oct_obj.getDataArray(),
+                                                                              oct_obj.getWidth(),
+                                                                              oct_obj.getHeight(),
+                                                                              hist,
+                                                                              sm_hist,
+                                                                              refined_angle,
+                                                                              yval,
+                                                                              _dobuf,
+                                                                              _dct));
+                });
+            }
+            else
+            {
+                fprintf(stderr, "\n\tUSING WORKGRPU for orientation\n");
+                // Uses work groip for synchronization and communication
+                _device_queue.submit([&](sycl::handler& cgh) {
+                    cgh.depends_on({_dobuf_write, oct_obj._extrema_done_event});
+                    // sycl::local_accessor<float, 1> -- is the type (using auto as it's so long)
+                    auto hist = sycl::local_accessor<float, 1>(64, cgh);
+                    auto sm_hist = sycl::local_accessor<float, 1>(64, cgh);
+                    auto refined_angle = sycl::local_accessor<float, 1>(64, cgh);
+                    auto yval = sycl::local_accessor<float, 1>(64, cgh);
+                    // ExtremaCounters* dct = _dct;
+
+                    cgh.parallel_for(sycl::nd_range{global, local},
+                                     popsift::ori_par<false>(octave,
+                                                             _hct.ext_ps[octave],
+                                                             oct_obj.getDataArray(),
+                                                             oct_obj.getWidth(),
+                                                             oct_obj.getHeight(),
+                                                             hist,
+                                                             sm_hist,
+                                                             refined_angle,
+                                                             yval,
+                                                             _dobuf,
+                                                             _dct));
+                });
+            }
             // TODO: Understand why this is needed and if I need something similar
             // if(octave != 0)
             // {
