@@ -13,6 +13,8 @@
 #include "sycl/vector.hpp"
 #include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/common/debug_macros.hpp"
+
+#include <sycl/sycl.hpp>
 // #include "common/excl_blk_prefix_sum.h"
 // #include "common/warp_bitonic_sort.h"
 // #include "s_gradiant.h"
@@ -315,18 +317,83 @@ class ori_par
         }
         sycl::group_barrier(group);
 
+        sycl::vec<int, 2> best_index(it.get_local_id(1), it.get_local_id(1) + 32);
         // BitonicSort
         if constexpr(useSubGroup)
         {
             // BitonicSort::Warp32<float, sycl::sub_group> sorter(yval, it, group);
-            sycl::vec<int, 2> best_index(it.get_local_id(1), it.get_local_id(1) + 32);
-            BitonicSort::Warp32<float> sorter(yval, it, group);
+            BitonicSort::Warp32<float, sycl::sub_group> sorter(yval, it, group);
             sorter.sort64(best_index);
         }
         else
         {
+            // TODO: Make the work-group version work
+
+            // sycl::vec<int, 2> best_index(it.get_local_id(1), it.get_local_id(1) + 32);
             // BitonicSort::Warp32<float, sycl::group<2>> sorter(yval, it, group);
             // sorter.sort64(best_index);
+        }
+
+        const float best_val = yval[best_index.x()];
+
+        // Zero broadcast as it has higest yvalue
+        const float yval_treshold = 0.8 * sycl::group_broadcast(group, best_val, 0);
+
+        // Think we compute out of loop to avoid too much compute in branching?
+        const bool valid = (best_val >= yval_treshold); // Only larger than threshold is accepted
+        bool written = false;
+
+        Extremum* ext = &dobuf->extrema[ext_prefix_sum + extremum_index];
+
+        if(it.get_local_id()[1] > ORIENTATION_MAX_COUNT)
+        {
+            if(valid)
+            {
+                float chosen_bin = refined_angle[best_index.x()];
+                if(chosen_bin >= ORI_NBINS)
+                    chosen_bin -= ORI_NBINS;
+
+                // Fast version of a * b + c (approximate)
+                // float th = sycl::mad(M_PI2 * chosen_bin, 1.0f / ORI_NBINS, -M_PI);
+
+                // accurate version of a * b + c (not as fast as sycl::mad)
+                constexpr float M_PI2_f = M_PI2; // Ensure float precision
+                constexpr float M_PI_f = M_PI;
+                float th = sycl::fma(M_PI2_f * chosen_bin, (1.0f / ORI_NBINS), -M_PI_f);
+                // float th = sycl::fma((M_PI2 * chosen_bin, 1.0f / ORI_NBINS, -M_PI);
+                ext->orientation[it.get_local_id()[1]] = th;
+                written = true;
+            }
+        }
+
+        int angles = [&]() {
+            if constexpr(useSubGroup)
+            {
+                // auto mask = sycl::ext::oneapi::group_ballot(group, written);
+                // return sycl::popcount(mask.get_mask());
+
+                // Using extension to use do ballot
+                return sycl::ext::oneapi::group_ballot(group, written).count();
+                // unsigned mask = sycl::ext::oneapi::extract_bits<unsigned>(ballot_result);
+                // return sycl::popcount(mask);
+                // return sycl::popcount(sycl::ext::oneapi::group_ballot(group, written));
+            }
+            else
+            {
+                uint32_t mask = sycl::reduce_over_group(
+                  group, written ? (1u << it.get_local_id()[1]) : 0u, sycl::ext::oneapi::bit_or<uint32_t>());
+                return sycl::popcount(mask);
+            }
+        }();
+        // int angles = sycl::popcount(sycl::ext::oneapi::group_ballot(group, written));
+        if(it.get_local_id()[0] == 0)
+        {
+            ext->xpos = iext->xpos;
+            ext->ypos = iext->ypos;
+            ext->lpos = iext->lpos;
+            ext->sigma = iext->sigma;
+            ext->octave = octave;
+            ext->num_ori = angles;
         }
     }
 };

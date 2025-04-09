@@ -17,16 +17,16 @@ namespace BitonicSort {
 
 // Currently working for work-groups should make a versio for sub_groups for better performance Might be hard to make
 // generic so might need to switch between implemntation based on sub_group size or the multiplier it gives
-// template<typename T, typename GroupType> // add later on
-template<typename T>
+// template<typename T>
+template<typename T, typename GroupType>
 class Warp32
 {
     sycl::local_accessor<T, 1> _array;
     sycl::nd_item<2> _it;
-    sycl::sub_group _group;
+    GroupType _group;
 
   public:
-    inline Warp32(sycl::local_accessor<T, 1> array, sycl::nd_item<2> it, sycl::sub_group group)
+    inline Warp32(sycl::local_accessor<T, 1> array, sycl::nd_item<2> it, GroupType group)
       : _array(array)
       , _it(it)
       , _group(group)
@@ -80,33 +80,48 @@ class Warp32
         // takes the work-item id in the group and xor with the mask (1 << shift)
         // This decides which work_items exchange data (butterfly pattern)
 
-        const T other_val = sycl::permute_group_by_xor(_group, my_val, 1 << shift);
+        const T other_val = [&]() {
+            if constexpr(std::is_same_v<GroupType, sycl::sub_group>)
+                return sycl::permute_group_by_xor(_group, my_val, 1 << shift);
+            else // std::is_same_v<GroupType, sycl::group<2>> // could have else if
+            {
+                // Could be better to use handcrafted shared memory version
+                return sycl::select_from_group(_group, my_val, _it.get_local_id(1) ^ (1 << shift));
+            }
+            // Could add else if and else and say it's unsuported group
+        }();
+        // const T other_val = sycl::permute_group_by_xor(_group, my_val, 1 << shift);
 
         const bool reverse = (_it.get_local_id(1) & (1 << direction));
 
         const bool id_less = ((_it.get_local_id(1) & (1 << shift)) == 0);
 
-        // If it thread get other_val from a thread with higher id it will be true if it's value is higher than other
-        // otherwise if it gets other_val from lower thread id it will be true if my_val is smaler than other_val
-        // if equal it's always false
+        // If it thread get other_val from a thread with higher id it will be true if it's value is higher than
+        // other otherwise if it gets other_val from lower thread id it will be true if my_val is smaler than
+        // other_val if equal it's always false
         const bool my_more = id_less ? (my_val > other_val) : (my_val < other_val);
 
         // xor my_more with reverse and then xor that with increasing ^ is bitwise xor but onely one bit for bool
         const bool must_swap = !(my_more ^ reverse ^ increasing);
 
-        // If we must swap we pass the mask so we swap with the assigned lane
-        // otherwise we pass 0 and we don't (not sure if using different masks is alowed in sycl for a permute)
-        int lane = must_swap ? (1 << shift) : 0;
-        // int remote_id = must_swap ? (_it.get_local_id(1) ^ (1 << shift)) : _it.get_local_id(1);
+        if constexpr(std::is_same_v<GroupType, sycl::sub_group>)
+        {
+            // If we must swap we pass the mask so we swap with the assigned lane
+            // otherwise we pass 0 and we don't (not sure if using different masks is alowed in sycl for a permute)
+            int lane = must_swap ? (1 << shift) : 0;
+            // Should not be allowed according to docs but seem to work...
+            return sycl::permute_group_by_xor(_group, my_val, lane);
+            // return must_swap ? other_val : my_val;
+        }
+        else
+        {
+            // the threads that exchanged and got other_val must have same must_swap and hence this
+            // should work as well as using the select_from_subgroup version below
+            return must_swap ? other_val : my_val;
 
-        // Returns wether or not the index need to swap if lane == 0 it will keep it's value
-        // return popsift::shuffle_xor(my_index, lane);
-        // return sycl::select_from_group(_it.get_group(), my_index, remote_id);
-        // return sycl::select_from_group(_group, my_index, remote_id);
-
-        // Should not be allowed according to docs but seem to work...
-        return sycl::permute_group_by_xor(_group, my_val, lane);
-        // return must_swap ? other_val : my_val;
+            // int remote_id = must_swap ? (_it.get_local_id(1) ^ (1 << shift)) : _it.get_local_id(1);
+            // return sycl::select_from_group(_group, my_val, remote_id);
+        }
     }
 
     inline void swap(int& l, int& r)
