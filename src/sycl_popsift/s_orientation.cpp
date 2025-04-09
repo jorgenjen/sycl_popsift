@@ -41,12 +41,21 @@ namespace popsift {
 template<int half>
 inline float divide(const float& a, const float& b)
 {
-    switch(half)
-    {
-        case 1: return sycl::half_precision::divide(a, b);
-        case 0: return sycl::native::divide(a, b);
-        default: return a / b;
-    }
+    // switch(half)
+    // {
+    //     case 1: return sycl::half_precision::divide(a, b);
+    //     case 0: return sycl::native::divide(a, b);
+    //     default: return a / b;
+    // }
+
+    // Using constexpr should guarantee that the branch is taken at compile time (but 99% sure that was already the
+    // case)
+    if constexpr(half == 1)
+        return sycl::half_precision::divide(a, b);
+    else if constexpr(half == 0)
+        return sycl::native::divide(a, b);
+    else
+        return a / b;
 }
 
 // base e exponential of x
@@ -141,20 +150,48 @@ class ori_par
         if(it.get_global_linear_id() == 0)
         {
             if constexpr(useSubGroup)
-                sycl::ext::oneapi::experimental::printf("Sub group sieze %d\n", group.get_local_range()[0]);
+                sycl::ext::oneapi::experimental::printf("Sub group size %d\n", group.get_local_range()[0]);
             else
-                sycl::ext::oneapi::experimental::printf("work group sieze %d\n",
+                sycl::ext::oneapi::experimental::printf("work group size %d\n",
                                                         group.get_local_range()[0] * group.get_local_range()[1]);
         }
 
         // Possition in the grid but 0 is always 1 so should be same as it.get_group(1)
-        const int extremum_index = it.get_group(1) * it.get_group(0);
+        // This is the extrema index as we are getting index in terms of work_groups
+        // const int extremum_index = it.get_group(1) * it.get_group(0);
+        const int extremum_index = it.get_group(1); // it.get_grpu(0) is zero
 
+        // Only if the whole group (warp) has extremum_index higher than dct->ext_ct[octave]
+        // So the number of extremas in the octave but the kernel params are based on that count
+        // So not sure how this could happen? TODO: See if we can remove this check
         if(sycl::all_of_group(group, extremum_index >= dct->ext_ct[octave]))
             return; // A few trailing sub groups
 
-        const int iext_off = dobuf->i_ext_off[octave][extremum_index];
+        // This does also seem like a strange way of doig it getting index from one
+        // and using it to get the data
+
+        // NOTE: The resulting iext_off should always be the same as extremum_index
+        // So not sure why it's done like this seems like we can get rid of it
+        // and just use extremum_index
+        const int iext_off = dobuf->i_ext_off[octave][extremum_index]; // Should get rid of this must be an artifiact
+        // from they added the second layer (octave) to structure of i_ext_dat
+
+        if(iext_off != extremum_index)
+            sycl::ext::oneapi::experimental::printf("\n\n\t\tWAHHHHATER FUCKER NO WAYYYYY WHYYYYYYY\n\n");
+
         const InitialExtremum* iext = &dobuf->i_ext_dat[octave][iext_off];
+
+        // if(sycl::floor(iext->xpos) == 812)
+        // if(octave == 0 && group.leader())
+        // {
+        //     // sycl::ext::oneapi::experimental::printf("WORKYYY %f\n\n", iext->xpos);
+        //     sycl::ext::oneapi::experimental::printf("WORKYYY extremum_index %d, %f --> group[1] %d -- group[0] %d
+        //     \n\n",
+        //                                             extremum_index,
+        //                                             dobuf->i_ext_dat[octave][iext_off].xpos,
+        //                                             it.get_group(1),
+        //                                             it.get_group(0));
+        // }
 
         // Initialize hist to zero each work-item does 2 in work-group
         hist[it.get_local_id(1) + 0] = 0.0f;
@@ -198,7 +235,9 @@ class ori_par
         // to then have the condition checked in the first if and does nothing more and exits ... so threads will
         // diverge anyways...
         {
-            // Why does it need to run if any
+            // This is used to only alow the ones that should continue run...
+            // Should try to just have the condition check in the loop itself don't see how it's beenficial
+            // To continua if any is true but then mask out the remaining by if  (why not just do mask by for loop)
             if(i < loops)
             {
                 // Current threads x and y position in image at the level
@@ -318,10 +357,27 @@ class ori_par
         sycl::group_barrier(group);
 
         sycl::vec<int, 2> best_index(it.get_local_id(1), it.get_local_id(1) + 32);
+
+#define XPOS 26.643719f
+#define YPOS 185.853836f
+
+        if(iext->xpos == XPOS && iext->ypos == YPOS && it.get_local_id(1) == 0)
+        {
+            // printf("\nBEFORE: best_index (%d, %d)\n", best_index.x, best_index.y);
+            for(int i = 0; i < 64; i += 2)
+            {
+                sycl::ext::oneapi::experimental::printf("\tidx=%d --> %.6f  -- ", i, yval[i]);
+                sycl::ext::oneapi::experimental::printf("idx=%d --> %.6f\n ", i + 1, yval[i + 1]);
+            }
+            sycl::ext::oneapi::experimental::printf("\nAFTER");
+        }
+
         // BitonicSort
         if constexpr(useSubGroup)
         {
             // BitonicSort::Warp32<float, sycl::sub_group> sorter(yval, it, group);
+            if(it.get_global_linear_id() == 0)
+                sycl::ext::oneapi::experimental::printf("OCTAVE WE DOING SORTER ON %d\n\n", octave);
             BitonicSort::Warp32<float, sycl::sub_group> sorter(yval, it, group);
             sorter.sort64(best_index);
         }
@@ -334,10 +390,31 @@ class ori_par
             // sorter.sort64(best_index);
         }
 
+        sycl::group_barrier(group); // me test syncer :D
+
+        if(iext->xpos == XPOS && iext->ypos == YPOS)
+        {
+            sycl::ext::oneapi::experimental::printf("\n\tthreadIdx %d --> best_index (%d, %d) --> yval(%f, %f)",
+                                                    it.get_local_id(1),
+                                                    best_index.x(),
+                                                    best_index.y(),
+                                                    yval[best_index.x()],
+                                                    yval[best_index.y()]);
+        }
+
+        // Looks correct
+        // return;
+
         const float best_val = yval[best_index.x()];
 
         // Zero broadcast as it has higest yvalue
         const float yval_treshold = 0.8 * sycl::group_broadcast(group, best_val, 0);
+
+        // if(iext->xpos == XPOS && iext->ypos == YPOS && group.leader())
+        if(iext->xpos == XPOS && iext->ypos == YPOS)
+        {
+            sycl::ext::oneapi::experimental::printf("\n\tyval_treshold = %f", yval_treshold);
+        }
 
         // Think we compute out of loop to avoid too much compute in branching?
         const bool valid = (best_val >= yval_treshold); // Only larger than threshold is accepted
@@ -345,8 +422,13 @@ class ori_par
 
         Extremum* ext = &dobuf->extrema[ext_prefix_sum + extremum_index];
 
-        if(it.get_local_id()[1] > ORIENTATION_MAX_COUNT)
+        if(it.get_local_id()[1] < ORIENTATION_MAX_COUNT)
         {
+            if(iext->xpos == XPOS && iext->ypos == YPOS)
+            {
+                sycl::ext::oneapi::experimental::printf(
+                  "\n\tHELLO IN LE LOOOP -- local_id = %d max_ori = %d\n", it.get_local_id()[1], ORIENTATION_MAX_COUNT);
+            }
             if(valid)
             {
                 float chosen_bin = refined_angle[best_index.x()];
@@ -356,11 +438,13 @@ class ori_par
                 // Fast version of a * b + c (approximate)
                 // float th = sycl::mad(M_PI2 * chosen_bin, 1.0f / ORI_NBINS, -M_PI);
 
-                // accurate version of a * b + c (not as fast as sycl::mad)
-                constexpr float M_PI2_f = M_PI2; // Ensure float precision
+                constexpr float M_PI2_f = M_PI2;
                 constexpr float M_PI_f = M_PI;
+                // accurate version of a * b + c (not as fast as sycl::mad)
                 float th = sycl::fma(M_PI2_f * chosen_bin, (1.0f / ORI_NBINS), -M_PI_f);
                 // float th = sycl::fma((M_PI2 * chosen_bin, 1.0f / ORI_NBINS, -M_PI);
+
+                // sycl::ext::oneapi::experimental::printf("Orientation %f\n", th);
                 ext->orientation[it.get_local_id()[1]] = th;
                 written = true;
             }
@@ -386,7 +470,7 @@ class ori_par
             }
         }();
         // int angles = sycl::popcount(sycl::ext::oneapi::group_ballot(group, written));
-        if(it.get_local_id()[0] == 0)
+        if(it.get_local_id()[1] == 0)
         {
             ext->xpos = iext->xpos;
             ext->ypos = iext->ypos;
@@ -541,6 +625,31 @@ void Pyramid::orientation(const Config& conf)
             //     cuda::event_record(oct_obj.getEventOriDone(), oct_str, __FILE__, __LINE__);
             //     cuda::event_wait(oct_obj.getEventOriDone(), oct_0_str, __FILE__, __LINE__);
             // }
+            _device_queue.wait();
+
+            if(octave == 0)
+            {
+                _device_queue.single_task([=, dobuf = _dobuf, hct = _hct]() {
+                    for(int i = 0; i < num; ++i)
+                    {
+                        Extremum* ext = &dobuf->extrema[hct.ext_ps[octave] + i];
+                        sycl::ext::oneapi::experimental::printf(
+                          "Extremum: xpos=%.6f, ypos=%.6f, lpos=%d, sigma=%.6f, octave=%d, num_ori=%d, idx_ori=%d, "
+                          "orientation=[%.4f, %.4f, %.4f, %.4f]\n",
+                          ext->xpos,
+                          ext->ypos,
+                          ext->lpos,
+                          ext->sigma,
+                          ext->octave,
+                          ext->num_ori,
+                          ext->idx_ori,
+                          ext->orientation[0],
+                          ext->orientation[1],
+                          ext->orientation[2],
+                          ext->orientation[3]);
+                    }
+                });
+            }
         }
 
         /* Compute and set the orientation prefixes on the device */

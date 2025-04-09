@@ -802,7 +802,7 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
             int max_extrema = d_consts->max_extrema;
             sycl::ext::oneapi::experimental::printf("dct->ext_ct[%d] = %d\n", octave, dct->ext_ct[octave]);
 
-            if(octave == 0)
+            if(octave == 1)
             {
                 for(int i = 0; i < 600; ++i)
                 {

@@ -46,6 +46,16 @@ class Warp32
 
     inline void sort64(sycl::vec<int, 2>& my_indecies)
     {
+        // Consider adding mask to check who is not -inf
+        // and if 32 or less are not -inf we can do the sort in one
+        // 32 group and don't need the whole 64. Could also do in even less
+        // if it is very few ( could make this conditional logic) should be faseter
+        // in average case if -inf is quite common (as it seems to be ) need to test this
+        // just do maks and popcount and printout the count of non -inf and run on many imags
+        // to get a picture
+        if(_it.get_global_linear_id() == 0)
+            sycl::ext::oneapi::experimental::printf("WE GOING BOYYYYYY");
+
         for(int outer = 0; outer < 5; outer++)
         {
             for(int inner = outer; inner >= 0; inner--)
@@ -86,7 +96,8 @@ class Warp32
             else // std::is_same_v<GroupType, sycl::group<2>> // could have else if
             {
                 // Could be better to use handcrafted shared memory version
-                return sycl::select_from_group(_group, my_val, _it.get_local_id(1) ^ (1 << shift));
+                int remote_id = _it.get_local_id(1) ^ (1 << shift);
+                return sycl::select_from_group(_group, my_val, remote_id);
             }
             // Could add else if and else and say it's unsuported group
         }();
@@ -110,17 +121,15 @@ class Warp32
             // otherwise we pass 0 and we don't (not sure if using different masks is alowed in sycl for a permute)
             int lane = must_swap ? (1 << shift) : 0;
             // Should not be allowed according to docs but seem to work...
-            return sycl::permute_group_by_xor(_group, my_val, lane);
-            // return must_swap ? other_val : my_val;
+            return sycl::permute_group_by_xor(_group, my_index, lane);
         }
         else
         {
             // the threads that exchanged and got other_val must have same must_swap and hence this
             // should work as well as using the select_from_subgroup version below
-            return must_swap ? other_val : my_val;
 
-            // int remote_id = must_swap ? (_it.get_local_id(1) ^ (1 << shift)) : _it.get_local_id(1);
-            // return sycl::select_from_group(_group, my_val, remote_id);
+            int remote_id = must_swap ? (_it.get_local_id(1) ^ (1 << shift)) : _it.get_local_id(1);
+            return sycl::select_from_group(_group, my_index, remote_id);
         }
     }
 
