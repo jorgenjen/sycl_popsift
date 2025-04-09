@@ -51,6 +51,16 @@ static inline unsigned int extrema_count(bool indicator, int* extrema_counter, s
     // Will work as long as sub-group is not larger than 32
     uint32_t mask = sycl::reduce_over_group(
       sub_group, indicator ? (1u << sub_group.get_local_id()[0]) : 0u, sycl::ext::oneapi::bit_or<uint32_t>());
+
+    // NOTE: Can use this to get a a group_maks
+    // sycl::ext::oneapi::group_ballot(group, written)
+    // .count(); -> popcount on the maks (count how many set bits in mask)
+    // << shift left logical (zeroes come in on right) can be used to get the partial result we need
+    // This can replace the mask with reduce_over_group as I have it now (not sure what is faster)
+
+    // TODO: Test this -> Can use experimental feature on sub_group to get ballot (instead of using scan)
+    // unsigned mask = sycl::ext::oneapi::group_ballot(sub_group, indicator);
+    // might need this include -- #include <sycl/ext/oneapi/experimental/sub_group.hpp>
     int group_count = sycl::popcount(mask);
 
     int base = 0;          // Must be set to zero (Incorrect result otherwise)
