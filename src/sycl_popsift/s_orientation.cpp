@@ -594,13 +594,145 @@ class ori_prefix_sum
         Extremum* extremum = dobuf->extrema;
         int* feat_to_ext_map = dobuf->feat_to_ext_map;
 
-        ExtremaRead r(extremum);
-        ExtremaWrt w(extremum);
-        ExtremaTot t(total_ori);
-        ExtremaWrtMap wrtm(feat_to_ext_map, max(d_consts->max_orientations, dbuf->ori_allocated));
-        ExclusivePrefixSum::Block<sycl::sub_group, ExtremaRead, ExtremaWrt, ExtremaTot, ExtremaWrtMap>(
-          it, total_ext_ct, r, w, t, wrtm, sum, loop_total, group);
+        // ExtremaRead r(extremum);
+        // ExtremaWrt w(extremum);
+        // ExtremaTot t(total_ori);
+        ExtremaWrtMap mapping_writer(feat_to_ext_map, max(d_consts->max_orientations, dbuf->ori_allocated));
+        // ExclusivePrefixSum::Block<sycl::sub_group, ExtremaRead, ExtremaWrt, ExtremaTot, ExtremaWrtMap>(
+        //   it, total_ext_ct, r, w, t, wrtm, sum, loop_total, group);
 
+        if(it.get_local_id(1) == 0 && it.get_local_id(0) == 0)
+        {
+            loop_total[0] = 0;
+        }
+        sycl::group_barrier(group);
+
+        const int num = total_ext_ct;
+        const int start = it.get_local_linear_id();
+        const int wrap = it.get_global_range(1) * it.get_global_range(0);
+        const int end = (num & (wrap - 1)) ? (num & ~(wrap - 1)) + wrap : num;
+
+        // These values are what they should be
+
+        // if(group.leader())
+        // if(it.get_local_id(1) == 5)
+        // {
+        //     // sycl::ext::oneapi::experimental::printf(
+        //     //   "Local id (0) = %d, sub size %d\n", (int)it.get_local_id(0), (int)it.get_local_range(1));
+        //
+        //     sycl::ext::oneapi::experimental::printf(
+        //       "idy = %d -- Global range (%d, %d) wrap = %d, start = %d , end = %d\n",
+        //       (int)it.get_local_id(0),
+        //       (int)it.get_global_range(1),
+        //       (int)it.get_global_range(0),
+        //       wrap,
+        //       start,
+        //       end);
+        //     // sycl::ext::oneapi::experimental::printf("Wrap %d\n ", wrap);
+        // }
+
+        for(int x = start; x < end; x += wrap)
+        {
+            // __syncthreads();
+            sycl::group_barrier(group);
+
+            const bool valid = (x < num);
+            // const int cell = min(x, _num - 1);
+            // const int cell = sycl::min(x, num - 1); // Will always be x if vaild is true
+            // Seems excesive just use x as cell is only used when valid is true
+
+            // int ews = 0; // exclusive warp prefix sum
+            // int self = (valid) ? _reader.get(cell) : 0;
+            int self = (valid) ? extremum[x].num_ori : 0;
+
+            // This loop is an exclusive prefix sum for one warp
+            // for(int s = 0; s < 5; s++)
+            // {
+            //     // const int add = popsift::shuffle_up(ews + self, 1 << s);
+            //     const int add = sycl::shift_group_right(group, ews + self, 1 << s);
+            //     // ews += threadIdx.x < (1 << s) ? 0 : add;
+            //     ews += it.get_local_id(1) < (1 << s) ? 0 : add;
+            // }
+            // SHOULD be same as a exclusive scan
+
+            int ews = sycl::exclusive_scan_over_group(group, self, sycl::plus<>());
+
+            // if(threadIdx.x == 31)
+
+            // When laucnhing kernel with 32 32 this will always be the case
+            // for all work-items hence no need for the if
+            // if(it.get_local_id(1) == 31)
+            // {
+            // store inclusive warp prefix sum in shared mem
+            // to be summed up in next phase
+            // sum[threadIdx.y] = ews + self;
+
+            // When launcing
+            sum[it.get_local_id(0)] = ews + self; // making it  inclusive
+            // }
+            // __syncthreads();
+            sycl::group_barrier(group);
+
+            int ibs; // inclusive block prefix sum
+            // if(threadIdx.y == 0)
+            // if(it.get_local_id(0) == 0)
+            if(group.leader())
+            {
+                // int ebs = 0; // exclusive block prefix sum
+                // int self = sum[threadIdx.x];
+                int self = sum[it.get_local_id(1)];
+
+                // for(int s = 0; s < 5; s++)
+                // {
+                //     // const int add = popsift::shuffle_up(ebs + self, 1 << s);
+                //     const int add = sycl::shift_group_right(group, ebs + self, 1 << s);
+                //     // ebs += threadIdx.x < (1 << s) ? 0 : add;
+                //     ebs += it.get_local_id(1) < (1 << s) ? 0 : add;
+                // }
+                // ANother exclusive scan
+                int ebs = sycl::exclusive_scan_over_group(group, self, sycl::plus<>());
+
+                // sum[it.get_local_id(1)] = ebs;
+                sum[it.get_local_id(1)] = ebs;
+                ibs = ebs + self;
+            }
+            // __syncthreads();
+            sycl::group_barrier(group);
+
+            if(valid)
+            {
+                // const int ebs = loop_total + sum[threadIdx.y] + ews;
+                const int ebs = loop_total[0] + sum[it.get_local_id(0)] + ews;
+
+                /* Conceptually: at index cell of the _writer,
+                 * store the exclusive prefix sum ebs.
+                 */
+                // _writer.set(cell, ebs);
+                // _writer.set(cell, ebs);
+                extremum[x].idx_ori = ebs;
+
+                /* Conceptually: at index ebs of the _mapping_writer,
+                 * and the self-1 indices after it, store the position
+                 * cell within the original array, _reader.
+                 */
+                mapping_writer.set(ebs, self, x);
+            }
+            // __syncthreads();
+            sycl::group_barrier(group);
+
+            // if(threadIdx.y == 0 && threadIdx.x == 31)
+            if(it.get_local_id(0) == 0 && it.get_local_id(1) == 31)
+            {
+                loop_total[0] += ibs;
+            }
+            // __syncthreads();
+            sycl::group_barrier(group);
+        }
+        //
+        // // _total_writer.set(_loop_total[0]);
+        // total_ori = loop_total[0];
+
+        /// ######################
         sycl::group_barrier(group);
     }
 };
@@ -763,25 +895,10 @@ void Pyramid::orientation(const Config& conf)
         }
     }
 
-    /* Compute and set the orientation prefixes on the device */
-    // dim3 block;
-    // dim3 grid;
-    // block.x = 32;
-    // block.y = 32;
-    // grid.x = 1;
-
-    // Runs after all octave
-    // sycl::range local{1, 32, 32};
-    // sycl::range global{1, 1, 1};
-    //
-    // ori_prefix_sum<<<grid, block, 0, oct_0_str>>>(ext_ct_prefix_sum, _num_octaves);
-    // POP_SYNC_CHK;
-    //
-    // cudaDeviceSynchronize();
-
     // Should remove this and addd ependencies if htare are any
     _device_queue.wait(); // Don't think there are any... but we'll see
     // Could just for sor range for this (unless I need work_grop/sub_group)
+
     sycl::range local_prefix{32, 32};
     sycl::range global_prefix{32, 32};
 
