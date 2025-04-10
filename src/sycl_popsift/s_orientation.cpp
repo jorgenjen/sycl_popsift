@@ -13,6 +13,7 @@
 #include "sycl/vector.hpp"
 #include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/common/debug_macros.hpp"
+#include "sycl_popsift/common/excl_blk_prefix_sum.h"
 
 #include <sycl/sycl.hpp>
 // #include "common/excl_blk_prefix_sum.h"
@@ -390,7 +391,7 @@ class ori_par
             // sorter.sort64(best_index);
         }
 
-        sycl::group_barrier(group); // me test syncer :D
+        // sycl::group_barrier(group); // me test syncer :D
 
         if(iext->xpos == XPOS && iext->ypos == YPOS)
         {
@@ -492,8 +493,117 @@ auto get_ori_par_subgroup_size(sycl::queue& Q)
     auto kernel = kernel_bundle.get_kernel(kernel_id);
     return kernel.get_info<sycl::info::kernel_device_specific::max_sub_group_size>(Q.get_device());
 }
+} // namespace popsift
 
-}
+class ExtremaRead
+{
+    const Extremum* const _oris;
+
+  public:
+    inline explicit ExtremaRead(const Extremum* const d_oris)
+      : _oris(d_oris)
+    {}
+
+    inline int get(int n) const { return _oris[n].num_ori; }
+};
+
+// Makes the code more readable and maintainable and esier to change underlying memory without modifying function
+// Seems a bit excessive in this case but should not add overhead
+class ExtremaWrt
+{
+    Extremum* _oris;
+
+  public:
+    inline explicit ExtremaWrt(Extremum* d_oris)
+      : _oris(d_oris)
+    {}
+
+    inline void set(int n, int value) { _oris[n].idx_ori = value; }
+};
+
+class ExtremaTot
+{
+    int& _extrema_counter;
+
+  public:
+    inline explicit ExtremaTot(int& extrema_counter)
+      : _extrema_counter(extrema_counter)
+    {}
+
+    inline void set(int value) { _extrema_counter = value; }
+};
+
+class ExtremaWrtMap
+{
+    int* _featvec_to_extrema_mapper;
+    int _max_feat;
+
+  public:
+    inline ExtremaWrtMap(int* featvec_to_extrema_mapper, int max_feat)
+      : _featvec_to_extrema_mapper(featvec_to_extrema_mapper)
+      , _max_feat(max_feat)
+    {}
+
+    inline void set(int base, int num, int value)
+    {
+        int* baseptr = &_featvec_to_extrema_mapper[base];
+        do
+        {
+            num--;
+            if(base + num < _max_feat)
+            {
+                baseptr[num] = value;
+            }
+        } while(num > 0);
+    }
+};
+
+class ori_prefix_sum
+{
+  private:
+    const int total_ext_ct;
+    const int num_octaves;
+    ExtremaBuffers* dbuf;
+    DevBuffers* dobuf;
+    ConstInfo* d_consts;
+    sycl::local_accessor<int, 1> sum;
+    sycl::local_accessor<int, 1> loop_total;
+
+  public:
+    ori_prefix_sum(const int total_ext_ct,
+                   const int num_octaves,
+                   ExtremaBuffers* dbuf,
+                   DevBuffers* dobuf,
+                   ConstInfo* d_consts,
+                   sycl::local_accessor<int, 1> sum,
+                   sycl::local_accessor<int, 1> loop_total)
+      : total_ext_ct(total_ext_ct)
+      , num_octaves(num_octaves)
+      , dbuf(dbuf)
+      , dobuf(dobuf)
+      , d_consts(d_consts)
+      , sum(sum)
+      , loop_total(loop_total)
+    {}
+
+    inline void operator()(sycl::nd_item<2> it) const
+    {
+        // Do stuff
+        sycl::sub_group group = it.get_sub_group();
+        int total_ori = 0;
+        Extremum* extremum = dobuf->extrema;
+        int* feat_to_ext_map = dobuf->feat_to_ext_map;
+
+        ExtremaRead r(extremum);
+        ExtremaWrt w(extremum);
+        ExtremaTot t(total_ori);
+        ExtremaWrtMap wrtm(feat_to_ext_map, max(d_consts->max_orientations, dbuf->ori_allocated));
+        ExclusivePrefixSum::Block<sycl::sub_group, ExtremaRead, ExtremaWrt, ExtremaTot, ExtremaWrtMap>(
+          it, total_ext_ct, r, w, t, wrtm, sum, loop_total, group);
+
+        sycl::group_barrier(group);
+    }
+};
 
 void Pyramid::orientation(const Config& conf)
 {
@@ -625,7 +735,7 @@ void Pyramid::orientation(const Config& conf)
             //     cuda::event_record(oct_obj.getEventOriDone(), oct_str, __FILE__, __LINE__);
             //     cuda::event_wait(oct_obj.getEventOriDone(), oct_0_str, __FILE__, __LINE__);
             // }
-            _device_queue.wait();
+            // _device_queue.wait();
 
             if(octave == 0)
             {
@@ -651,22 +761,38 @@ void Pyramid::orientation(const Config& conf)
                 });
             }
         }
-
-        /* Compute and set the orientation prefixes on the device */
-        // dim3 block;
-        // dim3 grid;
-        // block.x = 32;
-        // block.y = 32;
-        // grid.x = 1;
-
-        // Runs after all octav
-        // sycl::range local{1, 32, 32};
-        // sycl::range global{1, 1, 1};
-        //
-        // ori_prefix_sum<<<grid, block, 0, oct_0_str>>>(ext_ct_prefix_sum, _num_octaves);
-        // POP_SYNC_CHK;
-        //
-        // cudaDeviceSynchronize();
-        _device_queue.wait();
     }
+
+    /* Compute and set the orientation prefixes on the device */
+    // dim3 block;
+    // dim3 grid;
+    // block.x = 32;
+    // block.y = 32;
+    // grid.x = 1;
+
+    // Runs after all octave
+    // sycl::range local{1, 32, 32};
+    // sycl::range global{1, 1, 1};
+    //
+    // ori_prefix_sum<<<grid, block, 0, oct_0_str>>>(ext_ct_prefix_sum, _num_octaves);
+    // POP_SYNC_CHK;
+    //
+    // cudaDeviceSynchronize();
+
+    // Should remove this and addd ependencies if htare are any
+    _device_queue.wait(); // Don't think there are any... but we'll see
+    // Could just for sor range for this (unless I need work_grop/sub_group)
+    sycl::range local_prefix{32, 32};
+    sycl::range global_prefix{32, 32};
+
+    _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts](sycl::handler& cgh) {
+        // sycl::local_accessor<int, 1> -- is the type
+        auto sum = sycl::local_accessor<int, 1>(32, cgh);
+        auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
+
+        cgh.parallel_for(sycl::nd_range{global_prefix, local_prefix},
+                         ori_prefix_sum(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, sum, loop_total));
+    });
+
+    _device_queue.wait();
 }

@@ -1,3 +1,5 @@
+#pragma once
+
 namespace popsift {
 
 /* This computation is needed very frequently when a dim3 grid block is

@@ -4,6 +4,13 @@
 2. Modify grid_divide so that it gives the complete outer size as sycl does not do blockidx like cuda.
 3. Modify add another scale fucntion that is not bound to a class so we deal wit two widths heights
     - Done like this due to the way popsift utilizes the texture engine to do the upscale and I'm currently not using that so need to replicate teh same functionality in software
+4. Could not use the generic structure for ori_prefix_sum as it resulted in 80 registers per work-item and thus more register than allowed which caused an error (surprisingly not register spilling) this was the error
+    - ```bash 
+      what():  Exceeded the number of registers available on the hardware.
+        The number registers per work-group cannot exceed 65536 for this kernel on this device.
+        The kernel uses 80 registers per work-item for a total of 1024 work-items per work-group.
+
+    ```
 
 ## Known problems currently:
 
