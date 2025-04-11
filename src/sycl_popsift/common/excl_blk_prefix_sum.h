@@ -27,14 +27,14 @@ class IgnoreWriteMapping
 template<typename GroupType,
          class Reader,
          class Writer,
-         class Total = IgnoreTotal,
+         // class Total = IgnoreTotal,
          class WriteMapping = IgnoreWriteMapping>
 class Block
 {
     const sycl::nd_item<2>& _it;
     const Reader& _reader;
     Writer& _writer;
-    Total& _total_writer;
+    // Total& _total_writer;
     WriteMapping& _mapping_writer;
     const int _num;
     sycl::local_accessor<int, 1> _sum;
@@ -57,7 +57,7 @@ class Block
           int num,
           const Reader& reader,
           Writer& writer,
-          Total& total_writer,
+          // Total& total_writer,
           WriteMapping& mapping_writer,
           sycl::local_accessor<int, 1> sum_arr,
           sycl::local_accessor<int, 1> loop_total,
@@ -67,7 +67,7 @@ class Block
       , _num(num)
       , _reader(reader)
       , _writer(writer)
-      , _total_writer(total_writer)
+      // , _total_writer(total_writer)
       , _mapping_writer(mapping_writer)
       , _sum(sum_arr)
       , _loop_total(loop_total)
@@ -79,47 +79,40 @@ class Block
   private:
     /* This function computes the actual exclusive prefix summation
      */
-    void sum()
+    inline void sum()
     {
-        // __shared__ int sum[32];
-        // __shared__ int loop_total;
-
-        // if(threadIdx.x == 0 && threadIdx.y == 0)
         if(_it.get_local_id(1) == 0 && _it.get_local_id(0) == 0)
         {
             _loop_total[0] = 0;
         }
 
-        // __syncthreads();
         sycl::group_barrier(_group);
 
-        // const int start = threadIdx.y * blockDim.x + threadIdx.x;
-        // const int wrap = blockDim.x * blockDim.y;
-
         const int start = _it.get_global_linear_id();
-        const int wrap = _it.get_local_range(1) * _it.get_local_range(0);
+        // const int wrap = _it.get_local_range(1) * _it.get_local_range(0);
+        const constexpr int wrap = 1024;
         const int end = (_num & (wrap - 1)) ? (_num & ~(wrap - 1)) + wrap : _num;
 
         for(int x = start; x < end; x += wrap)
         {
-            // __syncthreads();
             sycl::group_barrier(_group);
 
             const bool valid = (x < _num);
-            // const int cell = min(x, _num - 1);
-            const int cell = sycl::min(x, _num - 1);
+            // const int cell = sycl::min(x, _num - 1);
 
-            int ews = 0; // exclusive warp prefix sum
-            int self = (valid) ? _reader.get(cell) : 0;
+            // int ews = 0; // exclusive warp prefix sum
+            int self = (valid) ? _reader.get(x) : 0;
 
             // This loop is an exclusive prefix sum for one warp
-            for(int s = 0; s < 5; s++)
-            {
-                // const int add = popsift::shuffle_up(ews + self, 1 << s);
-                const int add = sycl::shift_group_right(_group, ews + self, 1 << s);
-                // ews += threadIdx.x < (1 << s) ? 0 : add;
-                ews += _it.get_local_id(1) < (1 << s) ? 0 : add;
-            }
+            // for(int s = 0; s < 5; s++)
+            // {
+            //     // const int add = popsift::shuffle_up(ews + self, 1 << s);
+            //     const int add = sycl::shift_group_right(_group, ews + self, 1 << s);
+            //     // ews += threadIdx.x < (1 << s) ? 0 : add;
+            //     ews += _it.get_local_id(1) < (1 << s) ? 0 : add;
+            // }
+
+            int ews = sycl::exclusive_scan_over_group(_group, self, sycl::plus<>());
 
             // if(threadIdx.x == 31)
             if(_it.get_local_id(1) == 31)
@@ -136,19 +129,21 @@ class Block
             // if(threadIdx.y == 0)
             if(_it.get_local_id(0) == 0)
             {
-                int ebs = 0; // exclusive block prefix sum
+                // int ebs = 0; // exclusive block prefix sum
                 // int self = sum[threadIdx.x];
                 int self = _sum[_it.get_local_id(1)];
 
-                for(int s = 0; s < 5; s++)
-                {
-                    // const int add = popsift::shuffle_up(ebs + self, 1 << s);
-                    const int add = sycl::shift_group_right(_group, ebs + self, 1 << s);
-                    // ebs += threadIdx.x < (1 << s) ? 0 : add;
-                    ebs += _it.get_local_id(1) < (1 << s) ? 0 : add;
-                }
+                // for(int s = 0; s < 5; s++)
+                // {
+                //     // const int add = popsift::shuffle_up(ebs + self, 1 << s);
+                //     const int add = sycl::shift_group_right(_group, ebs + self, 1 << s);
+                //     // ebs += threadIdx.x < (1 << s) ? 0 : add;
+                //     ebs += _it.get_local_id(1) < (1 << s) ? 0 : add;
+                // }
 
-                _sum[_it.get_local_id(1)] = ebs;
+                int ebs = sycl::exclusive_scan_over_group(_group, self, sycl::plus<>());
+
+                // _sum[_it.get_local_id(1)] = ebs;
                 _sum[_it.get_local_id(1)] = ebs;
                 ibs = ebs + self;
             }
@@ -163,19 +158,20 @@ class Block
                 /* Conceptually: at index cell of the _writer,
                  * store the exclusive prefix sum ebs.
                  */
-                _writer.set(cell, ebs);
+                _writer.set(x, ebs);
 
                 /* Conceptually: at index ebs of the _mapping_writer,
                  * and the self-1 indices after it, store the position
                  * cell within the original array, _reader.
                  */
-                _mapping_writer.set(ebs, self, cell);
+                _mapping_writer.set(ebs, self, x);
             }
             // __syncthreads();
             sycl::group_barrier(_group);
 
             // if(threadIdx.y == 0 && threadIdx.x == 31)
-            if(_it.get_local_id(0) == 0 && _it.get_local_id(1) == 31)
+            // if(_it.get_local_id(0) == 0 && _it.get_local_id(1) == 31)
+            if(_it.get_global_linear_id() == 0)
             {
                 _loop_total[0] += ibs;
             }
@@ -183,7 +179,7 @@ class Block
             sycl::group_barrier(_group);
         }
 
-        _total_writer.set(_loop_total[0]);
+        // _total_writer.set(_loop_total[0]);
     }
 };
 

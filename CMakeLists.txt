@@ -31,7 +31,9 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY
 include(cmake/ConfigureSYCL.cmake)
 
 # For debug symbols remove for release
-set(CMAKE_BUILD_TYPE Debug)
+
+# set(CMAKE_BUILD_TYPE Debug) # Seems like this makes the kernel prefix have 66
+# registers more than it can have max 64 for 32 x 32 dimensions
 
 # # Add debug symbols and disable optimization set(CMAKE_CXX_FLAGS
 # "${CMAKE_CXX_FLAGS} -g -O0")
