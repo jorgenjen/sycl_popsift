@@ -33,7 +33,12 @@ include(cmake/ConfigureSYCL.cmake)
 # For debug symbols remove for release
 
 # set(CMAKE_BUILD_TYPE Debug) # Seems like this makes the kernel prefix have 66
-# registers more than it can have max 64 for 32 x 32 dimensions
+# registers more than it can have max 64 for 32 x 32 dimensions (this is for gpu
+# version) not sure if debug symbols or if it is the lower optimization level
+# that causes the register count to be too high
+
+# Should mby lower the y dimension prefix sum in debug mode if we want that to
+# be compatible with the gpu  version
 
 # # Add debug symbols and disable optimization set(CMAKE_CXX_FLAGS
 # "${CMAKE_CXX_FLAGS} -g -O0")
@@ -50,6 +55,7 @@ else()
   message(STATUS "CUDA DISABLED -- Running cpu only mode")
   set(CPU_ONLY "-DCPU_ONLY")
 
+  set(CMAKE_BUILD_TYPE Debug)
   message(STATUS "Running in debug mode :D")
   list(APPEND SYCL_FLAGS -O0 -g -fno-omit-frame-pointer)
 endif()

@@ -594,7 +594,9 @@ class ori_prefix_sum
 
     inline void operator()(sycl::nd_item<2> it) const
     {
-        sycl::sub_group group = it.get_sub_group();
+        sycl::sub_group sub_group = it.get_sub_group();
+        sycl::group work_group = it.get_group();
+
         ExtremaWrtMap mapping_writer(dobuf->feat_to_ext_map, max(d_consts->max_orientations, dbuf->ori_allocated));
         // ExtremaRead r(dobuf->extrema);
         // ExtremaWrt w(dobuf->extrema);
@@ -603,11 +605,12 @@ class ori_prefix_sum
         // ExclusivePrefixSum::Block<sycl::sub_group, ExtremaRead, ExtremaWrt, ExtremaWrtMap>(
         //   it, total_ext_ct, r, w, wrtm, sum, loop_total, group);
 
+        // NOTE: Seems like loop_total is not used for anything and can be removed
         if(it.get_local_linear_id() == 0)
         {
             loop_total[0] = 0;
         }
-        sycl::group_barrier(group);
+        sycl::group_barrier(work_group);
 
         const int num = total_ext_ct;
         const int start = it.get_local_linear_id();
@@ -618,14 +621,14 @@ class ori_prefix_sum
 
         for(int x = start; x < end; x += wrap)
         {
-            sycl::group_barrier(group);
+            sycl::group_barrier(work_group);
 
             const bool valid = (start < total_ext_ct);
 
             int self = (valid) ? dobuf->extrema[start].num_ori : 0;
 
             // This loop is an exclusive prefix sum for one warp
-            int ews = sycl::exclusive_scan_over_group(group, self, sycl::plus<>());
+            int ews = sycl::exclusive_scan_over_group(sub_group, self, sycl::plus<>());
 
             if(it.get_local_id(1) == 31) // only last adds
             {
@@ -635,7 +638,7 @@ class ori_prefix_sum
                 sum[it.get_local_id(0)] = ews + self; // making it  inclusive
             }
             // __syncthreads();
-            sycl::group_barrier(group);
+            sycl::group_barrier(work_group);
 
             int ibs; // inclusive block prefix sum
             if(it.get_local_id(0) == 0)
@@ -643,12 +646,12 @@ class ori_prefix_sum
                 int self = sum[it.get_local_id(1)];
 
                 // ANother exclusive scan
-                int ebs = sycl::exclusive_scan_over_group(group, self, sycl::plus<>());
+                int ebs = sycl::exclusive_scan_over_group(sub_group, self, sycl::plus<>());
 
                 sum[it.get_local_id(1)] = ebs;
                 ibs = ebs + self;
             }
-            sycl::group_barrier(group);
+            sycl::group_barrier(work_group);
 
             if(valid)
             {
@@ -659,13 +662,13 @@ class ori_prefix_sum
                 // this uses less register than what I have below (66) vs 72
                 mapping_writer.set(ebs, self, start);
             }
-            sycl::group_barrier(group);
+            sycl::group_barrier(work_group);
 
             if(it.get_local_id(0) == 0 && it.get_local_id(1) == 31)
             {
                 loop_total[0] += ibs;
             }
-            sycl::group_barrier(group);
+            sycl::group_barrier(work_group);
         }
 
         // D
@@ -685,40 +688,47 @@ class ori_prefix_sum
         /// ####################### SHIT #########################################
 
         // if(threadIdx.x == 0 && threadIdx.y == 0)
-        // if(it.get_global_linear_id() == 0)
-        // {
-        //     dct->ext_ps[0] = 0;
-        //     for(int o = 1; o < MAX_OCTAVES; o++)
-        //     {
-        //         dct->ext_ps[o] = dct->ext_ps[o - 1] + dct->ext_ct[o - 1];
-        //     }
-        //
-        //     for(int o = 0; o < MAX_OCTAVES; o++)
-        //     {
-        //         if(dct->ext_ct[o] == 0)
-        //         {
-        //             dct->ori_ct[o] = 0;
-        //         }
-        //         else
-        //         {
-        //             int fe = dct->ext_ps[o];         /* first extremum for this octave */
-        //             int le = dct->ext_ps[o + 1] - 1; /* last  extremum for this octave */
-        //             int lo_ori_index = dobuf->extrema[fe].idx_ori;
-        //             int num_ori = dobuf->extrema[le].num_ori;
-        //             int hi_ori_index = dobuf->extrema[le].idx_ori + num_ori;
-        //             dct->ori_ct[o] = hi_ori_index - lo_ori_index;
-        //         }
-        //     }
-        //
-        //     dct->ori_ps[0] = 0;
-        //     for(int o = 1; o < MAX_OCTAVES; o++)
-        //     {
-        //         dct->ori_ps[o] = dct->ori_ps[o - 1] + dct->ori_ct[o - 1];
-        //     }
-        //
-        //     dct->ori_total = dct->ori_ps[MAX_OCTAVES - 1] + dct->ori_ct[MAX_OCTAVES - 1];
-        //     dct->ext_total = dct->ext_ps[MAX_OCTAVES - 1] + dct->ext_ct[MAX_OCTAVES - 1];
-        // }
+        if(it.get_global_linear_id() == 0)
+        {
+            dct->ext_ps[0] = 0;
+            for(int o = 1; o < MAX_OCTAVES; o++)
+            {
+                dct->ext_ps[o] = dct->ext_ps[o - 1] + dct->ext_ct[o - 1];
+            }
+
+            for(int o = 0; o < MAX_OCTAVES; o++)
+            {
+                if(dct->ext_ct[o] == 0)
+                {
+                    dct->ori_ct[o] = 0;
+                }
+                else
+                {
+                    int fe = dct->ext_ps[o];         /* first extremum for this octave */
+                    int le = dct->ext_ps[o + 1] - 1; /* last  extremum for this octave */
+                    int lo_ori_index = dobuf->extrema[fe].idx_ori;
+                    int num_ori = dobuf->extrema[le].num_ori;
+
+                    int hi_ori_index = dobuf->extrema[le].idx_ori + num_ori;
+                    dct->ori_ct[o] = hi_ori_index - lo_ori_index;
+                }
+            }
+
+            dct->ori_ps[0] = 0;
+            for(int o = 1; o < MAX_OCTAVES; o++)
+            {
+                dct->ori_ps[o] = dct->ori_ps[o - 1] + dct->ori_ct[o - 1];
+            }
+
+            dct->ori_total = dct->ori_ps[MAX_OCTAVES - 1] + dct->ori_ct[MAX_OCTAVES - 1];
+            dct->ext_total = dct->ext_ps[MAX_OCTAVES - 1] + dct->ext_ct[MAX_OCTAVES - 1];
+
+            // sycl::ext::oneapi::experimental::printf("ori_total %d -- ext_total %d",
+            //                                         dct->ori_ps[MAX_OCTAVES - 1] + dct->ori_ct[MAX_OCTAVES - 1],
+            //                                         dct->ext_ps[MAX_OCTAVES - 1] + dct->ext_ct[MAX_OCTAVES - 1]);
+            // sycl::ext::oneapi::experimental::printf(
+            //   "dct.ori_total = %d ---- dct.ext_total = %d\n", dct->ori_total, dct->ext_total);
+        }
     }
 };
 
@@ -846,15 +856,8 @@ void Pyramid::orientation(const Config& conf)
                                                              _dct));
                 });
             }
-            // TODO: Understand why this is needed and if I need something similar
-            // if(octave != 0)
-            // {
-            //     cuda::event_record(oct_obj.getEventOriDone(), oct_str, __FILE__, __LINE__);
-            //     cuda::event_wait(oct_obj.getEventOriDone(), oct_0_str, __FILE__, __LINE__);
-            // }
-            // _device_queue.wait();
 
-            if(octave == 0)
+            if(octave == 10)
             {
                 _device_queue.single_task([=, dobuf = _dobuf, hct = _hct]() {
                     for(int i = 0; i < num; ++i)
@@ -897,5 +900,21 @@ void Pyramid::orientation(const Config& conf)
                          ori_prefix_sum(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
     });
 
-    _device_queue.wait();
+    // _device_queue.wait();
+
+    //
+
+    //
+
+    //
+
+    _device_queue.single_task([=, dobuf = _dobuf, dct = _dct]() {
+        // for(int i = 0; i < MAX_OCTAVES; ++i)
+        // {
+        // Extremum* ext = &dobuf->extrema[hct.ext_ps[octave] + i];
+
+        sycl::ext::oneapi::experimental::printf(
+          "dct->ori_total = %d, dct->ext_total = %d\n", dct->ori_total, dct->ext_total);
+        // }
+    });
 }
