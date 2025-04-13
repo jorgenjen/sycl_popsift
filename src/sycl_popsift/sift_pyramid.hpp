@@ -131,7 +131,7 @@ class Pyramid
     void step2(const Config& conf, sycl::event d_consts_write);
 
     /** step 3: download descriptors */
-    // FeaturesHost *get_descriptors(const Config &conf);
+    FeaturesHost* get_descriptors(const Config& conf);
 
     /** step 3 (alternative): make copy of descriptors on device side */
     // FeaturesDev *clone_device_descriptors(const Config &conf);

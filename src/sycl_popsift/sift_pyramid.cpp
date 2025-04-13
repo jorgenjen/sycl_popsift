@@ -2,6 +2,7 @@
 
 #include "sycl/usm.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
+#include "sycl_popsift/features.h"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/s_image.hpp" // not sure if needed to include here aswell clean up #includes at some point
 #include "sycl_popsift/sift_constants.hpp"
@@ -223,8 +224,81 @@ void Pyramid::step2(const Config& conf, sycl::event d_consts_write)
     find_extrema(conf, d_consts_write);
 
     orientation(conf);
+
+    descriptors(conf);
+}
+
+// void prep_features(Descriptor* descriptor_base, int up_fac)
+// {
+//     int offset = blockIdx.x * 32 + threadIdx.x;
+//     if(offset >= dct.ext_total)
+//         return;
+//     const Extremum& ext = dobuf.extrema[offset];
+//     Feature& fet = dobuf.features[offset];
+//
+//     const int octave = ext.octave;
+//     const float xpos = ext.xpos * powf(2.0f, float(octave - up_fac));
+//     const float ypos = ext.ypos * powf(2.0f, float(octave - up_fac));
+//     const float sigma = ext.sigma * powf(2.0f, float(octave - up_fac));
+//     const int num_ori = ext.num_ori;
+//
+//     fet.xpos = xpos;
+//     fet.ypos = ypos;
+//     fet.sigma = sigma;
+//     fet.num_ori = num_ori;
+//
+//     fet.debug_octave = octave;
+//
+//     int ori;
+//     for(ori = 0; ori < num_ori; ori++)
+//     {
+//         fet.desc[ori] = descriptor_base + (ext.idx_ori + ori);
+//         fet.orientation[ori] = ext.orientation[ori];
+//     }
+//     for(; ori < ORIENTATION_MAX_COUNT; ori++)
+//     {
+//         fet.desc[ori] = nullptr;
+//         fet.orientation[ori] = 0;
+//     }
+// }
+//
+FeaturesHost* Pyramid::get_descriptors(const Config& conf)
+{
+    const float up_fac = conf.getUpscaleFactor();
+
+    readDescCountersFromDevice().wait(); // Should do this earlier right after orientation is done
+                                         // so that will be no wait here
+                                         // just wait on the event but should be done a long time ago
+
+    FeaturesHost* features = new FeaturesHost(_hct.ext_total, _hct.ori_total);
+
+    if(_hct.ext_total == 0 || _hct.ori_total == 0)
+    {
+        return features;
+    }
+
+    return features;
+
+    // dim3 grid(grid_divide(hct.ext_total, 32));
+    // prep_features<<<grid, 32, 0, _download_stream>>>(features->getDescriptors(), up_fac);
+    // POP_SYNC_CHK;
     //
-    // descriptors( conf );
+    // features->pin();
+    // popcuda_memcpy_async(features->getFeatures(),
+    //                      dobuf_shadow.features,
+    //                      hct.ext_total * sizeof(Feature),
+    //                      cudaMemcpyDeviceToHost,
+    //                      _download_stream);
+    //
+    // popcuda_memcpy_async(features->getDescriptors(),
+    //                      dbuf_shadow.desc,
+    //                      hct.ori_total * sizeof(Descriptor),
+    //                      cudaMemcpyDeviceToHost,
+    //                      _download_stream);
+    // cudaStreamSynchronize(_download_stream);
+    // features->unpin();
+    //
+    // return features;
 }
 
 void Pyramid::reset_extrema_mgmt()

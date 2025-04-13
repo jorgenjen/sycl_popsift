@@ -94,6 +94,7 @@ class Octave
     // inline float** getIntermediateArray() const { return _intm_array; }
     inline float** getDataArray() const { return _data_array; }
     inline float** getDataArrayHost() const { return _data_array_host; }
+
     inline sycl::event getDataArrayWriteEvent() const { return _data_array_write; }
 
     inline float** getDogArray() const { return _dog_array; }

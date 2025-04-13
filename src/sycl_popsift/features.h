@@ -14,6 +14,7 @@
 
 namespace popsift {
 
+// Forward declaration
 struct Descriptor; // float features[128];
 
 /**
@@ -64,7 +65,6 @@ class FeaturesBase
  * Descriptors in the transparent array with their extrema except
  * for brute force.
  *
- * Note: FeaturesHost is typedef'd to its older name Features
  */
 class FeaturesHost : public FeaturesBase
 {
@@ -98,7 +98,7 @@ class FeaturesHost : public FeaturesBase
                           // does nothing for this one as far as  I understand
 };
 
-using Features = FeaturesHost;
+// using Features = FeaturesHost;
 
 std::ostream& operator<<(std::ostream& ostr, const FeaturesHost& feature);
 

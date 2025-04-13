@@ -448,6 +448,8 @@ void PopSift::extractDownloadLoop()
         // p._pyramid->step2(_config, {sycl::event()}, _d_consts_write);
         p._pyramid->step2(_config, _d_consts_write);
 
+        popsift::FeaturesHost* features = p._pyramid->get_descriptors(_config);
+
         _device_queue.wait_and_throw();
         fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");
         fflush(stdout);

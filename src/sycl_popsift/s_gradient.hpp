@@ -47,7 +47,11 @@ static inline void get_gradient(
     // Not sure if we need clamping? Think the extremas are not along the edges and hence shoudl be fine?
 
     // TODO: Look into if we need clamping or not (currently using to be safe)
+    // SEEMS TO BE FINE WHEN NOT USING CLAMING
 
+#define TO_CLAMP true
+
+#if TO_CLAMP
     const int safe_x = sycl::clamp(x, 0, width - 1);
     const int safe_y = sycl::clamp(y, 0, height - 1);
 
@@ -59,6 +63,11 @@ static inline void get_gradient(
 
     float dx = data[level][right_x] - data[level][left_x];
     float dy = data[level][upper_y] - data[level][lower_y];
+#else
+
+    float dx = data[level][(x + 1) + y * width] - data[level][(x - 1) + y * width];
+    float dy = data[level][x + (y + 1) * width] - data[level][x + (y - 1) * width];
+#endif
     grad = sycl::hypot(dx, dy);
     theta = sycl::atan2(dy, dx);
 }

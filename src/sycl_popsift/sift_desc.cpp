@@ -1,6 +1,9 @@
+#include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/s_desc_loop.hpp"
+#include "sycl_popsift/s_desc_norm_rs.h"
+#include "sycl_popsift/s_desc_normalize.h"
 #include "sycl_popsift/s_gradient.hpp"
 #include "sycl_popsift/sift_constants.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
@@ -9,7 +12,8 @@
 
 #include <sycl/sycl.hpp>
 
-// #include <cmath>
+// #include <cmath> // including cmath did not work due to conflict so could not use INFINITY
+#include <cstdio>
 #include <limits>
 
 #undef BLOCK_3_DIMS
@@ -54,6 +58,24 @@ static inline void ext_desc_loop_sub(const float ang,
     const float sig = ext->sigma;
     const float SBP = sycl::fabs(DESC_MAGNIFY * sig);
 
+// #define XPOS 26.643719f
+// #define YPOS 185.853836f
+#define XPOS 90.565437f
+#define YPOS 137.517151f
+
+    // if(x == 451.221741f && y == 305.580322f)
+    // if(x == XPOS)
+    // if(x == XPOS && y == YPOS)
+    // {
+    //     // sycl::ext::oneapi::experimental::printf("Tile = %d ", tile);
+    //     sycl::ext::oneapi::experimental::printf("idx (%d, %d, %d) -- x = %f y = %f \n",
+    //                                             (int)it.get_local_id(2),
+    //                                             (int)it.get_local_id(1),
+    //                                             (int)it.get_local_id(0),
+    //                                             x,
+    //                                             y);
+    // }
+
     if(SBP == 0)
     {
         return;
@@ -81,9 +103,11 @@ static inline void ext_desc_loop_sub(const float ang,
     const float srsbp = sin_t / SBP;
 
     // const float2 offsetpt = make_float2(ix - 1.5f, iy - 1.5f);
-    const sycl::vec<float, 2> offsetpt(ix - 1.5,
-                                       iy - 1.5f); // NOTE: This should mby be set to -1 and -1 when not using textures
-                                                   // or is it -2 and -2??
+
+    // NOTE: This should mby be set to -1 and -1 when not using textures
+    // or is it -2 and -2??
+    const sycl::vec<float, 2> offsetpt(ix - 1.5, iy - 1.5f);
+    // const sycl::vec<float, 2> offsetpt(ix - 2, iy + 1);
 
     // The following 2 lines were the primary bottleneck of this kernel
     // const float ptx = csbp * offsetptx - ssbp * offsetpty + x;
@@ -92,7 +116,7 @@ static inline void ext_desc_loop_sub(const float ang,
     // const float pty = ::fmaf(csbp, offsetpt.y(), ::fmaf(ssbp, offsetpt.x(), y));
 
     const float ptx = sycl::fma(csbp, offsetpt.x(), sycl::fma(-ssbp, offsetpt.y(), x));
-    const float pty = sycl::fma(csbp, offsetpt.y(), sycl::fma(-ssbp, offsetpt.x(), y));
+    const float pty = sycl::fma(csbp, offsetpt.y(), sycl::fma(ssbp, offsetpt.x(), y));
 
     // Less precise version (of ^) BUT FASTER!!
     // const float ptx = sycl::mad(csbp, offsetpt.x(), sycl::mad(-ssbp, offsetpt.y(), x));
@@ -109,6 +133,32 @@ static inline void ext_desc_loop_sub(const float ang,
     const int hy = ymax - ymin + 1;
     const int loops = wx * hy;
 
+    // if(x == XPOS && y == YPOS)
+    // {
+    //     sycl::ext::oneapi::experimental::printf(
+    //       "ang=%.3f | cos=%.3f sin=%.3f | csbp=%.3f ssbp=%.3f | crsbp=%.3f srsbp=%.3f | offset=(%.3f,%.3f) | "
+    //       "pt=(%.3f,%.3f) | bsz=%.3f | \nx=[%d,%d] y=[%d,%d] | wx=%d hy=%d | loops=%d\n\n",
+    //       ang,
+    //       cos_t,
+    //       sin_t,
+    //       csbp,
+    //       ssbp,
+    //       crsbp,
+    //       srsbp,
+    //       offsetpt.x(),
+    //       offsetpt.y(),
+    //       ptx,
+    //       pty,
+    //       bsz,
+    //       xmin,
+    //       xmax,
+    //       ymin,
+    //       ymax,
+    //       wx,
+    //       hy,
+    //       loops);
+    // }
+
     float dpt[9] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
     // TODO: This code does not work for both sub_groups and work_group so need a spearate version for work_groups for
@@ -122,6 +172,10 @@ static inline void ext_desc_loop_sub(const float ang,
 
         const int ii = i / wx + ymin;
         const int jj = i % wx + xmin;
+
+        // if(x == XPOS && y == YPOS)
+        //     sycl::ext::oneapi::experimental::printf(
+        //       "ii = %d / %d + %d = %d\n jj = %d / %d + %d = %d\n\n", i, wx, ymin, ii, i, wx, xmin, jj);
 
         // const float2 d = make_float2(jj - ptx, ii - pty);
 
@@ -144,6 +198,22 @@ static inline void ext_desc_loop_sub(const float ang,
             float mod;
             float th;
 
+            // if(x == XPOS && y == YPOS)
+            // {
+            //     // if(it.get_local_linear_id() == 40)
+            //     if(jj == 99 && ii == 135 && it.get_local_linear_id() == 40)
+            //         sycl::ext::oneapi::experimental::printf(
+            //           "block = %d --- radient center read (%d, %d) w=%d - h=%d - level = %d\n",
+            //           (int)it.get_global_linear_id(),
+            //           jj,
+            //           ii,
+            //           width,
+            //           height,
+            //           level);
+            //     // if(it.get_local_linear_id() == 40)
+            //     if(jj == 99 && ii == 135 && it.get_local_linear_id() == 40)
+            //         get_gradient(mod, th, jj, ii, width, height, data, level);
+            // }
             get_gradient(mod, th, jj, ii, width, height, data, level);
 
             const sycl::vec<float, 2> dn = n + offsetpt;
@@ -265,6 +335,7 @@ class Ext_desc_loop
       : dct(dct)
       , dbuf(dbuf)
       , dobuf(dobuf)
+      , data(data)
       , octave(octave)
       , width(width)
       , height(height)
@@ -272,7 +343,11 @@ class Ext_desc_loop
 
     inline void operator()(sycl::nd_item<3> it) const
     {
-        const int o_offset = dct->ori_ps[octave] + it.get_local_id(2);
+        const int o_offset = dct->ori_ps[octave] + it.get_group(2);
+        // if(octave == 1 && it.get_local_id(2) == 6)
+        // {
+        //     sycl::ext::oneapi::experimental::printf("Data value ja %f", data);
+        // }
         Descriptor* desc = &dbuf->desc[o_offset];
         const int ext_idx = dobuf->feat_to_ext_map[o_offset];
         Extremum* ext = dobuf->extrema + ext_idx;
@@ -301,7 +376,7 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj)
     // block.y = 4;
     // block.z = 4;
 
-    sycl::range global{4, 4, static_cast<size_t>(_hct.ori_ct[octave])};
+    sycl::range global{4, 4, static_cast<size_t>(_hct.ori_ct[octave] * 32)};
     sycl::range local{4, 4, 32};
 #else
     // block.x = 32;
@@ -314,6 +389,15 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj)
 
     // ext_desc_loop<<<grid, block, 0, oct_obj.getStream()>>>(
     //   octave, oct_obj.getDataTexPoint(), oct_obj.getWidth(), oct_obj.getHeight());
+
+    fprintf(stderr,
+            "global(%zu, %zu, %zu) -- local(%zu, %zu, %zu)\n\n",
+            global[0],
+            global[1],
+            global[2],
+            local[0],
+            local[1],
+            local[2]);
 
     _device_queue.parallel_for(
       sycl::nd_range{global, local},
@@ -342,7 +426,7 @@ void popsift::Pyramid::descriptors(const Config& conf)
             if(conf.getDescMode() == Config::Loop)
             {
                 // Default
-                this->start_ext_desc_loop(octave, oct_obj);
+                start_ext_desc_loop(octave, oct_obj);
             }
             else if(conf.getDescMode() == Config::VLFeat_Desc)
             {
@@ -356,4 +440,53 @@ void popsift::Pyramid::descriptors(const Config& conf)
             // cuda::event_wait(oct_obj.getEventDescDone(), _download_stream, __FILE__, __LINE__);
         }
     }
+
+    if(_hct.ori_total == 0)
+    {
+        // cerr << "Warning: no descriptors extracted" << endl;
+        fprintf(stderr, "Warning: no descriptors extracted\n");
+        return;
+    }
+    // dim3 block;
+    // dim3 grid;
+    // grid.x = popsift::grid_divide(_hct.ori_total, 32);
+    // block.x = 32;
+    // block.y = 32;
+    // block.z = 1;
+
+    sycl::range global{32, static_cast<size_t>(popsift::grid_divide(_hct.ori_total, 32))};
+    sycl::range local{32, 32};
+
+    if(conf.getUseRootSift())
+    {
+        // DEFAULT
+
+        _device_queue.wait(); // should use events instead
+
+        _device_queue.parallel_for(sycl::nd_range{global, local},
+                                   Normalize_histogram<NormalizeRootSift>(_dbuf_host.desc, _d_consts, _hct.ori_total));
+
+        // normalize_histogram<NormalizeRootSift><<<grid, block, 0, _download_stream>>>();
+        // POP_SYNC_CHK;
+    }
+    else
+    {
+        // normalize_histogram<NormalizeL2><<<grid, block, 0, _download_stream>>>();
+        // POP_SYNC_CHK;
+    }
+
+    _device_queue.wait();
+
+    // // START OF PRINT OUT THAT I DID NOT BOTHER TO FINISH
+    // _device_queue.single_task([=, dct = _dct]() {
+    //     sycl::ext::oneapi::experimental::printf("\n\n");
+    //
+    //     for(int i = 0; i < dct->ori_total; ++i)
+    //     {
+    //         for(int j = 0; j < 128; ++j)
+    //         {
+    //             sycl::ext::oneapi::experimental::printf();
+    //         }
+    //     }
+    // })
 }
