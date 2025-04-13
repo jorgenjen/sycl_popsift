@@ -176,6 +176,8 @@ class Pyramid
 
     void descriptors(const Config& conf);
 
+    inline void start_ext_desc_loop(const int octave, Octave& oct_obj);
+
     sycl::event readDescCountersFromDevice();
     // void readDescCountersFromDevice(cudaStream_t s);
     void writeDescCountersToDevice();

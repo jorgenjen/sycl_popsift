@@ -2,11 +2,10 @@
 
 // #include "sycl/queue.hpp"
 // #include "sycl/sycl.hpp"
+#include <sycl/sycl.hpp>
 
-namespace popsift {
-namespace sycl_common {
-
-void print_region(
+// Convinience debugging/verification function
+void popsift::sycl_common::print_region(
   float* ptr, const char* identifier, int start_x, int end_x, int start_y, int end_y, int width, sycl::queue Q)
 {
     int str_len = std::strlen(identifier) + 1;
@@ -52,6 +51,4 @@ void print_region(
     //      });
     //  })
     //   .wait();
-}
-}
 }

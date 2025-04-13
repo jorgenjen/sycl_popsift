@@ -468,6 +468,8 @@ inline bool find_extrema_in_dog_sub(float** dog,
         D.x() = scalbnf(x2y1z1 - x0y1z1, -1);
         D.y() = scalbnf(x1y2z1 - x1y0z1, -1);
         D.z() = scalbnf(x1y1z2 - x1y1z0, -1);
+
+        // TODO: Use sycl::ldexp(x, k) instead it also does x * 2^k same as scalbnf but is sycl and not std
 #else
 
         D.x() = 0.5f * (x2y1z1 - x0y1z1);

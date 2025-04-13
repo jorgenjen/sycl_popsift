@@ -60,6 +60,7 @@ inline float divide(const float& a, const float& b)
 }
 
 // base e exponential of x
+// TODO: Make this into a constexpr if statement instead of switch to ensure it's done at compile time
 template<int half>
 inline float exp(const float& x)
 {
@@ -888,6 +889,10 @@ void Pyramid::orientation(const Config& conf)
     _device_queue.wait(); // Don't think there are any... but we'll see
     // Could just for sor range for this (unless I need work_grop/sub_group)
 
+    // NOTE: We need num_orientation hence we need to wait for prev kernel could try to split up into octave but not
+    // sure if that would make it faster Could try full size for first octave and half size kernel for the reset as the
+    // earlier octaves always have more extremas than the later octaves
+
     sycl::range local_prefix{32, 32};
     sycl::range global_prefix{32, 32};
 
@@ -908,13 +913,20 @@ void Pyramid::orientation(const Config& conf)
 
     //
 
-    _device_queue.single_task([=, dobuf = _dobuf, dct = _dct]() {
-        // for(int i = 0; i < MAX_OCTAVES; ++i)
-        // {
-        // Extremum* ext = &dobuf->extrema[hct.ext_ps[octave] + i];
-
-        sycl::ext::oneapi::experimental::printf(
-          "dct->ori_total = %d, dct->ext_total = %d\n", dct->ori_total, dct->ext_total);
-        // }
-    });
+    // _device_queue.single_task([=, dobuf = _dobuf, dct = _dct]() {
+    //     // for(int i = 0; i < MAX_OCTAVES; ++i)
+    //     // {
+    //     // Extremum* ext = &dobuf->extrema[hct.ext_ps[octave] + i];
+    //
+    //     sycl::ext::oneapi::experimental::printf(
+    //       "dct->ori_total = %d, dct->ext_total = %d\n", dct->ori_total, dct->ext_total);
+    //     // }
+    //
+    //     for(int i = 0; i < dct->ori_total; ++i)
+    //     {
+    //         // sycl::ext::oneapi::experimental::printf(" \n", dct->ori_total, dct->ext_total);
+    //         sycl::ext::oneapi::experimental::printf(
+    //           "i = %d --> dobuf.feat_to_ext_map = %d\n", i, dobuf->feat_to_ext_map[i]);
+    //     }
+    // });
 }

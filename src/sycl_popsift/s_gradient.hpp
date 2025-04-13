@@ -7,9 +7,13 @@
  */
 #pragma once
 
-#include "sycl_popsift/sift_constants.hpp"
+// #include "sycl_popsift/sift_constants.hpp"
 
 // #include <cinttypes>
+#include <sycl/sycl.hpp>
+// #include <sycl/ext/intel/math.hpp> // ilncluding this one here instead of #include <sycl/ext/oneapi/common/math.hpp>
+// to avoid conflicts #include <sycl/ext/oneapi/common/algorithm.hpp> // For sycl::clamp, sycl::min, sycl::max
+
 #include <cstdio>
 
 // Should probably not have this as it's own file as I will probably not have many versions like the cuda code
@@ -34,15 +38,30 @@ namespace popsift {
  * textures. The reason is that readTex must add 0.5 for coordinates in
  * both cases to access the expected pixel.
  */
-// static inline void get_gradient(float& grad, float& theta, const int x, const int y, const float* leveled_layer)
-// {
-//     // float dx = readTex(layer, x + 1.0f, y, level) - readTex(layer, x - 1.0f, y, level);
-//     // float dy = readTex(layer, x, y + 1.0f, level) - readTex(layer, x, y - 1.0f, level);
-//     float dx = readTex(layer, x + 1.0f, y, level) - readTex(layer, x - 1.0f, y, level);
-//     float dy = readTex(layer, x, y + 1.0f, level) - readTex(layer, x, y - 1.0f, level);
-//     grad = hypotf(dx, dy); // __fsqrt_rz(dx*dx + dy*dy);
-//     theta = atan2f(dy, dx);
-// }
+static inline void get_gradient(
+  float& grad, float& theta, const int x, const int y, const int width, const int height, float** data, const int level)
+{
+    // float dx = readTex(layer, x + 1.0f, y, level) - readTex(layer, x - 1.0f, y, level);
+    // float dy = readTex(layer, x, y + 1.0f, level) - readTex(layer, x, y - 1.0f, level);
+
+    // Not sure if we need clamping? Think the extremas are not along the edges and hence shoudl be fine?
+
+    // TODO: Look into if we need clamping or not (currently using to be safe)
+
+    const int safe_x = sycl::clamp(x, 0, width - 1);
+    const int safe_y = sycl::clamp(y, 0, height - 1);
+
+    const int right_x = sycl::min(x + 1, width - 1) + safe_y * width;
+    const int left_x = sycl::max(safe_x - 1, 0) + safe_y * width;
+
+    const int upper_y = safe_x + sycl::min(safe_y + 1, height - 1) * width;
+    const int lower_y = safe_x + sycl::max(safe_y - 1, 0) * width;
+
+    float dx = data[level][right_x] - data[level][left_x];
+    float dy = data[level][upper_y] - data[level][lower_y];
+    grad = sycl::hypot(dx, dy);
+    theta = sycl::atan2(dy, dx);
+}
 
 /* A version of get_gradiant that works for a (32,1,1) threadblock
  * and pulls data to shared memory before computing. Data is pulled

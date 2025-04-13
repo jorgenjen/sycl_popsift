@@ -114,13 +114,9 @@ T* malloc_sharedT(size_t num, const char* file, int line, const char* error_mess
         POP_FATAL_FL(ss.str(), file, line);
     }
     return ptr;
-
-    // TODO: Consider adding debug option like this
-    // #ifdef DEBUG_INIT_DEVICE_ALLOCATIONS
-    //     popsift::cuda::memset_sync(*ptr, 0, sz, file, line);
-    // #endif // NDEBUG
 }
 
+// TODO: Add pinned memory version for host meomory (is an extension)
 template<typename T>
 T* malloc_hostT(size_t num, const char* file, int line, const char* error_message, sycl::queue& Q)
 {
@@ -162,7 +158,6 @@ T* alloc_aligned_hostT(
 
 namespace common {
 
-// Could also use sycl::malloc_host but that is also accsesible on device so might be overhead
 template<typename T>
 T* new_hostT(int num, const char* file, int line, const char* error_message)
 {
@@ -181,4 +176,5 @@ T* new_hostT(int num, const char* file, int line, const char* error_message)
 }
 
 } // namespace common
+
 } // namespace popsift

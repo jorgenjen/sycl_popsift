@@ -17,6 +17,9 @@ add_library(
   sycl_popsift/gauss_filter.hpp
   sycl_popsift/s_extrema.cpp
   sycl_popsift/s_orientation.cpp
+  sycl_popsift/s_desc_loop.cpp
+  # sycl_popsift/s_desc_loop.hpp
+  sycl_popsift/sift_desc.cpp
   sycl_popsift/non_sycl/sift_conf.cpp
   sycl_popsift/non_sycl/sift_conf.hpp
   sycl_popsift/common/warp_bitonic_sort.hpp
