@@ -1,11 +1,13 @@
 #include "sycl_popsift/sift_pyramid.hpp"
 
 #include "sycl/usm.hpp"
+#include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/common/debug_macros.hpp"
-#include "sycl_popsift/features.h"
+#include "sycl_popsift/features.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/s_image.hpp" // not sure if needed to include here aswell clean up #includes at some point
 #include "sycl_popsift/sift_constants.hpp"
+#include "sycl_popsift/sift_extremum.h"
 
 #include <cmath>
 #include <cstdio>
@@ -261,6 +263,66 @@ void Pyramid::step2(const Config& conf, sycl::event d_consts_write)
 //         fet.orientation[ori] = 0;
 //     }
 // }
+
+class Prep_featrues
+{
+  private:
+    DevBuffers* dobuf;
+    Descriptor* descriptor_base;
+    int up_fac;
+    const int extrema_total;
+
+  public:
+    Prep_featrues(DevBuffers* dobuf, Descriptor* descriptor_base, int up_fac, const int extrema_total)
+      : dobuf(dobuf)
+      , descriptor_base(descriptor_base)
+      , up_fac(up_fac)
+      , extrema_total(extrema_total)
+    {}
+
+    inline void operator()(sycl::nd_item<1> it) const
+    {
+        // could be const
+        // const int offset = it.get_group(0) * it.get_local_range(0) + it.get_local_id(0);
+        const int offset = it.get_global_linear_id();
+
+        // if(offset != linear)
+        //     sycl::ext::oneapi::experimental::printf("\n\n\tOffset and linear is the same %d == %d\n", offset,
+        //     linear);
+
+        if(offset >= extrema_total)
+            return;
+
+        const Extremum& ext = dobuf->extrema[offset];
+        Feature& fet = dobuf->features[offset];
+
+        const int octave = ext.octave;
+        const float xpos = ext.xpos * sycl::pow(2.0f, float(octave - up_fac));
+        const float ypos = ext.ypos * sycl::pow(2.0f, float(octave - up_fac));
+        const float sigma = ext.sigma * sycl::pow(2.0f, float(octave - up_fac));
+        const int num_ori = ext.num_ori;
+
+        fet.xpos = xpos;
+        fet.ypos = ypos;
+        fet.sigma = sigma;
+        fet.num_ori = num_ori;
+
+        fet.debug_octave = octave;
+
+        int ori;
+        for(ori = 0; ori < num_ori; ori++)
+        {
+            fet.desc[ori] = descriptor_base + (ext.idx_ori + ori);
+            fet.orientation[ori] = ext.orientation[ori];
+        }
+        for(; ori < ORIENTATION_MAX_COUNT; ori++)
+        {
+            fet.desc[ori] = nullptr;
+            fet.orientation[ori] = 0;
+        }
+    }
+};
+
 //
 FeaturesHost* Pyramid::get_descriptors(const Config& conf)
 {
@@ -270,35 +332,30 @@ FeaturesHost* Pyramid::get_descriptors(const Config& conf)
                                          // so that will be no wait here
                                          // just wait on the event but should be done a long time ago
 
-    FeaturesHost* features = new FeaturesHost(_hct.ext_total, _hct.ori_total);
+    FeaturesHost* features = new FeaturesHost(_device_queue, _hct.ext_total, _hct.ori_total);
 
     if(_hct.ext_total == 0 || _hct.ori_total == 0)
     {
         return features;
     }
 
-    return features;
+    // Static_cast should be moved to grid_divide funciton for nicer usage
+    // as it's always used in relation to range which only takes size_t
+    sycl::range global{static_cast<size_t>(grid_divide(_hct.ext_total, 32))};
+    sycl::range local{32};
+    sycl::event getDescEvent = _device_queue.parallel_for(
+      sycl::nd_range(global, local), Prep_featrues(_dobuf, features->getDescriptors(), up_fac, _hct.ext_total));
 
-    // dim3 grid(grid_divide(hct.ext_total, 32));
-    // prep_features<<<grid, 32, 0, _download_stream>>>(features->getDescriptors(), up_fac);
-    // POP_SYNC_CHK;
-    //
-    // features->pin();
-    // popcuda_memcpy_async(features->getFeatures(),
-    //                      dobuf_shadow.features,
-    //                      hct.ext_total * sizeof(Feature),
-    //                      cudaMemcpyDeviceToHost,
-    //                      _download_stream);
-    //
-    // popcuda_memcpy_async(features->getDescriptors(),
-    //                      dbuf_shadow.desc,
-    //                      hct.ori_total * sizeof(Descriptor),
-    //                      cudaMemcpyDeviceToHost,
-    //                      _download_stream);
-    // cudaStreamSynchronize(_download_stream);
-    // features->unpin();
-    //
-    // return features;
+    sycl::event featuresCopyEvent = _device_queue.memcpy(
+      features->getFeatures(), _dobuf_host.features, _hct.ext_total * sizeof(Feature), getDescEvent);
+
+    sycl::event descCopyEvent = _device_queue.memcpy(
+      features->getDescriptors(), _dbuf_host.desc, _hct.ori_total * sizeof(Descriptor), getDescEvent);
+
+    // TODO: Remove these waits -- poiter is still valid eventhough the data is not in it
+    featuresCopyEvent.wait();
+    descCopyEvent.wait();
+    return features;
 }
 
 void Pyramid::reset_extrema_mgmt()

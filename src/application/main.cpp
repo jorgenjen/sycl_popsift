@@ -1,3 +1,5 @@
+#include "sycl_popsift/features.hpp"
+
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
@@ -18,7 +20,9 @@
 #include <sycl_popsift/popsift.hpp>
 #include <unistd.h>
 
+#include <chrono> // only for test
 #include <list>
+#include <thread> // For testing
 
 #ifdef USE_DEVIL
 #include <IL/il.h>
@@ -26,6 +30,9 @@
 #endif
 
 using namespace std;
+
+static bool write_as_uchar = false;
+static bool write_features = true;
 
 // should probably use a similar options struct as popsift in the future
 // revisions just for initial layout
@@ -163,6 +170,22 @@ SiftJob* process_image(const std::string& inputFile, PopSift& PopSift)
 #endif
 }
 
+void read_job(SiftJob* job)
+{
+    popsift::FeaturesHost* feature_list = job->getHost(); // wait for job to complete
+
+    cerr << "Number of feature points: " << feature_list->getFeatureCount()
+         << " number of feature descriptors: " << feature_list->getDescriptorCount() << endl;
+
+    // if(write_features)
+    // {
+    //     std::ofstream of("output-features.txt");
+    //     feature_list->print(of, write_as_uchar);
+    // }
+
+    delete feature_list;
+}
+
 int main(int argc, char** argv)
 {
     popsift::Config config; // Init with default parameters
@@ -238,10 +261,21 @@ int main(int argc, char** argv)
         jobs.pop();
         if(job)
         {
-            int val = job->getHost();
-            std::cout << "The value resturned from future/promise: " << val << std::endl;
+            // read_job(job);
+
+            popsift::FeaturesHost* feature_list = job->getHost(); // wait for job to complete
+
+            cerr << "Number of feature points: " << feature_list->getFeatureCount()
+                 << " number of feature descriptors: " << feature_list->getDescriptorCount() << endl;
 
             delete job;
+
+            std::thread t([feature_list] { // Note: No `&`!
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                fprintf(stderr, "\n\tDeleting feature list now!!\n");
+                delete feature_list; // Safe: The pointer is copied.
+            });
+            t.detach();
         }
     }
 

@@ -8,6 +8,7 @@
 #pragma once
 
 #include "sift_constants.hpp"
+#include "sycl/queue.hpp"
 
 #include <iostream>
 #include <vector>
@@ -68,12 +69,13 @@ class FeaturesBase
  */
 class FeaturesHost : public FeaturesBase
 {
+    sycl::queue _device_queue;
     Feature* _ext;
     Descriptor* _ori;
 
   public:
     FeaturesHost();
-    FeaturesHost(int num_ext, int num_ori);
+    FeaturesHost(sycl::queue Q, int num_ext, int num_ori);
     ~FeaturesHost() override;
 
     typedef Feature* F_iterator;
@@ -85,8 +87,8 @@ class FeaturesHost : public FeaturesBase
     inline F_const_iterator end() const { return &_ext[size()]; }
 
     void reset(int num_ext, int num_ori);
-    void pin();
-    void unpin();
+    // void pin();
+    // void unpin();
 
     inline Feature* getFeatures() { return _ext; }
     inline Descriptor* getDescriptors() { return _ori; }

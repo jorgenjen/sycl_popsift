@@ -19,7 +19,7 @@ add_library(
   sycl_popsift/sift_extremum.h
   sycl_popsift/s_orientation.cpp
   sycl_popsift/features.cpp
-  sycl_popsift/features.h
+  sycl_popsift/features.hpp
   # sycl_popsift/s_desc_loop.cpp // moved into desc
   # sycl_popsift/s_desc_loop.hpp // moved into desc
   sycl_popsift/sift_desc.cpp

@@ -26,11 +26,11 @@ class Pyramid;
 class SiftJob
 {
     // TODO(jorgejen): Look into using these feature constructs
-    // std::promise<popsift::FeaturesBase*> _p;
-    // std::future <popsift::FeaturesBase*> _f;
+    std::promise<popsift::FeaturesBase*> _p;
+    std::future<popsift::FeaturesBase*> _f;
     // NOTE: Using these simple integer features to have same pattern as popsift
-    std::promise<int> _p;
-    std::future<int> _f;
+    // std::promise<int> _p;
+    // std::future<int> _f;
 
     int _w;
     int _h;
@@ -42,7 +42,7 @@ class SiftJob
     std::exception_ptr _err;
     sycl::event _img_transfer_event; // pointer to event that we update
 
-    friend class PopSift;
+    friend class PopSift; // Gives popsift class full access to SiftJob class
 
   public:
     /**
@@ -62,11 +62,11 @@ class SiftJob
      * @brief
      * @return
      */
-    // popsift::FeaturesHost* getHost();
+    popsift::FeaturesHost* getHost();
     // popsift::FeaturesDev*  getDev();
 
-    int getHost(); // currently using int to have same pattern of
-                   // initialization and such
+    // int getHost(); // currently using int to have same pattern of
+    // initialization and such
 
     void setImg(popsift::Image* img, const float& upscaleFactor);
 
@@ -78,7 +78,7 @@ class SiftJob
     // implmentation and do that
     void jobDone(int tmpRes);
     /** fulfill the promise */
-    // void setFeatures( popsift::FeaturesBase* f );
+    void setFeatures(popsift::FeaturesBase* f);
     //
     // void setError(std::exception_ptr ptr);
 

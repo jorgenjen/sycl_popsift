@@ -8,6 +8,7 @@
 #include "sycl_popsift/sift_constants.hpp"
 
 #include <sycl/sycl.hpp>
+#include <unistd.h> // just for sleep test
 
 #include <cmath> // ceilf
 #include <cstdio>
@@ -15,7 +16,6 @@
 #include <iostream>
 #include <sstream>
 #include <vector>
-
 // using namespace std;
 using std::cout;
 using std::endl;
@@ -180,6 +180,7 @@ void PopSift::uninit()
 
     fprintf(stderr, "\n\tUninted the pipe\n");
 
+    sleep(4);
     _isInit = false;
 }
 
@@ -448,13 +449,23 @@ void PopSift::extractDownloadLoop()
         // p._pyramid->step2(_config, {sycl::event()}, _d_consts_write);
         p._pyramid->step2(_config, _d_consts_write);
 
+        // Copy featrues to host -- step 3
         popsift::FeaturesHost* features = p._pyramid->get_descriptors(_config);
+
+        bool log_to_file = (_config.getLogMode() == popsift::Config::All);
+        if(log_to_file)
+        {
+            // Log to file functions
+        }
+
+        // Fufill the promise
+        job->setFeatures(features);
 
         _device_queue.wait_and_throw();
         fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");
         fflush(stdout);
         fflush(stderr);
-        job->jobDone(5);
+        // job->jobDone(5);
     }
 
     // _device_queue.wait(); // Having a wait here before I have all events configured properly
@@ -490,12 +501,16 @@ SiftJob::~SiftJob()
 
 // To fufill promise temporary promise solution while I don't have a
 // featuresBase object to return
-void SiftJob::jobDone(int tmpRes) { _p.set_value(tmpRes); }
+// void SiftJob::jobDone(int tmpRes) { _p.set_value(tmpRes); }
 
 // TMP function for testing structure
 void SiftJob::printJob() { std::printf("Width: %d -- height: %d\n", _w, _h); }
 
-int SiftJob::getHost() { return _f.get(); }
+// int SiftJob::getHost() { return _f.get(); }
+// int SiftJob::getHost() { return _f.get(); }
+
+// Do we need dynamic cast
+popsift::FeaturesHost* SiftJob::getHost() { return dynamic_cast<popsift::FeaturesHost*>(_f.get()); }
 
 void SiftJob::setImg(popsift::Image* img, const float& upscaleFactor)
 {
@@ -521,6 +536,8 @@ void SiftJob::setImg(popsift::Image* img, const float& upscaleFactor)
 // Not sure if this is a good way of doing it
 // just doing it to have same methods as popsift code
 popsift::Image* SiftJob::getImg() { return _img; }
+
+void SiftJob::setFeatures(popsift::FeaturesBase* f) { _p.set_value(f); }
 
 void PopSift::Pipe::uninit()
 {

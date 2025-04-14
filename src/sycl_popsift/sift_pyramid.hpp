@@ -9,7 +9,7 @@
 
 // #include "features.h"
 // #include "sift_constants.h"
-#include "sycl_popsift/features.h"
+#include "sycl_popsift/features.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/s_image.hpp"
