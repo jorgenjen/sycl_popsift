@@ -48,6 +48,6 @@ echo -e "\n\n\n Nr. 17 Done\n\n\n"
 echo -e "\n\n\n Nr. 18 Done\n\n\n"
 ./popsift-demo --input-file ../../sample_640×426.pgm || exit 1
 echo -e "\n\n\n Nr. 19 Done\n\n\n"
-./popsift-demo --input-file ../../sample_640×426.pgm || exit 1
+time ./popsift-demo --input-file ../../sample_640×426.pgm || exit 1
 echo -e "\n\n\n Nr. 20 Done\n\n\n"
 

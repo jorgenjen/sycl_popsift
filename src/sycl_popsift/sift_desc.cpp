@@ -34,10 +34,6 @@ static inline void ext_desc_loop_sub(const float ang,
                                      sycl::nd_item<3> it)
 {
 #ifndef BLOCK_3_DIMS
-    // const int ix = threadIdx.y;
-    // const int iy = threadIdx.z;
-    // const int tile = (((iy << 2) + ix) << 3); // base of the 8 floats written by this group of 16 threads
-
     const int ix = it.get_local_id(1);
     const int iy = it.get_local_id(0);
     const int tile = (((iy << 2) + ix) << 3); // base of the 8 floats written by this group of 16 threads
@@ -58,34 +54,13 @@ static inline void ext_desc_loop_sub(const float ang,
     const float sig = ext->sigma;
     const float SBP = sycl::fabs(DESC_MAGNIFY * sig);
 
-// #define XPOS 26.643719f
-// #define YPOS 185.853836f
 #define XPOS 90.565437f
 #define YPOS 137.517151f
-
-    // if(x == 451.221741f && y == 305.580322f)
-    // if(x == XPOS)
-    // if(x == XPOS && y == YPOS)
-    // {
-    //     // sycl::ext::oneapi::experimental::printf("Tile = %d ", tile);
-    //     sycl::ext::oneapi::experimental::printf("idx (%d, %d, %d) -- x = %f y = %f \n",
-    //                                             (int)it.get_local_id(2),
-    //                                             (int)it.get_local_id(1),
-    //                                             (int)it.get_local_id(0),
-    //                                             x,
-    //                                             y);
-    // }
 
     if(SBP == 0)
     {
         return;
     }
-
-    // const float cos_t = cosf(ang);
-    // const float sin_t = sinf(ang);
-    // float cos_t;
-    // float sin_t;
-    // __sincosf(ang, &sin_t, &cos_t);
 
 #define use_sincos true
 #if use_sincos
@@ -102,27 +77,18 @@ static inline void ext_desc_loop_sub(const float ang,
     const float crsbp = cos_t / SBP;
     const float srsbp = sin_t / SBP;
 
-    // const float2 offsetpt = make_float2(ix - 1.5f, iy - 1.5f);
-
-    // NOTE: This should mby be set to -1 and -1 when not using textures
-    // or is it -2 and -2??
     const sycl::vec<float, 2> offsetpt(ix - 1.5, iy - 1.5f);
-    // const sycl::vec<float, 2> offsetpt(ix - 2, iy + 1);
 
-    // The following 2 lines were the primary bottleneck of this kernel
-    // const float ptx = csbp * offsetptx - ssbp * offsetpty + x;
-    // const float pty = csbp * offsetpty + ssbp * offsetptx + y;
-    // const float ptx = ::fmaf(csbp, offsetpt.x(), ::fmaf(-ssbp, offsetpt.y(), x));
-    // const float pty = ::fmaf(csbp, offsetpt.y(), ::fmaf(ssbp, offsetpt.x(), y));
-
+#define USE_MAD true
+#if USE_MAD
+    // Less precise version (of fma) BUT FASTER!!
+    const float ptx = sycl::mad(csbp, offsetpt.x(), sycl::mad(-ssbp, offsetpt.y(), x));
+    const float pty = sycl::mad(csbp, offsetpt.y(), sycl::mad(-ssbp, offsetpt.x(), y));
+#else
     const float ptx = sycl::fma(csbp, offsetpt.x(), sycl::fma(-ssbp, offsetpt.y(), x));
     const float pty = sycl::fma(csbp, offsetpt.y(), sycl::fma(ssbp, offsetpt.x(), y));
+#endif
 
-    // Less precise version (of ^) BUT FASTER!!
-    // const float ptx = sycl::mad(csbp, offsetpt.x(), sycl::mad(-ssbp, offsetpt.y(), x));
-    // const float pty = sycl::mad(csbp, offsetpt.y(), sycl::mad(-ssbp, offsetpt.x(), y));
-
-    // CURRENT LOCAITON OF CONVERSION
     const float bsz = sycl::fabs(csbp) + sycl::fabs(ssbp);
     const int xmin = sycl::max(1, (int)sycl::floor(ptx - bsz));
     const int ymin = sycl::max(1, (int)sycl::floor(pty - bsz));
@@ -132,33 +98,6 @@ static inline void ext_desc_loop_sub(const float ang,
     const int wx = xmax - xmin + 1;
     const int hy = ymax - ymin + 1;
     const int loops = wx * hy;
-
-    // THESE VALUEL ARE FINE!!!
-    // if(x == XPOS && y == YPOS)
-    // {
-    //     sycl::ext::oneapi::experimental::printf(
-    //       "ang=%.3f | cos=%.3f sin=%.3f | csbp=%.3f ssbp=%.3f | crsbp=%.3f srsbp=%.3f | offset=(%.3f,%.3f) | "
-    //       "pt=(%.3f,%.3f) | bsz=%.3f | \nx=[%d,%d] y=[%d,%d] | wx=%d hy=%d | loops=%d\n\n",
-    //       ang,
-    //       cos_t,
-    //       sin_t,
-    //       csbp,
-    //       ssbp,
-    //       crsbp,
-    //       srsbp,
-    //       offsetpt.x(),
-    //       offsetpt.y(),
-    //       ptx,
-    //       pty,
-    //       bsz,
-    //       xmin,
-    //       xmax,
-    //       ymin,
-    //       ymax,
-    //       wx,
-    //       hy,
-    //       loops);
-    // }
 
     float dpt[9] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
@@ -174,52 +113,21 @@ static inline void ext_desc_loop_sub(const float ang,
         const int ii = i / wx + ymin;
         const int jj = i % wx + xmin;
 
-        // if(x == XPOS && y == YPOS)
-        //     sycl::ext::oneapi::experimental::printf(
-        //       "ii = %d / %d + %d = %d\n jj = %d / %d + %d = %d\n\n", i, wx, ymin, ii, i, wx, xmin, jj);
-
-        // const float2 d = make_float2(jj - ptx, ii - pty);
-
         const sycl::vec<float, 2> d(jj - ptx, ii - pty);
 
-        // const float nx = crsbp * dx + srsbp * dy;
-        // const float ny = crsbp * dy - srsbp * dx;
-        // const float2 n = make_float2(::fmaf(crsbp, d.x, srsbp * d.y), ::fmaf(crsbp, d.y, -srsbp * d.x));
+#if USE_MAD
+        const sycl::vec<float, 2> n(sycl::mad(crsbp, d.x(), srsbp * d.y()), sycl::mad(crsbp, d.y(), -srsbp * d.x()));
+#else
         const sycl::vec<float, 2> n(sycl::fma(crsbp, d.x(), srsbp * d.y()), sycl::fma(crsbp, d.y(), -srsbp * d.x()));
-        // sycl::vec<2> n(sycl::mad(crsbp, d.x(), srsbp * d.y()), sycl::mad(crsbp, d.y(), -srsbp * d.x())); // faster
-        // version
-        // const float2 nn = abs(n);
+#endif
         const sycl::vec<float, 2> nn = sycl::fabs(n); // does element wise absolute of n vector
 
-        // #############################################################################
-        // ###########################  CURRENTLY HERE  ################################
-        // #############################################################################
         if(nn.x() < 1.0f && nn.y() < 1.0f)
         {
             float mod;
             float th;
 
-            // if(x == XPOS && y == YPOS)
-            // {
-            //     // if(it.get_local_linear_id() == 40)
-            //     if(jj == 99 && ii == 135 && it.get_local_linear_id() == 40)
-            //         sycl::ext::oneapi::experimental::printf(
-            //           "block = %d --- radient center read (%d, %d) w=%d - h=%d - level = %d\n",
-            //           (int)it.get_global_linear_id(),
-            //           jj,
-            //           ii,
-            //           width,
-            //           height,
-            //           level);
-            //     // if(it.get_local_linear_id() == 40)
-            //     if(jj == 99 && ii == 135 && it.get_local_linear_id() == 40)
-            //         get_gradient(mod, th, jj, ii, width, height, data, level);
-            // }
-
-            if(x == XPOS && y == YPOS)
-                get_gradient(mod, th, jj, ii, width, height, data, level, false);
-            else
-                get_gradient(mod, th, jj, ii, width, height, data, level, false);
+            get_gradient(mod, th, jj, ii, width, height, data, level);
 
             // SEEMS TO BE CORRECT UP UNTIL THIS POINT JUST SMALL DEVIATIONS DUE TO FLOAT DIFFERENCES
 
@@ -268,26 +176,6 @@ static inline void ext_desc_loop_sub(const float ang,
 
             int fo = fo0 % DESC_BINS;
 
-            if(x == XPOS && y == YPOS)
-                sycl::ext::oneapi::experimental::printf("pos(%d, %d) dn=(%.3f,%.3f) ww=%.6f w=(%.3f,%.3f) wgt=%.6f "
-                                                        "th=%.6f tth=%.6f fo0=%d do0=%.6f wgt1=%.6f "
-                                                        "wgt2=%.6f fo=%d\n",
-                                                        jj,
-                                                        ii,
-                                                        dn.x(),
-                                                        dn.y(),
-                                                        ww,
-                                                        w.x(),
-                                                        w.y(),
-                                                        wgt,
-                                                        th,
-                                                        tth,
-                                                        fo0,
-                                                        do0,
-                                                        wgt1,
-                                                        wgt2,
-                                                        fo);
-
             // maf: multiply-add
             // _ru - round to positive infinity equiv to froundf since always >=0
             // dpt[fo] = __fmaf_ru(wgt1, wgt, dpt[fo]);         // dpt[fo]   += (wgt1*wgt);
@@ -302,38 +190,27 @@ static inline void ext_desc_loop_sub(const float ang,
             // asm volatile("fma.ru.f32 %0, %1, %2, %3;" : "=f"(dpt[fo]) : "f"(wgt1), "f"(wgt), "f"(dpt[fo]));
             // asm volatile("fma.ru.f32 %0, %1, %2, %3;" : "=f"(dpt[fo + 1]) : "f"(wgt2), "f"(wgt), "f"(dpt[fo + 1]));
 
-            // Precise version
-            // dpt[fo] = sycl::nextafter(sycl::fma(wgt1, wgt, dpt[fo]), INFINITY);
-            // dpt[fo + 1] = sycl::nextafter(sycl::fma(wgt2, wgt, dpt[fo + 1]), INFINITY);
+#if USE_MAD
 
             // Not sure if we need nextafter to try to do rounding to wards postiive infinity
             // it does however always round...
             dpt[fo] = sycl::nextafter(sycl::mad(wgt1, wgt, dpt[fo]), std::numeric_limits<float>::infinity());
             dpt[fo + 1] = sycl::nextafter(sycl::mad(wgt2, wgt, dpt[fo + 1]), std::numeric_limits<float>::infinity());
+#else
+            // Precise version
+            dpt[fo] = sycl::nextafter(sycl::fma(wgt1, wgt, dpt[fo]), std::numeric_limits<float>::infinity());
+            dpt[fo + 1] = sycl::nextafter(sycl::fma(wgt2, wgt, dpt[fo + 1]), std::numeric_limits<float>::infinity());
+#endif
         }
     }
-    // __syncthreads();
     sycl::group_barrier(it.get_group());
 
     dpt[0] += dpt[8];
 
-    /* reduction here */
     for(int i = 0; i < 8; i++)
     {
-        // dpt[i] += popsift::shuffle_down(dpt[i], 16);
-        // dpt[i] += popsift::shuffle_down(dpt[i], 8);
-        // dpt[i] += popsift::shuffle_down(dpt[i], 4);
-        // dpt[i] += popsift::shuffle_down(dpt[i], 2);
-        // dpt[i] += popsift::shuffle_down(dpt[i], 1);
-        // dpt[i] = popsift::shuffle(dpt[i], 0);
-
         dpt[i] = sycl::reduce_over_group(it.get_sub_group(), dpt[i], sycl::plus<float>());
     }
-
-    // if(threadIdx.x < 8)
-    // {
-    //     features[tile + threadIdx.x] = dpt[threadIdx.x];
-    // }
 
     // Write the 8 results asigning one work-item to do the job 24 does nothing here
     if(it.get_local_id(2) < 8)
@@ -343,7 +220,6 @@ static inline void ext_desc_loop_sub(const float ang,
 }
 
 // Uses the blured pyramid (not the DoG pyramid)
-
 class Ext_desc_loop
 {
   private:

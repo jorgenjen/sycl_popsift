@@ -88,8 +88,8 @@ PopSift::PopSift(const popsift::Config& config)
     std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
 
     // TODO(jorgejen): Setup these threads.
-    // _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
-    // _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
+    _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
+    _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
 
     if(_device_queue.is_in_order())
     {
@@ -369,7 +369,7 @@ void PopSift::uploadImages()
 
         // job->setImg( img );
         _pipe._queue_stage2.push(job);
-        break;
+        // break;
     }
     fprintf(stderr, "\n\n\t\tDone uploading\n\n");
     // Push nullptr to stage2 queue to make that one terminates aswell
@@ -563,10 +563,12 @@ void PopSift::allMainThread()
 #define break_in_uploadImages 1
 
 #if break_in_uploadImages
-    uploadImages();
+    // Seems to be fine  with thread setup :D
 
-    extractDownloadLoop();
-    _device_queue.wait_and_throw();
+    // uploadImages();
+    //
+    // extractDownloadLoop();
+    // _device_queue.wait_and_throw();
 
 #else
 
