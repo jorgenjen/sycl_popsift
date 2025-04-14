@@ -38,8 +38,15 @@ namespace popsift {
  * textures. The reason is that readTex must add 0.5 for coordinates in
  * both cases to access the expected pixel.
  */
-static inline void get_gradient(
-  float& grad, float& theta, const int x, const int y, const int width, const int height, float** data, const int level)
+static inline void get_gradient(float& grad,
+                                float& theta,
+                                const int x,
+                                const int y,
+                                const int width,
+                                const int height,
+                                float** data,
+                                const int level,
+                                bool do_print)
 {
     // float dx = readTex(layer, x + 1.0f, y, level) - readTex(layer, x - 1.0f, y, level);
     // float dy = readTex(layer, x, y + 1.0f, level) - readTex(layer, x, y - 1.0f, level);
@@ -49,7 +56,10 @@ static inline void get_gradient(
     // TODO: Look into if we need clamping or not (currently using to be safe)
     // SEEMS TO BE FINE WHEN NOT USING CLAMING
 
-#define TO_CLAMP true
+#define TO_CLAMP false
+
+#define XPOS 90.565437f
+#define YPOS 137.517151f
 
 #if TO_CLAMP
     const int safe_x = sycl::clamp(x, 0, width - 1);
@@ -63,13 +73,40 @@ static inline void get_gradient(
 
     float dx = data[level][right_x] - data[level][left_x];
     float dy = data[level][upper_y] - data[level][lower_y];
-#else
 
-    float dx = data[level][(x + 1) + y * width] - data[level][(x - 1) + y * width];
-    float dy = data[level][x + (y + 1) * width] - data[level][x + (y - 1) * width];
-#endif
     grad = sycl::hypot(dx, dy);
     theta = sycl::atan2(dy, dx);
+#else
+
+    // float dx = data[level][(x + 1) + y * width] - data[level][(x - 1) + y * width];
+    // float dy = data[level][x + (y + 1) * width] - data[level][x + (y - 1) * width];
+
+    float dx = data[level][x + 1 + y * width] - data[level][x - 1 + y * width];
+    float dy = data[level][x + (y + 1) * width] - data[level][x + (y - 1) * width];
+    grad = sycl::hypot(dx, dy);  // Hypotenuse -- sqrt(dx^2 + dy^2)
+    theta = sycl::atan2(dy, dx); // Inverse tangent of dy/dx
+    // theta = atan2f(dy, dx)       // if using non sycl verson as in orientatoin
+    // Need to include it in such a cas e cmath
+#endif
+
+    if(do_print)
+    {
+        // sycl::ext::oneapi::experimental::printf(
+        //   "\n\tx=%d y=%d || dx=%f - dy=%f || grad=%f - thetat=%f ||\n", x, y, dx, dy, grad, theta);
+        sycl::ext::oneapi::experimental::printf(
+          "\n\tx=%d y=%d lvl=%d || dx= %f - %f = %f || dy= %f - %f = %f  || grad=%f - thetat=%f ||\n",
+          x,
+          y,
+          level,
+          data[level][x + 1 + y * width],
+          data[level][x - 1 + y * width],
+          dx,
+          data[level][x + (y + 1) * width],
+          data[level][x + (y - 1) * width],
+          dy,
+          grad,
+          theta);
+    }
 }
 
 /* A version of get_gradiant that works for a (32,1,1) threadblock

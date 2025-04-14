@@ -6,10 +6,16 @@
 #include <sycl/sycl.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <list>
 #include <queue>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -177,11 +183,12 @@ void read_job(SiftJob* job)
     cerr << "Number of feature points: " << feature_list->getFeatureCount()
          << " number of feature descriptors: " << feature_list->getDescriptorCount() << endl;
 
-    // if(write_features)
-    // {
-    //     std::ofstream of("output-features.txt");
-    //     feature_list->print(of, write_as_uchar);
-    // }
+    if(write_features)
+    {
+        fprintf(stderr, "\n\n\tWE ARE WRITING YEAHHH!\n");
+        std::ofstream of("output-features.txt");
+        feature_list->print(of, write_as_uchar);
+    }
 
     delete feature_list;
 }
@@ -261,21 +268,9 @@ int main(int argc, char** argv)
         jobs.pop();
         if(job)
         {
-            // read_job(job);
-
-            popsift::FeaturesHost* feature_list = job->getHost(); // wait for job to complete
-
-            cerr << "Number of feature points: " << feature_list->getFeatureCount()
-                 << " number of feature descriptors: " << feature_list->getDescriptorCount() << endl;
+            read_job(job);
 
             delete job;
-
-            std::thread t([feature_list] { // Note: No `&`!
-                std::this_thread::sleep_for(std::chrono::seconds(1));
-                fprintf(stderr, "\n\tDeleting feature list now!!\n");
-                delete feature_list; // Safe: The pointer is copied.
-            });
-            t.detach();
         }
     }
 

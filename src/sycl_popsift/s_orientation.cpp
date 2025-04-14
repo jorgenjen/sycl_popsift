@@ -61,6 +61,7 @@ inline float divide(const float& a, const float& b)
 
 // base e exponential of x
 // TODO: Make this into a constexpr if statement instead of switch to ensure it's done at compile time
+// Probs belong in assist or something like that
 template<int half>
 inline float exp(const float& x)
 {
@@ -72,6 +73,7 @@ inline float exp(const float& x)
     }
 }
 
+// TODO: Remove and use the one in s_gradient.hpp
 inline void get_gradient(
   float& grad, float& theta, const int x, const int y, const float* leveled_layer, const int& w, const int& h)
 {

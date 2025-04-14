@@ -8,7 +8,6 @@
 #include "sycl_popsift/sift_constants.hpp"
 
 #include <sycl/sycl.hpp>
-#include <unistd.h> // just for sleep test
 
 #include <cmath> // ceilf
 #include <cstdio>
@@ -180,7 +179,6 @@ void PopSift::uninit()
 
     fprintf(stderr, "\n\tUninted the pipe\n");
 
-    sleep(4);
     _isInit = false;
 }
 

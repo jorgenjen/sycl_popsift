@@ -133,6 +133,7 @@ static inline void ext_desc_loop_sub(const float ang,
     const int hy = ymax - ymin + 1;
     const int loops = wx * hy;
 
+    // THESE VALUEL ARE FINE!!!
     // if(x == XPOS && y == YPOS)
     // {
     //     sycl::ext::oneapi::experimental::printf(
@@ -214,7 +215,13 @@ static inline void ext_desc_loop_sub(const float ang,
             //     if(jj == 99 && ii == 135 && it.get_local_linear_id() == 40)
             //         get_gradient(mod, th, jj, ii, width, height, data, level);
             // }
-            get_gradient(mod, th, jj, ii, width, height, data, level);
+
+            if(x == XPOS && y == YPOS)
+                get_gradient(mod, th, jj, ii, width, height, data, level, false);
+            else
+                get_gradient(mod, th, jj, ii, width, height, data, level, false);
+
+            // SEEMS TO BE CORRECT UP UNTIL THIS POINT JUST SMALL DEVIATIONS DUE TO FLOAT DIFFERENCES
 
             const sycl::vec<float, 2> dn = n + offsetpt;
             // const float ww = __expf(-scalbnf(dn.x * dn.x + dn.y * dn.y, -3));
@@ -222,8 +229,12 @@ static inline void ext_desc_loop_sub(const float ang,
             // const float2 w = make_float2(1.0f - nn.x, 1.0f - nn.y);
             // const float wgt = ww * w.x * w.y * mod;
 
-            const float ww = sycl::exp(sycl::ldexp(dn.x() * dn.x() + dn.y() * dn.y(), -3));
-            // const float ww = sycl::exp(sycl::ldexp(sycl::dot(dn, dn), -3)); // Should be same as above
+            // Cant include cmath makes nextafter ambigous...
+            // const float ww = sycl::exp(-scalbnf(dn.x() * dn.x() + dn.y() * dn.y(), -3));
+            // const float ww = sycl::exp(-sycl::ldexp(dn.x() * dn.x() + dn.y() * dn.y(), -3));
+
+            // Using sycl::dot seems to be slightly faster than the version above (on average)
+            const float ww = sycl::exp(-sycl::ldexp(sycl::dot(dn, dn), -3)); // Verified Identical as the one above
             const sycl::vec<float, 2> w(1.0f - nn.x(), 1.0f - nn.y());
             const float wgt = ww * w.x() * w.y() * mod;
 
@@ -256,6 +267,26 @@ static inline void ext_desc_loop_sub(const float ang,
             const float wgt2 = do0;
 
             int fo = fo0 % DESC_BINS;
+
+            if(x == XPOS && y == YPOS)
+                sycl::ext::oneapi::experimental::printf("pos(%d, %d) dn=(%.3f,%.3f) ww=%.6f w=(%.3f,%.3f) wgt=%.6f "
+                                                        "th=%.6f tth=%.6f fo0=%d do0=%.6f wgt1=%.6f "
+                                                        "wgt2=%.6f fo=%d\n",
+                                                        jj,
+                                                        ii,
+                                                        dn.x(),
+                                                        dn.y(),
+                                                        ww,
+                                                        w.x(),
+                                                        w.y(),
+                                                        wgt,
+                                                        th,
+                                                        tth,
+                                                        fo0,
+                                                        do0,
+                                                        wgt1,
+                                                        wgt2,
+                                                        fo);
 
             // maf: multiply-add
             // _ru - round to positive infinity equiv to froundf since always >=0
