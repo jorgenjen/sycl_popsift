@@ -1,6 +1,12 @@
 #pragma once
 
-#include "sycl/queue.hpp"
+// #include "sycl/queue.hpp"
+
+#include <sycl/device.hpp>
+#include <sycl/kernel.hpp>
+#include <sycl/kernel_bundle.hpp>
+#include <sycl/queue.hpp>
+
 namespace popsift {
 
 /* This computation is needed very frequently when a dim3 grid block is
@@ -23,4 +29,19 @@ inline size_t getPreferredAlignment(sycl::queue& q)
     return align_bits / 8;
 }
 
+// USAGE INFO
+// need t oassign a struct or class that you declare before the kernel launch
+// and use for the class and use in the kernel lauch as the template argument
+// kernel_lauch is tied to a launch of a kernel not a kernel name (sub_groups)
+// could vary from launch of same kernel (especially when templated)
+
+// Computes the actual sub_group size that will be used for the ori_par kernel
+template<class kernel_launch>
+inline auto get_kernel_subgroup_size(sycl::queue& Q) // not sure if we want to inline
+{
+    auto kernel_id = sycl::get_kernel_id<kernel_launch>();
+    auto kernel_bundle = sycl::get_kernel_bundle<sycl::bundle_state::executable>(Q.get_context());
+    auto kernel = kernel_bundle.get_kernel(kernel_id);
+    return kernel.template get_info<sycl::info::kernel_device_specific::max_sub_group_size>(Q.get_device());
+}
 }

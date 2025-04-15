@@ -148,9 +148,6 @@ class ori_par
                 return it.get_group();
         }();
 
-        // My cpu reports it supports 4 8 16 32 64 sizes subgroups
-        // So the largest is 64 but it uses 8 in the kernel hence need re think this
-
         if(it.get_global_linear_id() == 0)
         {
             if constexpr(useSubGroup)
@@ -486,18 +483,6 @@ class ori_par
     }
 };
 
-struct ori_par_subgroup;
-
-// Computes the actual sub_group size that will be used for the ori_par kernel
-auto get_ori_par_subgroup_size(sycl::queue& Q)
-{
-    auto kernel_id = sycl::get_kernel_id<ori_par_subgroup>();
-    auto kernel_bundle = sycl::get_kernel_bundle<sycl::bundle_state::executable>(Q.get_context());
-    auto kernel = kernel_bundle.get_kernel(kernel_id);
-    return kernel.get_info<sycl::info::kernel_device_specific::max_sub_group_size>(Q.get_device());
-}
-} // namespace popsift
-
 class ExtremaRead
 {
     const Extremum* const _oris;
@@ -561,9 +546,12 @@ class ExtremaWrtMap
     }
 };
 
-#define PREFIX_0_DIM 32 // Can be modified to allow for more registers per work-item
-#define PREFIX_1_DIM 32 // must be 32
+// Changing these values are not soupported (could add support for different 0 dim)
+// But 32x32 is what makes the most sense or sub_group size in both directons
+#define PREFIX_0_DIM 32
+#define PREFIX_1_DIM 32 // must be 32 --> atleast for gpu targets
 
+template<bool useSubGroup>
 class ori_prefix_sum
 {
   private:
@@ -597,23 +585,16 @@ class ori_prefix_sum
 
     inline void operator()(sycl::nd_item<2> it) const
     {
-        sycl::sub_group sub_group = it.get_sub_group();
         sycl::group work_group = it.get_group();
 
         ExtremaWrtMap mapping_writer(dobuf->feat_to_ext_map, max(d_consts->max_orientations, dbuf->ori_allocated));
-        // ExtremaRead r(dobuf->extrema);
-        // ExtremaWrt w(dobuf->extrema);
-        // // IgnoreTotal t();
-        // ExtremaWrtMap wrtm(dobuf->feat_to_ext_map, max(d_consts->max_orientations, dbuf->ori_allocated));
-        // ExclusivePrefixSum::Block<sycl::sub_group, ExtremaRead, ExtremaWrt, ExtremaWrtMap>(
-        //   it, total_ext_ct, r, w, wrtm, sum, loop_total, group);
 
-        // NOTE: Seems like loop_total is not used for anything and can be removed
         if(it.get_local_linear_id() == 0)
         {
             loop_total[0] = 0;
         }
-        sycl::group_barrier(work_group);
+
+        sycl::group_barrier(work_group); // should not be needed
 
         const int num = total_ext_ct;
         const int start = it.get_local_linear_id();
@@ -624,75 +605,80 @@ class ori_prefix_sum
 
         for(int x = start; x < end; x += wrap)
         {
-            sycl::group_barrier(work_group);
+            sycl::group_barrier(work_group); // could be needed to ensure we are not diverged when doing scan
 
             const bool valid = (start < total_ext_ct);
 
             int self = (valid) ? dobuf->extrema[start].num_ori : 0;
 
-            // This loop is an exclusive prefix sum for one warp
-            int ews = sycl::exclusive_scan_over_group(sub_group, self, sycl::plus<>());
-
-            if(it.get_local_id(1) == 31) // only last adds
+            if constexpr(useSubGroup)
             {
-                // store inclusive warp prefix sum in shared mem
-                // to be summed up in next phase
+                sycl::sub_group sub_group = it.get_sub_group();
+                // This loop is an exclusive prefix sum for one warp
+                int ews = sycl::exclusive_scan_over_group(sub_group, self, sycl::plus<>());
 
-                sum[it.get_local_id(0)] = ews + self; // making it  inclusive
+                if(it.get_local_id(1) == 31) // only last adds
+                {
+                    // store inclusive warp prefix sum in shared mem
+                    // to be summed up in next phase
+                    sum[it.get_local_id(0)] = ews + self; // making it  inclusive
+                }
+                sycl::group_barrier(work_group); // required for memory
+
+                int ibs; // inclusive block prefix sum
+                if(it.get_local_id(0) == 0)
+                {
+                    int self = sum[it.get_local_id(1)];
+
+                    // ANother exclusive scan
+                    int ebs = sycl::exclusive_scan_over_group(sub_group, self, sycl::plus<>());
+
+                    sum[it.get_local_id(1)] = ebs;
+                    ibs = ebs + self;
+                }
+
+                sycl::group_barrier(work_group);
+
+                if(valid)
+                {
+                    // start_pos_loop + start_pos_sub_group + work_item exclusive sum in it's sub_group
+                    const int ebs = loop_total[0] + sum[it.get_local_id(0)] + ews;
+
+                    dobuf->extrema[start].idx_ori = ebs;
+
+                    mapping_writer.set(ebs, self, start);
+                }
+                sycl::group_barrier(work_group);
+
+                if(it.get_local_id(0) == 0 && it.get_local_id(1) == PREFIX_1_DIM - 1)
+                {
+                    loop_total[0] += ibs;
+                }
+                sycl::group_barrier(work_group); // SHould not be needed as we start with a barrier
             }
-            // __syncthreads();
-            sycl::group_barrier(work_group);
-
-            int ibs; // inclusive block prefix sum
-            if(it.get_local_id(0) == 0)
+            else
             {
-                int self = sum[it.get_local_id(1)];
+                // ################ WORK_GROUP ######################
+                const int ebs = loop_total[0] + sycl::exclusive_scan_over_group(work_group, self, sycl::plus<>());
 
-                // ANother exclusive scan
-                int ebs = sycl::exclusive_scan_over_group(sub_group, self, sycl::plus<>());
+                if(valid)
+                {
+                    dobuf->extrema[start].idx_ori = ebs;
 
-                sum[it.get_local_id(1)] = ebs;
-                ibs = ebs + self;
+                    mapping_writer.set(ebs, self, start);
+                }
+                if(it.get_local_id(0) == PREFIX_0_DIM - 1 && it.get_local_id(1) == PREFIX_1_DIM - 1)
+                {
+                    loop_total[0] += ebs + self;
+                }
             }
-            sycl::group_barrier(work_group);
-
-            if(valid)
-            {
-                const int ebs = loop_total[0] + sum[it.get_local_id(0)] + ews;
-
-                dobuf->extrema[start].idx_ori = ebs;
-
-                // this uses less register than what I have below (66) vs 72
-                mapping_writer.set(ebs, self, start);
-            }
-            sycl::group_barrier(work_group);
-
-            if(it.get_local_id(0) == 0 && it.get_local_id(1) == 31)
-            {
-                loop_total[0] += ibs;
-            }
-            sycl::group_barrier(work_group);
         }
 
-        // D
-
-        //
-
-        // trying to lower regiset pressuer
-
-        // sycl::group_barrier(group);
-
-        // total_ori = loop_total[0]; // just use it from shared memory no???
-
-        // All before this iwas in the writer in the PopSift code now is the remaining part of the code
-
-        // Only done for one thread for the whole work-group
-
-        /// ####################### SHIT #########################################
-
-        // if(threadIdx.x == 0 && threadIdx.y == 0)
+        // End of part that was in separate funcion
         if(it.get_global_linear_id() == 0)
         {
+            // Look into if this could be done by multiple work items in paralell to speed it up
+            // Curently one work-item does the whole thing the rest does nothing
             dct->ext_ps[0] = 0;
             for(int o = 1; o < MAX_OCTAVES; o++)
             {
@@ -725,34 +711,26 @@ class ori_prefix_sum
 
             dct->ori_total = dct->ori_ps[MAX_OCTAVES - 1] + dct->ori_ct[MAX_OCTAVES - 1];
             dct->ext_total = dct->ext_ps[MAX_OCTAVES - 1] + dct->ext_ct[MAX_OCTAVES - 1];
-
-            // sycl::ext::oneapi::experimental::printf("ori_total %d -- ext_total %d",
-            //                                         dct->ori_ps[MAX_OCTAVES - 1] + dct->ori_ct[MAX_OCTAVES - 1],
-            //                                         dct->ext_ps[MAX_OCTAVES - 1] + dct->ext_ct[MAX_OCTAVES - 1]);
-            // sycl::ext::oneapi::experimental::printf(
-            //   "dct.ori_total = %d ---- dct.ext_total = %d\n", dct->ori_total, dct->ext_total);
         }
     }
 };
 
+// must be set in namespace scope
+struct ori_par_subgroup;
+struct ori_prefix_sum_subgroup;
 void Pyramid::orientation(const Config& conf)
 {
-    // auto max_subgroup = _device_queue.get_device().get_info<sycl::info::device::max_sub_group_size>();
-
-    // returns all slupported and not what it will use for the kernel (my cpu gave 4 8 16 32 64) but used
-    // 8 so not too valuable
-    // auto max_subgroup = _device_queue.get_device().get_info<sycl::info::device::sub_group_sizes>().back();
-
-    // Hopefully evaluated at compile time
-    auto max_subgroup = get_ori_par_subgroup_size(_device_queue);
-    bool useSubGroup = max_subgroup >= 32;
+    auto max_subgroup_ori_par = get_kernel_subgroup_size<ori_par_subgroup>(_device_queue);
+    bool use_subgroup_ori_par = max_subgroup_ori_par >= 32;
+    auto max_subgroup_prefix = get_kernel_subgroup_size<ori_prefix_sum_subgroup>(_device_queue);
+    bool use_subgroup_prefix = max_subgroup_prefix >= 32;
 
     fprintf(stderr, "\n\tWAITING IN ORIENTATION FOR EXTREMA FOR ALL OCTAVE TO FINISH\n");
     // Wait so that the computation is done before the memcpy
     // Look for ways to make this part faster (less waits the better)
     _device_queue.wait();
 
-    fprintf(stderr, "Sub group kernel mas sub_group_size %d", max_subgroup);
+    fprintf(stderr, "Sub group kernel mas sub_group_size %d -- %d", max_subgroup_ori_par, max_subgroup_prefix);
     // Need to think about if this is really necessary?
     // As now we neet to wait for all octaes to do extrema before we can do orientation
     // Not sure if we actually need to do this...
@@ -806,7 +784,7 @@ void Pyramid::orientation(const Config& conf)
             // NOTE: Need to make modificatons when sub-group is not 32
             // as is normaly the case on cpu's
 
-            if(useSubGroup)
+            if(use_subgroup_ori_par)
             {
                 fprintf(stderr, "\n\tUSING SUBGOUP for Orientation\n");
                 // Uses sub-group(warp) for synchronization and communication
@@ -819,17 +797,17 @@ void Pyramid::orientation(const Config& conf)
                     auto yval = sycl::local_accessor<float, 1>(64, cgh);
 
                     cgh.parallel_for<ori_par_subgroup>(sycl::nd_range{global, local},
-                                                       popsift::ori_par<true>(octave,
-                                                                              _hct.ext_ps[octave],
-                                                                              oct_obj.getDataArray(),
-                                                                              oct_obj.getWidth(),
-                                                                              oct_obj.getHeight(),
-                                                                              hist,
-                                                                              sm_hist,
-                                                                              refined_angle,
-                                                                              yval,
-                                                                              _dobuf,
-                                                                              _dct));
+                                                       ori_par<true>(octave,
+                                                                     _hct.ext_ps[octave],
+                                                                     oct_obj.getDataArray(),
+                                                                     oct_obj.getWidth(),
+                                                                     oct_obj.getHeight(),
+                                                                     hist,
+                                                                     sm_hist,
+                                                                     refined_angle,
+                                                                     yval,
+                                                                     _dobuf,
+                                                                     _dct));
                 });
             }
             else
@@ -859,31 +837,6 @@ void Pyramid::orientation(const Config& conf)
                                                              _dct));
                 });
             }
-
-            if(octave == 10)
-            {
-                _device_queue.single_task([=, dobuf = _dobuf, hct = _hct]() {
-                    for(int i = 0; i < num; ++i)
-                    {
-                        Extremum* ext = &dobuf->extrema[hct.ext_ps[octave] + i];
-                        sycl::ext::oneapi::experimental::printf(
-                          "Extremum: xpos=%.6f, ypos=%.6f, lpos=%d, sigma=%.6f, octave=%d, num_ori=%d, "
-                          "idx_ori=%d, "
-                          "orientation=[%.4f, %.4f, %.4f, %.4f]\n",
-                          ext->xpos,
-                          ext->ypos,
-                          ext->lpos,
-                          ext->sigma,
-                          ext->octave,
-                          ext->num_ori,
-                          ext->idx_ori,
-                          ext->orientation[0],
-                          ext->orientation[1],
-                          ext->orientation[2],
-                          ext->orientation[3]);
-                    }
-                });
-            }
         }
     }
 
@@ -895,40 +848,212 @@ void Pyramid::orientation(const Config& conf)
     // sure if that would make it faster Could try full size for first octave and half size kernel for the reset as the
     // earlier octaves always have more extremas than the later octaves
 
-    sycl::range local_prefix{32, 32};
-    sycl::range global_prefix{32, 32};
+    sycl::range local_prefix{PREFIX_0_DIM, PREFIX_1_DIM};
+    sycl::range global_prefix{PREFIX_0_DIM, PREFIX_1_DIM};
 
-    _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
-        // sycl::local_accessor<int, 1> -- is the type
-        auto sum = sycl::local_accessor<int, 1>(32, cgh);
-        auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
+    // TODO: Make it work for CPU, Could spawn based on found sub_group size for kenrnel and use that as dimensions
+    // sub x sub and then the kernel should wokr as is when removing hard coded 1024
+    // --> Another option is to use one exclusive scan for the work_grop and use that (instead of the two scans in
+    // sub_grup mode)
+    // --> This version should also just work but would need to tempalte the kernel for the compute part
 
-        cgh.parallel_for(sycl::nd_range{global_prefix, local_prefix},
-                         ori_prefix_sum(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
-    });
+    if(use_subgroup_prefix)
+    {
+        fprintf(stderr, "Running subgroup\n");
+        _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
+            // sycl::local_accessor<int, 1> -- is the type
+            auto sum = sycl::local_accessor<int, 1>(32, cgh);
+            auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
 
-    // _device_queue.wait();
+            cgh.parallel_for<ori_prefix_sum_subgroup>(
+              sycl::nd_range{global_prefix, local_prefix},
+              ori_prefix_sum<true>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
+        });
+    }
+    else
+    {
+        fprintf(stderr, "Running work group\n");
+        _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
+            // sycl::local_accessor<int, 1> -- is the type
+            auto sum = sycl::local_accessor<int, 1>(32, cgh);
+            auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
 
-    //
-
-    //
-
-    //
-
-    // _device_queue.single_task([=, dobuf = _dobuf, dct = _dct]() {
-    //     // for(int i = 0; i < MAX_OCTAVES; ++i)
-    //     // {
-    //     // Extremum* ext = &dobuf->extrema[hct.ext_ps[octave] + i];
-    //
-    //     sycl::ext::oneapi::experimental::printf(
-    //       "dct->ori_total = %d, dct->ext_total = %d\n", dct->ori_total, dct->ext_total);
-    //     // }
-    //
-    //     for(int i = 0; i < dct->ori_total; ++i)
-    //     {
-    //         // sycl::ext::oneapi::experimental::printf(" \n", dct->ori_total, dct->ext_total);
-    //         sycl::ext::oneapi::experimental::printf(
-    //           "i = %d --> dobuf.feat_to_ext_map = %d\n", i, dobuf->feat_to_ext_map[i]);
-    //     }
-    // });
+            cgh.parallel_for(
+              sycl::nd_range{global_prefix, local_prefix},
+              ori_prefix_sum<false>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
+        });
+    }
 }
+
+} // namespace popsift
+
+// NON WORKING
+// Work group version -- using local memory
+// class ori_prefix_sum_wg
+// {
+//   private:
+//     const int total_ext_ct;
+//     const int num_octaves;
+//     ExtremaBuffers* dbuf;
+//     DevBuffers* dobuf;
+//     ConstInfo* d_consts;
+//     ExtremaCounters* dct;
+//     sycl::local_accessor<int, 1> sum;
+//     sycl::local_accessor<int, 1> loop_total;
+//
+//   public:
+//     ori_prefix_sum_wg(const int total_ext_ct,
+//                       const int num_octaves,
+//                       ExtremaBuffers* dbuf,
+//                       DevBuffers* dobuf,
+//                       ConstInfo* d_consts,
+//                       ExtremaCounters* dct,
+//                       sycl::local_accessor<int, 1> sum,
+//                       sycl::local_accessor<int, 1> loop_total)
+//       : total_ext_ct(total_ext_ct)
+//       , num_octaves(num_octaves)
+//       , dbuf(dbuf)
+//       , dobuf(dobuf)
+//       , d_consts(d_consts)
+//       , dct(dct)
+//       , sum(
+//           sum) // sum is 1024 + 32 + 1 for this kernel (+32 is for intermediate values +1 of for to write witout
+//           modulo)
+//       , loop_total(loop_total)
+//     {}
+//
+//     inline void operator()(sycl::nd_item<2> it) const
+//     {
+//         // sycl::sub_group sub_group = it.get_sub_group();
+//         sycl::group work_group = it.get_group();
+//
+//         ExtremaWrtMap mapping_writer(dobuf->feat_to_ext_map, max(d_consts->max_orientations, dbuf->ori_allocated));
+//
+//         if(it.get_local_linear_id() == 0)
+//         {
+//             loop_total[0] = 0;
+//         }
+//         sycl::group_barrier(work_group);
+//
+//         const int num = total_ext_ct;
+//         const int start = it.get_local_linear_id(); // [0, 1024) from to non-inclusive
+//         // constexpr int wrap = 1024;
+//         constexpr int wrap = PREFIX_1_DIM * PREFIX_0_DIM;
+//         // int wrap = it.get_global_range(1) * it.get_global_range(0);
+//         const int end = (total_ext_ct & (wrap - 1)) ? (total_ext_ct & ~(wrap - 1)) + wrap : total_ext_ct;
+//
+//         for(int x = start; x < end; x += wrap)
+//         {
+//             sycl::group_barrier(work_group);
+//
+//             const bool valid = (start < total_ext_ct);
+//
+//             int self = (valid) ? dobuf->extrema[start].num_ori : 0;
+//
+//             // This loop is an exclusive prefix sum for one warp
+//             // int ews = sycl::exclusive_scan_over_group(sub_group, self, sycl::plus<>());
+//
+//             // SHARED MEMORY - LOCAL MEMEOYR EXCLUSIVE SCAN OVER GORUP
+//
+//             size_t work_item = it.get_local_linear_id();
+//
+//             // Will write to 1024 but is allocated as we have 1024 + 32 and will be overwritten
+//             sum[work_item + 1] = self;
+//
+//             if(it.get_local_linear_id() < 2)
+//                 sum[it.get_local_linear_id() * 1024] = 0; // setting 0 and 1024 to 0
+//
+//             // This is a inclusive scan over group due to starting with self
+//
+//             // This version is exlusive due to different initialization (less efficient)
+//             sycl::group_barrier(work_group); // Think I need this
+//             for(int s = 0; s < 5; s++)
+//             {
+//                 // Horizontal compute of prefix sum of group of 32
+//                 sum[work_item] += it.get_local_id(1) < (1 << s) ? 0 : sum[work_item - (1 << s)];
+//             }
+//
+//             // LOCAL MEMORY
+//
+//             if(it.get_local_id(1) == 31) // only last adds
+//             {
+//                 // store inclusive warp prefix sum in shared mem
+//                 // to be summed up in next phase
+//
+//                 // +1 to make it exclusive safe due to having one more element due to this final writen but not used
+//                 sum[1024 + it.get_local_id(0) + 1] = sum[work_item] + self; // storing in last 32 of segment
+//
+//                 // 1024 is already set to 0 which is what it should be
+//             }
+//
+//             sycl::group_barrier(work_group);
+//
+//             int ibs; // inclusive block prefix sum
+//             if(it.get_local_id(0) == 0)
+//             {
+//                 for(int s = 0; s < 5; s++)
+//                 {
+//                     // VERTICAL step
+//                     // Exclusive prefix sum of the summed groups of 32 from prev step
+//                     sum[1024 + it.get_local_id(1)] +=
+//                       it.get_local_id(1) < (1 << s) ? 0 : sum[1024 + it.get_local_id(1) - (1 << s)];
+//                 }
+//                 ibs = sum[1024 + it.get_local_id(1)] + sum[work_item];
+//             }
+//             sycl::group_barrier(work_group);
+//
+//             if(valid)
+//             {
+//                 const int ebs = loop_total[0] + sum[1024 + it.get_local_id(0)] + sum[work_item];
+//
+//                 dobuf->extrema[start].idx_ori = ebs;
+//
+//                 mapping_writer.set(ebs, self, start);
+//             }
+//             sycl::group_barrier(work_group);
+//
+//             if(it.get_local_id(0) == 0 && it.get_local_id(1) == 31)
+//             {
+//                 loop_total[0] += ibs;
+//             }
+//             sycl::group_barrier(work_group);
+//         }
+//
+//         // End of part that was in separate funcion
+//         if(it.get_global_linear_id() == 0)
+//         {
+//             dct->ext_ps[0] = 0;
+//             for(int o = 1; o < MAX_OCTAVES; o++)
+//             {
+//                 dct->ext_ps[o] = dct->ext_ps[o - 1] + dct->ext_ct[o - 1];
+//             }
+//
+//             for(int o = 0; o < MAX_OCTAVES; o++)
+//             {
+//                 if(dct->ext_ct[o] == 0)
+//                 {
+//                     dct->ori_ct[o] = 0;
+//                 }
+//                 else
+//                 {
+//                     int fe = dct->ext_ps[o];         /* first extremum for this octave */
+//                     int le = dct->ext_ps[o + 1] - 1; /* last  extremum for this octave */
+//                     int lo_ori_index = dobuf->extrema[fe].idx_ori;
+//                     int num_ori = dobuf->extrema[le].num_ori;
+//
+//                     int hi_ori_index = dobuf->extrema[le].idx_ori + num_ori;
+//                     dct->ori_ct[o] = hi_ori_index - lo_ori_index;
+//                 }
+//             }
+//
+//             dct->ori_ps[0] = 0;
+//             for(int o = 1; o < MAX_OCTAVES; o++)
+//             {
+//                 dct->ori_ps[o] = dct->ori_ps[o - 1] + dct->ori_ct[o - 1];
+//             }
+//
+//             dct->ori_total = dct->ori_ps[MAX_OCTAVES - 1] + dct->ori_ct[MAX_OCTAVES - 1];
+//             dct->ext_total = dct->ext_ps[MAX_OCTAVES - 1] + dct->ext_ct[MAX_OCTAVES - 1];
+//         }
+//     }
+// };

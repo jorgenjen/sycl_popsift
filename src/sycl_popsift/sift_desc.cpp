@@ -38,10 +38,6 @@ static inline void ext_desc_loop_sub(const float ang,
     const int iy = it.get_local_id(0);
     const int tile = (((iy << 2) + ix) << 3); // base of the 8 floats written by this group of 16 threads
 #else
-    // const int ix = (threadIdx.z & 0x3);
-    // const int iy = (threadIdx.z >> 2);
-    // const int tile = (threadIdx.z << 3);
-
     const int ix = (it.get_local_id(0) & 0x3);
     const int iy = (it.get_local_id(0) >> 2);
     const int tile = (it.get_local_id(0) << 3);
@@ -79,11 +75,12 @@ static inline void ext_desc_loop_sub(const float ang,
 
     const sycl::vec<float, 2> offsetpt(ix - 1.5, iy - 1.5f);
 
-#define USE_MAD true
+// Not sure if using sycl::mad is precise enough but seems to be significantly faster than fma
+#define USE_MAD false
 #if USE_MAD
     // Less precise version (of fma) BUT FASTER!!
     const float ptx = sycl::mad(csbp, offsetpt.x(), sycl::mad(-ssbp, offsetpt.y(), x));
-    const float pty = sycl::mad(csbp, offsetpt.y(), sycl::mad(-ssbp, offsetpt.x(), y));
+    const float pty = sycl::mad(csbp, offsetpt.y(), sycl::mad(ssbp, offsetpt.x(), y));
 #else
     const float ptx = sycl::fma(csbp, offsetpt.x(), sycl::fma(-ssbp, offsetpt.y(), x));
     const float pty = sycl::fma(csbp, offsetpt.y(), sycl::fma(ssbp, offsetpt.x(), y));
