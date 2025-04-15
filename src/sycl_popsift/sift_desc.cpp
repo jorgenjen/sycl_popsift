@@ -364,49 +364,26 @@ class Ext_desc_loop_local_mem
     }
 };
 
-template<bool PassLocalAccessor = false>
-inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj)
-{
-    // dim3 block;
-    // dim3 grid;
-    // grid.x = _hct.ori_ct[octave]; // orientation count for the octave
-    // grid.y = 1;
-    // grid.z = 1;
+class sub_group_desc_loop; // To check sub_group size for kernel
 
+inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool use_sub_group)
+{
     if(_hct.ori_ct[octave] == 0)
         return;
 
 #ifndef BLOCK_3_DIMS
-    // block.x = 32;
-    // block.y = 4;
-    // block.z = 4;
-
     sycl::range global{4, 4, static_cast<size_t>(_hct.ori_ct[octave] * 32)};
     sycl::range local{4, 4, 32};
 #else
-    // block.x = 32;
-    // block.y = 1;
-    // block.z = 16;
 
+    // Unverified
     sycl::range global{16, 1, _hct.ori_ct[octave]};
     sycl::range local{16, 1, 32};
 #endif
 
-    // ext_desc_loop<<<grid, block, 0, oct_obj.getStream()>>>(
-    //   octave, oct_obj.getDataTexPoint(), oct_obj.getWidth(), oct_obj.getHeight());
-
-    fprintf(stderr,
-            "global(%zu, %zu, %zu) -- local(%zu, %zu, %zu)\n\n",
-            global[0],
-            global[1],
-            global[2],
-            local[0],
-            local[1],
-            local[2]);
-
-    if constexpr(PassLocalAccessor)
+    if(!use_sub_group)
     {
-        _device_queue.parallel_for(
+        _device_queue.parallel_for<sub_group_desc_loop>(
           sycl::nd_range{global, local},
           Ext_desc_loop(_dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
     }
@@ -414,12 +391,8 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj)
     {
         fprintf(stderr, "I'M RUNNING THE LOCLAL ACCESSOR STUFS\n");
         _device_queue.submit([&](sycl::handler& cgh) {
-            // sycl::local_accessor<float, 1> -- is the type (using auto as it's so long)
             // need 7 for storing the older result values final is stored in current work range idx 7
             auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
-            // auto sum = sycl::local_accessor<float, 3>({4, 4, 32 + 8}, cgh); // one per row in work-group
-
-            // cgh.parallel_for<ori_par_subgroup>(sycl::nd_range{global, local},
 
             cgh.parallel_for(
               sycl::nd_range{global, local},
@@ -427,19 +400,18 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj)
                 sum, _dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
         });
     }
-
-    // octave, oct_obj.getDataArray(), oct_obj.getWidth(), oct_obj.getHeight()));
-
-    // POP_SYNC_CHK;
-
-    // return true;
 }
 
 } // namespace popsift
 
 void popsift::Pyramid::descriptors(const Config& conf)
 {
-    readDescCountersFromDevice().wait();
+    sycl::event readDesc = readDescCountersFromDevice();
+
+    auto group_size = get_kernel_subgroup_size<sub_group_desc_loop>(_device_queue);
+    bool use_sub_group = group_size >= 32;
+
+    readDesc.wait();
 
     for(int octave = _num_octaves - 1; octave >= 0; octave--)
     // for( int octave=0; octave<_num_octaves; octave++ )
@@ -451,7 +423,7 @@ void popsift::Pyramid::descriptors(const Config& conf)
             if(conf.getDescMode() == Config::Loop)
             {
                 // Default
-                start_ext_desc_loop(octave, oct_obj);
+                start_ext_desc_loop(octave, oct_obj, use_sub_group);
             }
             else if(conf.getDescMode() == Config::VLFeat_Desc)
             {

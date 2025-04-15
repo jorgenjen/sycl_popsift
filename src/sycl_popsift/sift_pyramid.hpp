@@ -176,8 +176,7 @@ class Pyramid
 
     void descriptors(const Config& conf);
 
-    template<bool PassLocalAccessor>
-    inline void start_ext_desc_loop(const int octave, Octave& oct_obj);
+    inline void start_ext_desc_loop(const int octave, Octave& oct_obj, bool use_sub_group);
 
     sycl::event readDescCountersFromDevice();
     // void readDescCountersFromDevice(cudaStream_t s);
