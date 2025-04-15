@@ -381,7 +381,7 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool
     sycl::range local{16, 1, 32};
 #endif
 
-    if(!use_sub_group)
+    if(use_sub_group)
     {
         _device_queue.parallel_for<sub_group_desc_loop>(
           sycl::nd_range{global, local},
