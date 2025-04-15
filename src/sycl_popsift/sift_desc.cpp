@@ -25,13 +25,29 @@
 
 namespace popsift {
 
+// template<bool UseLocalAccessor = false, typename... Args>
+// void ext_desc_loop_sub(float ang, // Your existing params
+//                        float ext,
+//                        FeatureDesc* features,
+//                        float* data,
+//                        int width,
+//                        int height,
+//                        SomeIterator it,
+//                        float* dpt,    // Original float array
+//                        Args&&... args // Optional: local_accessor
+// )
+// {
+
+// Using Pack for local_mem to accept zero or more but only zero or one local accesssor will be used
+template<bool UseLocalAccessor = false, typename... Args>
 static inline void ext_desc_loop_sub(const float ang,
                                      const Extremum* ext,
                                      float* __restrict__ features, // should work for codeplay
                                      float** data,
                                      const int width,
                                      const int height,
-                                     sycl::nd_item<3> it)
+                                     sycl::nd_item<3> it,
+                                     Args&&... args) // Optional: local_accessor (only one or none works)
 {
 #ifndef BLOCK_3_DIMS
     const int ix = it.get_local_id(1);
@@ -98,8 +114,8 @@ static inline void ext_desc_loop_sub(const float ang,
 
     float dpt[9] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
-    // TODO: This code does not work for both sub_groups and work_group so need a spearate version for work_groups for
-    // devices that has max sub_group for kernel smaller than 32
+    // TODO: This code does not work for both sub_groups and work_group so need a spearate version for work_groups
+    // for devices that has max sub_group for kernel smaller than 32
 
     // for(int i = threadIdx.x; popsift::any(i < loops); i += blockDim.x)
     for(int i = it.get_local_id(2); sycl::any_of_group(it.get_sub_group(), i < loops); i += it.get_local_range(2))
@@ -162,8 +178,8 @@ static inline void ext_desc_loop_sub(const float ang,
             // // asm volatile("fmul.ru.f32 %0, %1, %2;" : "=f"(tth) : "f"(th), "f"(M_4RPI));
 
             // Might be possible to set rouding mode (global) but does not seem to be a good way
-            // seems like vecotr has some options as they mention rouding mode but I can figure out how to set rounding
-            // mode for the vecor or the operation on the vector
+            // seems like vecotr has some options as they mention rouding mode but I can figure out how to set
+            // rounding mode for the vecor or the operation on the vector
 
             const int fo0 = static_cast<int>(sycl::floor(tth));
 
@@ -179,13 +195,14 @@ static inline void ext_desc_loop_sub(const float ang,
             // dpt[fo + 1] = __fmaf_ru(wgt2, wgt, dpt[fo + 1]); // dpt[fo+1] += (wgt2*wgt);
 
             // Could not get these to not conflict with math in sycl
-            // dpt[fo] = sycl::ext::intel::math::fma_ru(wgt1, wgt, dpt[fo]); // dpt[fo]   += (wgt1*wgt); // rounded up
-            // dpt[fo + 1] =
+            // dpt[fo] = sycl::ext::intel::math::fma_ru(wgt1, wgt, dpt[fo]); // dpt[fo]   += (wgt1*wgt); // rounded
+            // up dpt[fo + 1] =
             //   sycl::ext::intel::math::fma_ru(wgt2, wgt, dpt[fo + 1]); // dpt[fo+1] += (wgt2*wgt); // rounded up
 
             // Attempt to use inline assembly but it did not work...
             // asm volatile("fma.ru.f32 %0, %1, %2, %3;" : "=f"(dpt[fo]) : "f"(wgt1), "f"(wgt), "f"(dpt[fo]));
-            // asm volatile("fma.ru.f32 %0, %1, %2, %3;" : "=f"(dpt[fo + 1]) : "f"(wgt2), "f"(wgt), "f"(dpt[fo + 1]));
+            // asm volatile("fma.ru.f32 %0, %1, %2, %3;" : "=f"(dpt[fo + 1]) : "f"(wgt2), "f"(wgt), "f"(dpt[fo +
+            // 1]));
 
 #if USE_MAD
 
@@ -204,17 +221,53 @@ static inline void ext_desc_loop_sub(const float ang,
 
     dpt[0] += dpt[8];
 
-    for(int i = 0; i < 8; i++)
+    if constexpr(!UseLocalAccessor)
     {
-        dpt[i] = sycl::reduce_over_group(it.get_sub_group(), dpt[i], sycl::plus<float>());
-    }
+        // Default case using sub_group
+        for(int i = 0; i < 8; i++)
+        {
+            dpt[i] = sycl::reduce_over_group(it.get_sub_group(), dpt[i], sycl::plus<float>());
+        }
 
-    // Write the 8 results asigning one work-item to do the job 24 does nothing here
-    if(it.get_local_id(2) < 8)
+        // Write the 8 results asigning one work-item to do the job 24 does nothing here
+        if(it.get_local_id(2) < 8)
+        {
+            features[tile + it.get_local_id(2)] = dpt[it.get_local_id(2)];
+        }
+    }
+    else
     {
-        features[tile + it.get_local_id(2)] = dpt[it.get_local_id(2)];
+        // Local memory accessor of type sycl::local_accessor<float, 1>
+        auto& sum = std::get<0>(std::forward_as_tuple(args...));
+
+        // Where each row starts each use 39 --> 32 for compute and 7 for storing prev values
+        const int base = (it.get_local_linear_id() >> 5) * 39;
+        for(int i = 0; i < 8; i++)
+        {
+            // shifted to have result in 0 - 7 pos in shared memory and write in one go
+            sum[base + it.get_local_id(2) + i] = dpt[i];
+            sycl::group_barrier(it.get_group());
+
+            // Stride is 16, 8, 4, 2, 1
+            for(int stride = it.get_local_range(2) / 2; stride > 0; stride >>= 1)
+            {
+                if(it.get_local_id(2) < stride)
+                    sum[base + it.get_local_id(2) + i] += sum[base + it.get_local_id(2) + i + stride];
+
+                sycl::group_barrier(it.get_group());
+            }
+        }
+
+        // Write the 8 results asigning one work-item to do the job 24 does nothing here
+        if(it.get_local_id(2) < 8)
+        {
+            features[tile + it.get_local_id(2)] = sum[base + it.get_local_id(2)];
+        }
     }
 }
+// can have different versions based on Local_mem size to do mix of sub_group and shared mem
+// Say sub_group is 8 so we can do 3 sub_group reductions and use shared memory to sum result
+// Then repeat for the 8 different values
 
 // Uses the blured pyramid (not the DoG pyramid)
 class Ext_desc_loop
@@ -245,13 +298,10 @@ class Ext_desc_loop
       , height(height)
     {}
 
+    // inline void operator()(sycl::nd_item<3> it, Local_mem&&... sum) const
     inline void operator()(sycl::nd_item<3> it) const
     {
         const int o_offset = dct->ori_ps[octave] + it.get_group(2);
-        // if(octave == 1 && it.get_local_id(2) == 6)
-        // {
-        //     sycl::ext::oneapi::experimental::printf("Data value ja %f", data);
-        // }
         Descriptor* desc = &dbuf->desc[o_offset];
         const int ext_idx = dobuf->feat_to_ext_map[o_offset];
         Extremum* ext = dobuf->extrema + ext_idx;
@@ -260,10 +310,61 @@ class Ext_desc_loop
         const int ori_num = o_offset - ext_base;
         const float ang = ext->orientation[ori_num];
 
+        // Default case
         ext_desc_loop_sub(ang, ext, desc->features, data, width, height, it);
     }
 };
 
+// Same as above but using local memory
+// Could not find a way to template it to one class without having shared memroy as an attribute and passed
+class Ext_desc_loop_local_mem
+{
+  private:
+    sycl::local_accessor<float, 1> sum;
+    ExtremaCounters* dct;
+    ExtremaBuffers* dbuf;
+    DevBuffers* dobuf;
+    float** data;
+    const int octave;
+    const int width;
+    const int height;
+
+  public:
+    Ext_desc_loop_local_mem(sycl::local_accessor<float, 1> sum,
+                            ExtremaCounters* dct,
+                            ExtremaBuffers* dbuf,
+                            DevBuffers* dobuf,
+                            float** data,
+                            const int octave,
+                            const int width,
+                            const int height)
+      : sum(sum)
+      , dct(dct)
+      , dbuf(dbuf)
+      , dobuf(dobuf)
+      , data(data)
+      , octave(octave)
+      , width(width)
+      , height(height)
+    {}
+
+    inline void operator()(sycl::nd_item<3> it) const
+
+    {
+        const int o_offset = dct->ori_ps[octave] + it.get_group(2);
+        Descriptor* desc = &dbuf->desc[o_offset];
+        const int ext_idx = dobuf->feat_to_ext_map[o_offset];
+        Extremum* ext = dobuf->extrema + ext_idx;
+
+        const int ext_base = ext->idx_ori;
+        const int ori_num = o_offset - ext_base;
+        const float ang = ext->orientation[ori_num];
+
+        ext_desc_loop_sub<true>(ang, ext, desc->features, data, width, height, it, sum);
+    }
+};
+
+template<bool PassLocalAccessor = false>
 inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj)
 {
     // dim3 block;
@@ -303,9 +404,29 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj)
             local[1],
             local[2]);
 
-    _device_queue.parallel_for(
-      sycl::nd_range{global, local},
-      Ext_desc_loop(_dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
+    if constexpr(PassLocalAccessor)
+    {
+        _device_queue.parallel_for(
+          sycl::nd_range{global, local},
+          Ext_desc_loop(_dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
+    }
+    else
+    {
+        fprintf(stderr, "I'M RUNNING THE LOCLAL ACCESSOR STUFS\n");
+        _device_queue.submit([&](sycl::handler& cgh) {
+            // sycl::local_accessor<float, 1> -- is the type (using auto as it's so long)
+            // need 7 for storing the older result values final is stored in current work range idx 7
+            auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
+            // auto sum = sycl::local_accessor<float, 3>({4, 4, 32 + 8}, cgh); // one per row in work-group
+
+            // cgh.parallel_for<ori_par_subgroup>(sycl::nd_range{global, local},
+
+            cgh.parallel_for(
+              sycl::nd_range{global, local},
+              Ext_desc_loop_local_mem(
+                sum, _dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
+        });
+    }
 
     // octave, oct_obj.getDataArray(), oct_obj.getWidth(), oct_obj.getHeight()));
 

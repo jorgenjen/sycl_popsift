@@ -176,6 +176,7 @@ class Pyramid
 
     void descriptors(const Config& conf);
 
+    template<bool PassLocalAccessor>
     inline void start_ext_desc_loop(const int octave, Octave& oct_obj);
 
     sycl::event readDescCountersFromDevice();
