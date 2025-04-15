@@ -31,7 +31,7 @@
 //     T::normalize(desc->features, ignoreme);
 // }
 
-template<class T>
+template<class T, bool wg_reduce>
 class Normalize_histogram
 {
   private:
@@ -53,21 +53,33 @@ class Normalize_histogram
 
         // int offset = blockIdx.x * 32 + threadIdx.y;
 
-        // So we get one descriptor per sub_group (along dim 1)
-        int offset = it.get_group(1) * it.get_local_range(1) + it.get_local_id(0);
+        if constexpr(!wg_reduce)
+        {
+            // So we get one descriptor per sub_group (along dim 1)
+            int offset = it.get_group(1) * it.get_local_range(1) + it.get_local_id(0);
+            // all of these threads are useless
+            // if(blockIdx.x * 32 >= num_orientations)
+            if(it.get_group(1) * it.get_local_range(1) >= num_orientations)
+                return;
+            offset = (offset < num_orientations) ? offset : num_orientations - 1;
+            popsift::Descriptor* desc = &descs[offset];
 
-        // all of these threads are useless
-        // if(blockIdx.x * 32 >= num_orientations)
-        if(it.get_group(1) * it.get_local_range(1) >= num_orientations)
-            return;
+            bool ignoreme = (offset >= num_orientations);
 
-        offset = (offset < num_orientations) ? offset : num_orientations - 1;
-        popsift::Descriptor* desc = &descs[offset];
+            // Every work-item in same-work grop  pass same pointer
+            // We take a new descriptor for each y change
+            T::template normalize<false>(desc->features, ignoreme, it, d_consts);
+            // T::normalize<false>(desc->features, ignoreme, it, d_consts);
+        }
+        else
+        {
+            // Uses 32 for work group (work group reduce)
+            // One descriptor per work_group (slow for gpu's)
+            int offset = it.get_group(1);
 
-        bool ignoreme = (offset >= num_orientations);
-
-        // Every work-item in same-work grop  pass same pointer
-        // We take a new descriptor for each y change
-        T::normalize(desc->features, ignoreme, it, d_consts);
+            popsift::Descriptor* desc = &descs[offset];
+            // T::normalize<true>(desc->features, false, it, d_consts);
+            T::template normalize<true>(desc->features, false, it, d_consts);
+        }
     }
 };

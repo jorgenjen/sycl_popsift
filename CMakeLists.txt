@@ -55,9 +55,10 @@ else()
   message(STATUS "CUDA DISABLED -- Running cpu only mode")
   set(CPU_ONLY "-DCPU_ONLY")
 
-  set(CMAKE_BUILD_TYPE Debug)
-  message(STATUS "Running in debug mode :D")
-  list(APPEND SYCL_FLAGS -O0 -g -fno-omit-frame-pointer)
+  # set(CMAKE_BUILD_TYPE Debug) message(STATUS "Running in debug mode :D")
+  # list(APPEND SYCL_FLAGS -O0 -g -fno-omit-frame-pointer)
+  set(CMAKE_BUILD_TYPE Release)
+  list(APPEND SYCL_FLAGS -O3)
 endif()
 
 # ==============================================================================

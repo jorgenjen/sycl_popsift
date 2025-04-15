@@ -402,14 +402,16 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool
     }
 }
 
-} // namespace popsift
-
 void popsift::Pyramid::descriptors(const Config& conf)
 {
     sycl::event readDesc = readDescCountersFromDevice();
 
     auto group_size = get_kernel_subgroup_size<sub_group_desc_loop>(_device_queue);
     bool use_sub_group = group_size >= 32;
+
+    // Was not able to do this (probs due to it being in different files?? IDK)
+    // auto normalize_size = get_kernel_subgroup_size<sub_group_normalize>(_device_queue);
+    // const bool sub_group_normalize = normalize_size >= 32;
 
     readDesc.wait();
 
@@ -433,23 +435,14 @@ void popsift::Pyramid::descriptors(const Config& conf)
             {
                 POP_FATAL("not yet");
             }
-            // cuda::event_record(oct_obj.getEventDescDone(), oct_obj.getStream(), __FILE__, __LINE__);
-            // cuda::event_wait(oct_obj.getEventDescDone(), _download_stream, __FILE__, __LINE__);
         }
     }
 
     if(_hct.ori_total == 0)
     {
-        // cerr << "Warning: no descriptors extracted" << endl;
         fprintf(stderr, "Warning: no descriptors extracted\n");
         return;
     }
-    // dim3 block;
-    // dim3 grid;
-    // grid.x = popsift::grid_divide(_hct.ori_total, 32);
-    // block.x = 32;
-    // block.y = 32;
-    // block.z = 1;
 
     sycl::range global{32, static_cast<size_t>(popsift::grid_divide(_hct.ori_total, 32))};
     sycl::range local{32, 32};
@@ -460,30 +453,27 @@ void popsift::Pyramid::descriptors(const Config& conf)
 
         _device_queue.wait(); // should use events instead
 
-        _device_queue.parallel_for(sycl::nd_range{global, local},
-                                   Normalize_histogram<NormalizeRootSift>(_dbuf_host.desc, _d_consts, _hct.ori_total));
-
-        // normalize_histogram<NormalizeRootSift><<<grid, block, 0, _download_stream>>>();
-        // POP_SYNC_CHK;
+        if(use_sub_group) // basing decision on Ext_desc_loop (not the one I'm launching
+                          // as I was not able to pass struct/class to parallel_for and use it as in last one
+        {
+            _device_queue.parallel_for(
+              sycl::nd_range{global, local},
+              Normalize_histogram<NormalizeRootSift, false>(_dbuf_host.desc, _d_consts, _hct.ori_total));
+        }
+        else
+        {
+            // Template param is work_gropu scan
+            _device_queue.parallel_for(
+              sycl::nd_range{global, local},
+              Normalize_histogram<NormalizeRootSift, true>(_dbuf_host.desc, _d_consts, _hct.ori_total));
+        }
     }
     else
     {
         // normalize_histogram<NormalizeL2><<<grid, block, 0, _download_stream>>>();
         // POP_SYNC_CHK;
     }
-
     _device_queue.wait();
-
-    // // START OF PRINT OUT THAT I DID NOT BOTHER TO FINISH
-    // _device_queue.single_task([=, dct = _dct]() {
-    //     sycl::ext::oneapi::experimental::printf("\n\n");
-    //
-    //     for(int i = 0; i < dct->ori_total; ++i)
-    //     {
-    //         for(int j = 0; j < 128; ++j)
-    //         {
-    //             sycl::ext::oneapi::experimental::printf();
-    //         }
-    //     }
-    // })
 }
+
+} // namespace popsift

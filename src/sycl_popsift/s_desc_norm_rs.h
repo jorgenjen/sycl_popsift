@@ -15,21 +15,24 @@
 class NormalizeRootSift
 {
   public:
+    template<bool wg_reduce>
     static inline void normalize(float* features, bool ignoreme, sycl::nd_item<2> it, popsift::ConstInfo* d_consts);
 
     // static inline void normalize_restrict(const float* __restrict__ src_desc, float* __restrict__ dest_desc,
     // popsift::ConstInfo* d_consts);
 
+    template<bool wg_reduce>
     static inline void normalize(
       const float* src_desc, float* dest_desc, bool ignoreme, sycl::nd_item<2> it, popsift::ConstInfo* d_consts);
 };
 
+template<bool wg_reduce>
 inline void NormalizeRootSift::normalize(float* features,
                                          bool ignoreme,
                                          sycl::nd_item<2> it,
                                          popsift::ConstInfo* d_consts)
 {
-    normalize(features, features, ignoreme, it, d_consts);
+    normalize<wg_reduce>(features, features, ignoreme, it, d_consts);
 }
 
 // __device__ inline void NormalizeRootSift::normalize_restrict(const float* __restrict__ src_desc,
@@ -38,6 +41,7 @@ inline void NormalizeRootSift::normalize(float* features,
 //     normalize(src_desc, dst_desc, false);
 // }
 
+template<bool wg_reduce>
 inline void NormalizeRootSift::normalize(
   const float* src_desc, float* dst_desc, bool ignoreme, sycl::nd_item<2> it, popsift::ConstInfo* d_consts)
 {
@@ -61,8 +65,15 @@ inline void NormalizeRootSift::normalize(
     // Only works when sub_gorup is 32...
     // TODO: Add support for work group to this an many other parts of descriptor code)
 
-    // Sum of the whole descriptor
-    sum = sycl::reduce_over_group(it.get_sub_group(), sum, sycl::plus<float>());
+    if constexpr(wg_reduce)
+    {
+        sum = sycl::reduce_over_group(it.get_group(), sum, sycl::plus<float>());
+    }
+    else
+    {
+        // Sum of the whole descriptor with sub_group
+        sum = sycl::reduce_over_group(it.get_sub_group(), sum, sycl::plus<float>());
+    }
 
     // float val;
     // val = scalbnf(__fsqrt_rn(__fdividef(descr.x, sum)), d_consts.norm_multi);
@@ -84,9 +95,18 @@ inline void NormalizeRootSift::normalize(
     descr.z() = sycl::ldexp(sycl::sqrt(sycl::native::divide(descr.z(), sum)), d_consts->norm_multi);
     descr.w() = sycl::ldexp(sycl::sqrt(sycl::native::divide(descr.w(), sum)), d_consts->norm_multi);
 
-    if(!ignoreme)
+    if constexpr(wg_reduce)
     {
+        // Work group has jump of one hence non are ignored
         sycl::vec<float, 4>* out4 = reinterpret_cast<sycl::vec<float, 4>*>(dst_desc);
         out4[it.get_local_id(1)] = descr;
+    }
+    else
+    {
+        if(!ignoreme)
+        {
+            sycl::vec<float, 4>* out4 = reinterpret_cast<sycl::vec<float, 4>*>(dst_desc);
+            out4[it.get_local_id(1)] = descr;
+        }
     }
 }
