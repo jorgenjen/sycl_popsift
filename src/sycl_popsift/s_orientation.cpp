@@ -359,8 +359,12 @@ class ori_par
 
         sycl::vec<int, 2> best_index(it.get_local_id(1), it.get_local_id(1) + 32);
 
-#define XPOS 26.643719f
-#define YPOS 185.853836f
+// For small image
+// #define XPOS 26.643719f
+// #define YPOS 185.853836f
+// For medium image
+#define XPOS 1096.967896f
+#define YPOS 819.321289f
 
         if(iext->xpos == XPOS && iext->ypos == YPOS && it.get_local_id(1) == 0)
         {
@@ -607,9 +611,9 @@ class ori_prefix_sum
         {
             sycl::group_barrier(work_group); // could be needed to ensure we are not diverged when doing scan
 
-            const bool valid = (start < total_ext_ct);
+            const bool valid = (x < total_ext_ct);
 
-            int self = (valid) ? dobuf->extrema[start].num_ori : 0;
+            int self = (valid) ? dobuf->extrema[x].num_ori : 0;
 
             if constexpr(useSubGroup)
             {
@@ -644,9 +648,9 @@ class ori_prefix_sum
                     // start_pos_loop + start_pos_sub_group + work_item exclusive sum in it's sub_group
                     const int ebs = loop_total[0] + sum[it.get_local_id(0)] + ews;
 
-                    dobuf->extrema[start].idx_ori = ebs;
+                    dobuf->extrema[x].idx_ori = ebs;
 
-                    mapping_writer.set(ebs, self, start);
+                    mapping_writer.set(ebs, self, x);
                 }
                 sycl::group_barrier(work_group);
 
@@ -663,9 +667,9 @@ class ori_prefix_sum
 
                 if(valid)
                 {
-                    dobuf->extrema[start].idx_ori = ebs;
+                    dobuf->extrema[x].idx_ori = ebs;
 
-                    mapping_writer.set(ebs, self, start);
+                    mapping_writer.set(ebs, self, x);
                 }
                 if(it.get_local_id(0) == PREFIX_0_DIM - 1 && it.get_local_id(1) == PREFIX_1_DIM - 1)
                 {
@@ -699,7 +703,21 @@ class ori_prefix_sum
                     int num_ori = dobuf->extrema[le].num_ori;
 
                     int hi_ori_index = dobuf->extrema[le].idx_ori + num_ori;
+                    // sycl::ext::oneapi::experimental::printf(
+                    //   "\n\t\tIN ORI_PREFIX_SUM -> hi_ori_index = %d - lo_ori_index = %d", hi_ori_index,
+                    //   lo_ori_index);
                     dct->ori_ct[o] = hi_ori_index - lo_ori_index;
+
+                    sycl::ext::oneapi::experimental::printf(
+                      "Octave %d: fe=%d, le=%d, lo_ori_index=%d, num_ori=%d, hi_ori_index=%d, ori_ct[o]=%d\n",
+                      o,                          // octave index
+                      fe,                         // first extremum
+                      le,                         // last extremum
+                      lo_ori_index,               // low orientation index
+                      num_ori,                    // number of orientations
+                      hi_ori_index,               // high orientation index
+                      hi_ori_index - lo_ori_index // ori_ct[o] value
+                    );
                 }
             }
 
@@ -711,6 +729,8 @@ class ori_prefix_sum
 
             dct->ori_total = dct->ori_ps[MAX_OCTAVES - 1] + dct->ori_ct[MAX_OCTAVES - 1];
             dct->ext_total = dct->ext_ps[MAX_OCTAVES - 1] + dct->ext_ct[MAX_OCTAVES - 1];
+
+            sycl::ext::oneapi::experimental::printf("\n\t\tIN ORI_PREFIX_SUM -> ori_total = %d", dct->ori_total);
         }
     }
 };
@@ -838,12 +858,17 @@ void Pyramid::orientation(const Config& conf)
                 });
             }
         }
+
+        _device_queue.wait(); // to test one by one
+
+        fprintf(stderr, "\n\tDone Ori par for octave %d", octave);
     }
 
     // Should remove this and addd ependencies if htare are any
     _device_queue.wait(); // Don't think there are any... but we'll see
     // Could just for sor range for this (unless I need work_grop/sub_group)
 
+    fprintf(stderr, "\n\tWE ARE PAST ORIENTATION");
     // NOTE: We need num_orientation hence we need to wait for prev kernel could try to split up into octave but not
     // sure if that would make it faster Could try full size for first octave and half size kernel for the reset as the
     // earlier octaves always have more extremas than the later octaves
@@ -883,6 +908,8 @@ void Pyramid::orientation(const Config& conf)
               ori_prefix_sum<false>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
         });
     }
+    _device_queue.wait();
+    fprintf(stderr, "\n\t\tPAST PREFIX SUM COMPUTE\n");
 }
 
 } // namespace popsift

@@ -39,7 +39,7 @@ namespace popsift {
  * both cases to access the expected pixel.
  */
 
-#define TO_CLAMP false
+#define TO_CLAMP true
 static inline void get_gradient(float& grad,
                                 float& theta,
                                 const int x,
