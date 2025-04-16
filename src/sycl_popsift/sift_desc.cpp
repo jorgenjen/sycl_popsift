@@ -383,34 +383,32 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool
 
     // fprintf(stderr, "using global(%)
     // Print global range dimensions
-    fprintf(stderr, "Global range: [%zu, %zu, %zu]\n", global[0], global[1], global[2]);
+    // fprintf(stderr, "Global range: [%zu, %zu, %zu]\n", global[0], global[1], global[2]);
 
     // Print local range dimensions
-    fprintf(stderr, "Local range: [%zu, %zu, %zu]\n", local[0], local[1], local[2]);
+    // fprintf(stderr, "Local range: [%zu, %zu, %zu]\n", local[0], local[1], local[2]);
 
     if(use_sub_group)
     {
-        fprintf(stderr, "I'M RUNNING SUB GROUP MODE\n");
+        // fprintf(stderr, "I'M RUNNING SUB GROUP MODE\n");
         _device_queue.parallel_for<sub_group_desc_loop>(
           sycl::nd_range{global, local},
           Ext_desc_loop(_dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
     }
     else
     {
-        fprintf(stderr, "I'M RUNNING THE LOCLAL ACCESSOR STUFS\n");
-        _device_queue
-          .submit([&](sycl::handler& cgh) {
-              // need 7 for storing the older result values final is stored in current work range idx 7
-              auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
+        // fprintf(stderr, "I'M RUNNING THE LOCLAL ACCESSOR STUFS\n");
+        _device_queue.submit([&](sycl::handler& cgh) {
+            // need 7 for storing the older result values final is stored in current work range idx 7
+            auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
 
-              cgh.parallel_for(
-                sycl::nd_range{global, local},
-                Ext_desc_loop_local_mem(
-                  sum, _dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
-          })
-          .wait();
+            cgh.parallel_for(
+              sycl::nd_range{global, local},
+              Ext_desc_loop_local_mem(
+                sum, _dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
+        });
 
-        fprintf(stderr, "\n\tCOMPLETE WITH EXT DESC LOOP MEM\n");
+        // fprintf(stderr, "\n\tCOMPLETE WITH EXT DESC LOOP MEM\n");
     }
 }
 

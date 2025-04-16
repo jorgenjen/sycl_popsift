@@ -704,12 +704,12 @@ class find_extrema_in_dog
                                  sycl::access::address_space::global_space>(dct->ext_ct[octave])
                   .fetch_min(max_extrema);
 
-                sycl::ext::oneapi::experimental::printf(
-                  "\n\t Octave: %d extrema_count = %d --> ct = %d && number_of_blocks - 1 = %d  \n",
-                  octave,
-                  dct->ext_ct[octave],
-                  ct,
-                  static_cast<int>(it.get_group_range().size()) - 1);
+                // sycl::ext::oneapi::experimental::printf(
+                //   "\n\t Octave: %d extrema_count = %d --> ct = %d && number_of_blocks - 1 = %d  \n",
+                //   octave,
+                //   dct->ext_ct[octave],
+                //   ct,
+                //   static_cast<int>(it.get_group_range().size()) - 1);
             }
         }
     }
@@ -729,7 +729,7 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
         int width = oct_obj.getWidth();
         int height = oct_obj.getHeight();
 
-        fprintf(stderr, "\tWidht=%d, height=%d", width, height);
+        // fprintf(stderr, "\tWidht=%d, height=%d", width, height);
 
         // Based on the fact that sub-group is along nd_range[2]:
         // NOTE: should probably change this to be based on the device prefered sub-group multiplier
@@ -741,25 +741,25 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
         int work_group_count = grid_divide_cuda(height, local[1]) * grid_divide_cuda(width, local[2]) * (_levels - 3);
         sycl::event dog_done = oct_obj._dog_done_event;
 
-        printf("\nFIND EXTREMA octave %d: Local(%zu, %zu, %zu) --- --- Global(%zu, %zu, %zu) work_group(%d, %d, %d) "
-               "Work_group_count = %d\n\n",
-               octave,
-               local[0],
-               local[1],
-               local[2],
-               global[0],
-               global[1],
-               global[2],
-               (_levels - 3),
-               grid_divide_cuda(height, local[1]),
-               grid_divide_cuda(width, local[2]),
-               work_group_count);
+        // printf("\nFIND EXTREMA octave %d: Local(%zu, %zu, %zu) --- --- Global(%zu, %zu, %zu) work_group(%d, %d, %d) "
+        //        "Work_group_count = %d\n\n",
+        //        octave,
+        //        local[0],
+        //        local[1],
+        //        local[2],
+        //        global[0],
+        //        global[1],
+        //        global[2],
+        //        (_levels - 3),
+        //        grid_divide_cuda(height, local[1]),
+        //        grid_divide_cuda(width, local[2]),
+        //        work_group_count);
 
         // Buffer for debugging
         switch(conf.getSiftMode())
         {
             case Config::RefineInLevel:
-                printf("RefineInLevel type VLfeat, NOT IMPLEMENTED AS OF NOW");
+                // printf("RefineInLevel type VLfeat, NOT IMPLEMENTED AS OF NOW");
                 // find_extrema_in_dog<HEIGHT, Config::RefineInLevel>
                 //   <<<grid, block, 0, oct_str>>>(oct_obj.getDogTexturePoint(),
                 //                                 octave,
@@ -774,7 +774,7 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
                 // POP_SYNC_CHK;
                 break;
             default:
-                printf("RefineInOctave type popsift default\n");
+                // printf("RefineInOctave type popsift default\n");
                 oct_obj._extrema_done_event = _device_queue.submit([&](sycl::handler& cgh) {
                     cgh.depends_on({dog_done, d_consts_write, _dobuf_write, _zero_dct, _zero_extrema_num_blocks});
                     cgh.parallel_for(sycl::nd_range{global, local},
@@ -795,7 +795,7 @@ void Pyramid::find_extrema(const Config& conf, sycl::event d_consts_write)
                 break;
         }
 
-#if 1
+#if 0
         // To Debug som information Remove  when all good and working
         _device_queue.wait();
         _device_queue.single_task([=, dct = _dct, dobuf = _dobuf, d_consts = _d_consts]() {

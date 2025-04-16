@@ -388,9 +388,6 @@ class ori_par
         }
         else
         {
-            // TODO: Make the work-group version work
-
-            // sycl::vec<int, 2> best_index(it.get_local_id(1), it.get_local_id(1) + 32);
             BitonicSort::Warp32<float, sycl::group<2>> sorter(yval, it, group);
             sorter.sort64(best_index);
         }

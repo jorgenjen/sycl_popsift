@@ -37,14 +37,14 @@ Pyramid::Pyramid(const Config& config,
     // _octaves = new Octave[_num_octaves];
     // Could not find a way to use C array so using vector
 
-    fprintf(stderr, "Before emplace back and reserve\n");
+    // fprintf(stderr, "Before emplace back and reserve\n");
     _octaves.reserve(_num_octaves);
     for(int i = 0; i < _num_octaves; ++i)
     {
         // _octaves.emplace_back(_device_queue.get_context(), _device_queue.get_device());
         _octaves.emplace_back(_device_queue);
     }
-    fprintf(stderr, "After emplace back and reserve\n");
+    // fprintf(stderr, "After emplace back and reserve\n");
 
     int w = width;
     int h = height;
@@ -141,7 +141,7 @@ void Pyramid::reallocExtrema(int numExtrema)
     // dependency
     if(numExtrema > _hbuf.ext_allocated)
     {
-        fprintf(stderr, "\n\tNeed to do realloc!\n");
+        // fprintf(stderr, "\n\tNeed to do realloc!\n");
         // Makes adds 1024 to size and removes all set bits that is below 1024 position in binary resulting in the
         // segment being a multiple of 1024 (Probs yields better performance)
         numExtrema = ((numExtrema + 1024) & (~(1024 - 1)));
