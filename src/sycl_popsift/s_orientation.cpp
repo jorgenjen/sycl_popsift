@@ -598,7 +598,13 @@ class ori_prefix_sum
             loop_total[0] = 0;
         }
 
-        sycl::group_barrier(work_group); // should not be needed
+        if constexpr(!useSubGroup)
+        {
+            // Need to ensure loop_total is initialized before first use for all work-items
+            sycl::group_barrier(work_group);
+            // Not needed in sub_group version as that has barriers before first use
+        }
+        // sycl::group_barrier(work_group); // should not be needed
 
         const int num = total_ext_ct; // NOT USED
         const int start = it.get_local_linear_id();
@@ -613,7 +619,7 @@ class ori_prefix_sum
 
         for(int x = start; x < end; x += wrap)
         {
-            sycl::group_barrier(work_group); // could be needed to ensure we are not diverged when doing scan
+            // sycl::group_barrier(work_group); // could be needed to ensure we are not diverged when doing scan
 
             const bool valid = (x < total_ext_ct);
 
@@ -631,7 +637,7 @@ class ori_prefix_sum
                     // to be summed up in next phase
                     sum[it.get_local_id(0)] = ews + self; // making it  inclusive
                 }
-                sycl::group_barrier(work_group); // required for memory
+                sycl::group_barrier(work_group); // write to sum
 
                 int ibs; // inclusive block prefix sum
                 if(it.get_local_id(0) == 0)
@@ -645,7 +651,7 @@ class ori_prefix_sum
                     ibs = ebs + self;
                 }
 
-                sycl::group_barrier(work_group);
+                sycl::group_barrier(work_group); // write to sum
 
                 if(valid)
                 {
@@ -656,15 +662,18 @@ class ori_prefix_sum
 
                     mapping_writer.set(ebs, self, x);
                 }
-                sycl::group_barrier(work_group);
+                sycl::group_barrier(work_group); // ensure everyone read loop_total before it's updated
 
                 if(it.get_local_id(0) == 0 && it.get_local_id(1) == PREFIX_1_DIM - 1)
                 {
                     loop_total[0] += ibs;
-                    sycl::ext::oneapi::experimental::printf(
-                      "lid=(%d,%d), ibs=%d, self=%d \n", (int)it.get_local_id(0), (int)it.get_local_id(1), ibs, self);
+                    // sycl::ext::oneapi::experimental::printf(
+                    //   "lid=(%d,%d), ibs=%d, self=%d \n", (int)it.get_local_id(0), (int)it.get_local_id(1), ibs,
+                    //   self);
                 }
-                sycl::group_barrier(work_group); // SHould not be needed as we start with a barrier
+
+                // Ensures consistency of loop_total before next iteration or before we done
+                sycl::group_barrier(work_group);
             }
             else
             {
@@ -692,7 +701,7 @@ class ori_prefix_sum
                                                             ebs + self);
                 }
 
-                sycl::group_barrier(work_group); // SHould not be needed as we start with a barrier
+                sycl::group_barrier(work_group); // ensure loop_total is consistent before next loop iteration
             }
         }
 
@@ -900,8 +909,8 @@ void Pyramid::orientation(const Config& conf)
     // sub_grup mode)
     // --> This version should also just work but would need to tempalte the kernel for the compute part
 
-    // if(!use_subgroup_prefix) // to debugg work_group on GPU
-    if(use_subgroup_prefix) // Normal
+    if(!use_subgroup_prefix) // to debugg work_group on GPU
+    // if(use_subgroup_prefix) // Normal
     {
         fprintf(stderr, "Running subgroup\n");
         _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
