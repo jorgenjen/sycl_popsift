@@ -14,6 +14,8 @@
 
 // #include <cmath> // including cmath did not work due to conflict so could not use INFINITY
 #include <cstdio>
+#include <fstream> // FOR file append
+#include <iostream>
 #include <limits>
 
 #undef BLOCK_3_DIMS
@@ -425,6 +427,30 @@ void popsift::Pyramid::descriptors(const Config& conf)
     // const bool sub_group_normalize = normalize_size >= 32;
 
     readDesc.wait();
+
+    // Now we got my counters on host so we can write them to a file
+    fprintf(stderr,
+            "\n\t\tBitonic numbers [%d, %d, %d, %d, %d]\n",
+            _hct.bitonic_val_counter[0],
+            _hct.bitonic_val_counter[1],
+            _hct.bitonic_val_counter[2],
+            _hct.bitonic_val_counter[3],
+            _hct.bitonic_val_counter[4]);
+
+    std::ofstream outfile("bitonic_count.txt", std::ios::app);
+
+    if(!outfile)
+    {
+        std::cerr << "Error opening file!" << std::endl;
+    }
+    else
+    {
+        for(int i = 0; i < 5; ++i)
+        {
+            outfile << _hct.bitonic_val_counter[i] << " ";
+        }
+        outfile << "\n";
+    }
 
     for(int o = 0; o < _num_octaves; o++)
     {

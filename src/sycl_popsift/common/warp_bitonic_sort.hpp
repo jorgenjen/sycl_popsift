@@ -10,6 +10,7 @@
 // #include "assist.h"
 #include "sycl/sycl.hpp"
 
+#include <cmath>
 namespace popsift {
 namespace BitonicSort {
 
@@ -68,6 +69,19 @@ class Warp32
                 return *ptr;
             }
         }();
+
+        // if constexpr(std::is_same_v<GroupType, sycl::sub_group>)
+        // {
+        //     auto num_values_lower =
+        //       sycl::ext::oneapi::group_ballot(_group, _array[my_indecies.x()] != -INFINITY).count();
+        //     auto num_values_upper =
+        //       sycl::ext::oneapi::group_ballot(_group, _array[my_indecies.y()] != -INFINITY).count();
+        //     if((num_values_lower + num_values_upper) > 4 && _it.get_local_linear_id() == 0)
+        //     {
+        //         sycl::ext::oneapi::experimental::printf("\n\t\tFound many vals --> count = %d\n",
+        //                                                 num_values_lower + num_values_upper);
+        //     }
+        // }
 
         // if(_it.get_global_linear_id() == 0)
         //     sycl::ext::oneapi::experimental::printf("WE GOING BOYYYYYY");
