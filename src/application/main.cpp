@@ -38,7 +38,7 @@
 using namespace std;
 
 static bool write_as_uchar = false;
-static bool write_features = true;
+static bool write_features = false; // TAkes alot of time when running batch
 
 // should probably use a similar options struct as popsift in the future
 // revisions just for initial layout
