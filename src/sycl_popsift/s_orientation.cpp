@@ -394,52 +394,20 @@ class ori_par
             auto num_values_upper = sycl::ext::oneapi::group_ballot(group, yval[best_index.y()] != -INFINITY).count();
             // sycl::ext::oneapi::experimental::printf("\n\t\tFound many vals --> count = %d\n",
             //                                         num_values_lower + num_values_upper);
-            if(it.get_local_linear_id() == 0 && (num_values_lower + num_values_upper) > 2)
+            auto total_values = num_values_lower + num_values_upper;
+            // if(it.get_local_linear_id() == 0 && total_values > 2)
+            // {
+            // Only 3 or more recorded so [0] represents 3 (hence -3 on the count instead of -1)
+            // Computing complete data including 0 and 1 (should not be any zero)
+            if(it.get_local_linear_id() == 0)
             {
                 sycl::atomic_ref<int,
                                  sycl::memory_order::relaxed,
                                  sycl::memory_scope::device,
-                                 sycl::access::address_space::global_space>(dct->bitonic_val_counter[0])
+                                 sycl::access::address_space::global_space>(dct->bitonic_val_counter[total_values])
                   .fetch_add(1);
             }
-
-            if(it.get_local_linear_id() == 1 && (num_values_lower + num_values_upper) > 4)
-            {
-                sycl::atomic_ref<int,
-                                 sycl::memory_order::relaxed,
-                                 sycl::memory_scope::device,
-                                 sycl::access::address_space::global_space>(dct->bitonic_val_counter[1])
-                  .fetch_add(1);
-            }
-
-            if(it.get_local_linear_id() == 2 && (num_values_lower + num_values_upper) > 8)
-            {
-                sycl::atomic_ref<int,
-                                 sycl::memory_order::relaxed,
-                                 sycl::memory_scope::device,
-                                 sycl::access::address_space::global_space>(dct->bitonic_val_counter[2])
-                  .fetch_add(1);
-            }
-
-            if(it.get_local_linear_id() == 3 && (num_values_lower + num_values_upper) > 16)
-            {
-                sycl::atomic_ref<int,
-                                 sycl::memory_order::relaxed,
-                                 sycl::memory_scope::device,
-                                 sycl::access::address_space::global_space>(dct->bitonic_val_counter[3])
-                  .fetch_add(1);
-            }
-
-            if(it.get_local_linear_id() == 4 && (num_values_lower + num_values_upper) > 32)
-            {
-                sycl::atomic_ref<int,
-                                 sycl::memory_order::relaxed,
-                                 sycl::memory_scope::device,
-                                 sycl::access::address_space::global_space>(dct->bitonic_val_counter[4])
-                  .fetch_add(1);
-            }
-            // Did not need to do add for all could have gotten the data bu adding but this works (performance don't
-            // matter) Just to gather data this code is
+            // }
         }
 
         // BitonicSort

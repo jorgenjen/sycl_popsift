@@ -429,13 +429,13 @@ void popsift::Pyramid::descriptors(const Config& conf)
     readDesc.wait();
 
     // Now we got my counters on host so we can write them to a file
-    fprintf(stderr,
-            "\n\t\tBitonic numbers [%d, %d, %d, %d, %d]\n",
-            _hct.bitonic_val_counter[0],
-            _hct.bitonic_val_counter[1],
-            _hct.bitonic_val_counter[2],
-            _hct.bitonic_val_counter[3],
-            _hct.bitonic_val_counter[4]);
+    // fprintf(stderr,
+    //         "\n\t\tBitonic numbers [%d, %d, %d, %d, %d]\n",
+    //         _hct.bitonic_val_counter[0],
+    //         _hct.bitonic_val_counter[1],
+    //         _hct.bitonic_val_counter[2],
+    //         _hct.bitonic_val_counter[3],
+    //         _hct.bitonic_val_counter[4]);
 
     std::ofstream outfile("bitonic_count.txt", std::ios::app);
 
@@ -445,9 +445,11 @@ void popsift::Pyramid::descriptors(const Config& conf)
     }
     else
     {
-        for(int i = 0; i < 5; ++i)
+        // Recdrding 65 values from 0 to 64 inclusive both ends
+        outfile << _hct.bitonic_val_counter[0];
+        for(int i = 1; i < 65; ++i)
         {
-            outfile << _hct.bitonic_val_counter[i] << " ";
+            outfile << " " << _hct.bitonic_val_counter[i];
         }
         outfile << "\n";
     }

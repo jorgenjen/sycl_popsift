@@ -38,7 +38,8 @@ struct ExtremaCounters
     int ori_total;
 
     // Just for getting data in this branch
-    int bitonic_val_counter[5]; // bins for more than: 2, 4, 8, 16, 32
+    // int bitonic_val_counter[5]; // bins for more than: 2, 4, 8, 16, 32
+    int bitonic_val_counter[65]; // increment value where you belong
 };
 
 struct ExtremaBuffers
