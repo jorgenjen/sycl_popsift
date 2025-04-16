@@ -886,13 +886,13 @@ void Pyramid::orientation(const Config& conf)
             }
         }
 
-        _device_queue.wait(); // to test one by one
+        // _device_queue.wait(); // to test one by one
 
         fprintf(stderr, "\n\tDone Ori par for octave %d", octave);
     }
 
     // Should remove this and addd ependencies if htare are any
-    _device_queue.wait(); // Don't think there are any... but we'll see
+    _device_queue.wait();
     // Could just for sor range for this (unless I need work_grop/sub_group)
 
     fprintf(stderr, "\n\tWE ARE PAST ORIENTATION");
@@ -903,14 +903,8 @@ void Pyramid::orientation(const Config& conf)
     sycl::range local_prefix{PREFIX_0_DIM, PREFIX_1_DIM};
     sycl::range global_prefix{PREFIX_0_DIM, PREFIX_1_DIM};
 
-    // TODO: Make it work for CPU, Could spawn based on found sub_group size for kenrnel and use that as dimensions
-    // sub x sub and then the kernel should wokr as is when removing hard coded 1024
-    // --> Another option is to use one exclusive scan for the work_grop and use that (instead of the two scans in
-    // sub_grup mode)
-    // --> This version should also just work but would need to tempalte the kernel for the compute part
-
-    if(!use_subgroup_prefix) // to debugg work_group on GPU
-    // if(use_subgroup_prefix) // Normal
+    // if(!use_subgroup_prefix)    // to debugg work_group on GPU
+    if(use_subgroup_prefix) // Normal
     {
         fprintf(stderr, "Running subgroup\n");
         _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
@@ -936,7 +930,7 @@ void Pyramid::orientation(const Config& conf)
               ori_prefix_sum<false>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
         });
     }
-    _device_queue.wait();
+    _device_queue.wait(); // Required for now first should replace with events
     fprintf(stderr, "\n\t\tPAST PREFIX SUM COMPUTE\n");
 }
 

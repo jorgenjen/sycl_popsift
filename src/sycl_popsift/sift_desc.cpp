@@ -466,7 +466,7 @@ void popsift::Pyramid::descriptors(const Config& conf)
                 POP_FATAL("not yet");
             }
         }
-        _device_queue.wait(); // just for testing
+        // _device_queue.wait(); // just for testing
     }
 
     if(_hct.ori_total == 0)
@@ -474,9 +474,9 @@ void popsift::Pyramid::descriptors(const Config& conf)
         fprintf(stderr, "Warning: no descriptors extracted\n");
         return;
     }
-    _device_queue.wait(); // just for testing
+    // _device_queue.wait(); // just for testing
 
-    fprintf(stderr, "\n\tPAST start_ext_loop loop\n");
+    // fprintf(stderr, "\n\tPAST start_ext_loop loop\n");
 
     sycl::range global{32, static_cast<size_t>(popsift::grid_divide(_hct.ori_total, 32))};
     sycl::range local{32, 32};
