@@ -30,7 +30,7 @@ struct ExtremaCounters
     int ori_ct[MAX_OCTAVES];
 
     /* Exclusive prefix sum of ext_ct */
-    int ext_ps[MAX_OCTAVES];
+    int ext_ps[MAX_OCTAVES]; // TODO: look into removing this one
     /* Exclusive prefix sum of ori_ct */
     int ori_ps[MAX_OCTAVES];
 

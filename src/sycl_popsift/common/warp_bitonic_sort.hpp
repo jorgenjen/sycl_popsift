@@ -9,6 +9,9 @@
 
 // #include "assist.h"
 #include "sycl/sycl.hpp"
+#include "sycl_popsift/sift_constants.hpp"
+
+#include <cmath>
 
 namespace popsift {
 namespace BitonicSort {
@@ -44,6 +47,84 @@ class Warp32
         return my_index;
     }
 
+    // Only for sub_groups
+    inline void minimal_sort64(sycl::vec<int, 2>& my_indecies, int* calee_max_count)
+    {
+        // sycl::ext::oneapi::sub_group_mask is the type
+        auto mask_lower = sycl::ext::oneapi::group_ballot(_group, _array[my_indecies.x()] != -INFINITY);
+        auto mask_upper = sycl::ext::oneapi::group_ballot(_group, _array[my_indecies.y()] != -INFINITY);
+
+        auto lower_count = mask_lower.count();
+        auto upper_count = mask_lower.count();
+        auto total_count = lower_count + upper_count;
+
+        if(total_count >= 32)
+        {
+            // Running backup mode -- Seems highly improbable to happen in my testing
+            // Max was 5 for 947 images
+            sort64(my_indecies);
+        }
+        else
+        {
+            // Could merge the masks and use the mask directly so we can remove if upper and lower
+            // Assign indecies to work-items 0 take lsb and 1 second lsb and so on
+
+            // Could also do it based on the pure mask by extract_bits and using sycl::ctz to count trailing 0 bits
+            if(_it.get_local_id(1) < lower_count)
+            {
+                // Assigned in lower
+                for(int i = 0; i < lower_count; ++i)
+                {
+                    sycl::id<1> idx = mask_lower.find_low();
+                    mask_lower.reset(idx);
+                    if(_it.get_local_id(1) == i)
+                    {
+                        my_indecies.x() = idx[0];
+                        // break; // Could break here but not sure if we want to
+                    }
+                }
+            }
+            else
+            {
+                // Assigned in upper
+                for(int i = lower_count; i < total_count; ++i)
+                {
+                    // upper_count is 0 this will never run
+                    sycl::id<1> idx = mask_lower.find_low();
+                    mask_lower.reset(idx);
+                    if(_it.get_local_id(1) == i)
+                    {
+                        my_indecies.x() = idx[0] + 32;
+                        // break; // Could break here but not sure if we want to
+                    }
+                }
+            }
+
+            // This ^ could be done similarly with __ffsll in cuda or potentially faster with
+            // __fns(unsigned mask, unsigned base, int offset)
+            // Find the position of the n-th set to 1 bit in a 32-bit integer.
+
+            // Now we sort the non -inf values
+            int max_outer = (total_count <= 2)    ? 1 // Selects how wide the sort need to be (2, 4, 8, 16, 32)
+                            : (total_count <= 4)  ? 2
+                            : (total_count <= 8)  ? 3
+                            : (total_count <= 16) ? 4
+                                                  : 5;
+
+            sycl::group_barrier(_group); // To ensure they are not divierged
+            for(int outer = 0; outer < max_outer; outer++)
+            {
+                for(int inner = outer; inner >= 0; inner--)
+                {
+                    // Could consider masking out the threads in the permute_by_xor
+                    my_indecies.x() = shiftit(my_indecies.x(), inner, outer + 1, false);
+                }
+            }
+            // *calee_max_count = sycl::min(total_count, ORIENTATION_MAX_COUNT);
+            *calee_max_count = sycl::min(total_count, static_cast<decltype(total_count)>(ORIENTATION_MAX_COUNT));
+        }
+    }
+
     inline void sort64(sycl::vec<int, 2>& my_indecies)
     {
         // Consider adding mask to check who is not -inf
@@ -68,9 +149,6 @@ class Warp32
                 return *ptr;
             }
         }();
-
-        // if(_it.get_global_linear_id() == 0)
-        //     sycl::ext::oneapi::experimental::printf("WE GOING BOYYYYYY");
 
         for(int outer = 0; outer < 5; outer++)
         {

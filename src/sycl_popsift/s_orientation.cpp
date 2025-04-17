@@ -377,6 +377,11 @@ class ori_par
             sycl::ext::oneapi::experimental::printf("\nAFTER");
         }
 
+        // Needed to for sub_grop using minimal as if it's only two yval that's non -inf
+        // and the largets has index 3 the same orientation will be selected twize which we don't want
+        // Hence need to set this to 2 in that case (popcount)
+        //      --> Is the min of popcount and ORIENTATION_MAX_COUNT
+        int max_count = ORIENTATION_MAX_COUNT;
         // BitonicSort
         if constexpr(useSubGroup)
         {
@@ -384,7 +389,8 @@ class ori_par
             if(it.get_global_linear_id() == 0)
                 sycl::ext::oneapi::experimental::printf("OCTAVE WE DOING SORTER ON %d\n\n", octave);
             BitonicSort::Warp32<float, sycl::sub_group> sorter(yval, it, group);
-            sorter.sort64(best_index);
+            // sorter.sort64(best_index);
+            sorter.minimal_sort64(best_index, &max_count);
         }
         else
         {
@@ -424,7 +430,8 @@ class ori_par
 
         Extremum* ext = &dobuf->extrema[ext_prefix_sum + extremum_index];
 
-        if(it.get_local_id()[1] < ORIENTATION_MAX_COUNT)
+        // if(it.get_local_id()[1] < ORIENTATION_MAX_COUNT)
+        if(it.get_local_id()[1] < max_count)
         {
             if(iext->xpos == XPOS && iext->ypos == YPOS)
             {
