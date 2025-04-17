@@ -18,23 +18,22 @@ namespace BitonicSort {
 
 // Might move away from being a  class and in common as it's not as generic as the one used in the cuda code
 
-// Currently working for work-groups should make a versio for sub_groups for better performance Might be hard to make
-// generic so might need to switch between implemntation based on sub_group size or the multiplier it gives
-// template<typename T>
+// Works only when the work_group is 1, 32
 template<typename T, typename GroupType>
-class Warp32
+class WorkGroup32
 {
     sycl::local_accessor<T, 1> _array;
     sycl::nd_item<2> _it;
     GroupType _group;
 
   public:
-    inline Warp32(sycl::local_accessor<T, 1> array, sycl::nd_item<2> it, GroupType group)
+    inline WorkGroup32(sycl::local_accessor<T, 1> array, sycl::nd_item<2> it, GroupType group)
       : _array(array)
       , _it(it)
       , _group(group)
     {}
 
+    // Not in use
     inline int sort32(int my_index)
     {
         for(int outer = 0; outer < 5; outer++)
@@ -47,22 +46,22 @@ class Warp32
         return my_index;
     }
 
-    // Only for sub_groups
-    inline void minimal_sort64(sycl::vec<int, 2>& my_indecies, int* calee_max_count)
+    // Only for sub_groups of size 32
+    inline int minimal_sort64(int& my_index)
     {
         // sycl::ext::oneapi::sub_group_mask is the type
-        auto mask_lower = sycl::ext::oneapi::group_ballot(_group, _array[my_indecies.x()] != -INFINITY);
-        auto mask_upper = sycl::ext::oneapi::group_ballot(_group, _array[my_indecies.y()] != -INFINITY);
+        auto mask_lower = sycl::ext::oneapi::group_ballot(_group, _array[_it.get_local_id(1)] != -INFINITY);
+        auto mask_upper = sycl::ext::oneapi::group_ballot(_group, _array[_it.get_local_id(1) + 32] != -INFINITY);
 
         auto lower_count = mask_lower.count();
-        auto upper_count = mask_lower.count();
+        auto upper_count = mask_upper.count();
         auto total_count = lower_count + upper_count;
 
         if(total_count >= 32)
         {
             // Running backup mode -- Seems highly improbable to happen in my testing
             // Max was 5 for 947 images
-            sort64(my_indecies);
+            sort64(my_index);
         }
         else
         {
@@ -79,7 +78,7 @@ class Warp32
                     mask_lower.reset(idx);
                     if(_it.get_local_id(1) == i)
                     {
-                        my_indecies.x() = idx[0];
+                        my_index = idx[0];
                         // break; // Could break here but not sure if we want to
                     }
                 }
@@ -89,12 +88,12 @@ class Warp32
                 // Assigned in upper
                 for(int i = lower_count; i < total_count; ++i)
                 {
-                    // upper_count is 0 this will never run
-                    sycl::id<1> idx = mask_lower.find_low();
-                    mask_lower.reset(idx);
+                    // if upper_count is 0 this will never run
+                    sycl::id<1> idx = mask_upper.find_low();
+                    mask_upper.reset(idx);
                     if(_it.get_local_id(1) == i)
                     {
-                        my_indecies.x() = idx[0] + 32;
+                        my_index = idx[0] + 32;
                         // break; // Could break here but not sure if we want to
                     }
                 }
@@ -111,30 +110,29 @@ class Warp32
                             : (total_count <= 16) ? 4
                                                   : 5;
 
-            sycl::group_barrier(_group); // To ensure they are not divierged
+            sycl::group_barrier(_group); // To ensure they are not divierged -- not sure if needed
             for(int outer = 0; outer < max_outer; outer++)
             {
                 for(int inner = outer; inner >= 0; inner--)
                 {
                     // Could consider masking out the threads in the permute_by_xor
-                    my_indecies.x() = shiftit(my_indecies.x(), inner, outer + 1, false);
+                    my_index = shiftit(my_index, inner, outer + 1, false);
                 }
             }
-            // *calee_max_count = sycl::min(total_count, ORIENTATION_MAX_COUNT);
-            *calee_max_count = sycl::min(total_count, static_cast<decltype(total_count)>(ORIENTATION_MAX_COUNT));
         }
     }
 
-    inline void sort64(sycl::vec<int, 2>& my_indecies)
-    {
-        // Consider adding mask to check who is not -inf
-        // and if 32 or less are not -inf we can do the sort in one
-        // 32 group and don't need the whole 64. Could also do in even less
-        // if it is very few ( could make this conditional logic) should be faseter
-        // in average case if -inf is quite common (as it seems to be ) need to test this
-        // just do maks and popcount and printout the count of non -inf and run on many imags
-        // to get a picture
+    // Consider adding mask to check who is not -inf
+    // and if 32 or less are not -inf we can do the sort in one
+    // 32 group and don't need the whole 64. Could also do in even less
+    // if it is very few ( could make this conditional logic) should be faseter
+    // in average case if -inf is quite common (as it seems to be ) need to test this
+    // just do maks and popcount and printout the count of non -inf and run on many imags
+    // to get a picture
 
+    // inline void sort64(sycl::vec<int, 2>& my_indecies)
+    inline void sort64(int& lower)
+    {
         // Should not add overhead for sub_group version  I think...
         const auto& ref = [&]() {
             if constexpr(std::is_same_v<GroupType, sycl::sub_group>)
@@ -150,41 +148,48 @@ class Warp32
             }
         }();
 
+        lower = _it.get_local_id(1);
+        int upper = _it.get_local_id(1) + 32;
         for(int outer = 0; outer < 5; outer++)
         {
             for(int inner = outer; inner >= 0; inner--)
             {
                 if constexpr(std::is_same_v<GroupType, sycl::sub_group>)
                 {
-                    my_indecies.x() = shiftit(my_indecies.x(), inner, outer + 1, false);
-                    my_indecies.y() = shiftit(my_indecies.y(), inner, outer + 1, true);
+                    // my_indecies.x() = shiftit(my_indecies.x(), inner, outer + 1, false);
+                    // my_indecies.y() = shiftit(my_indecies.y(), inner, outer + 1, true);
+
+                    lower = shiftit(lower, inner, outer + 1, false);
+                    upper = shiftit(upper, inner, outer + 1, true);
                 }
                 else
                 {
-                    my_indecies.x() = shiftit_local_mem(my_indecies.x(), inner, outer + 1, false, ref);
-                    my_indecies.y() = shiftit_local_mem(my_indecies.y(), inner, outer + 1, true, ref);
+                    // my_indecies.x() = shiftit_local_mem(my_indecies.x(), inner, outer + 1, false, ref);
+                    // my_indecies.y() = shiftit_local_mem(my_indecies.y(), inner, outer + 1, true, ref);
+
+                    lower = shiftit_local_mem(lower, inner, outer + 1, false, ref);
+                    upper = shiftit_local_mem(upper, inner, outer + 1, true, ref);
                 }
             }
         }
 
-        if(_array[my_indecies.x()] < _array[my_indecies.y()])
-            swap(my_indecies.x(), my_indecies.y());
+        // We want the largest values in the lower half
+        if(_array[lower] < _array[upper])
+            swap(lower, upper);
 
+        // Sort the lower half (upper is now discarded -- Was kept in cuda for generic reasons I guess)
         for(int outer = 0; outer < 5; outer++)
         {
             for(int inner = outer; inner >= 0; inner--)
             {
                 if constexpr(std::is_same_v<GroupType, sycl::sub_group>)
                 {
-                    my_indecies.x() = shiftit(my_indecies.x(), inner, outer + 1, false);
-                    // my_indecies.y() = shiftit(my_indecies.y(), inner, outer + 1, false);
-                    // why are we sorting Y here it can never be selected as ther are no swaps between x and y after
-                    // this point and we are sorting it just to sort it?? the best y can be is 32...
+                    // my_indecies.x() = shiftit(my_indecies.x(), inner, outer + 1, false);
+                    lower = shiftit(lower, inner, outer + 1, false);
                 }
                 else
                 {
-                    my_indecies.x() = shiftit_local_mem(my_indecies.x(), inner, outer + 1, false, ref);
-                    // my_indecies.y() = shiftit(my_indecies.y(), inner, outer + 1, false);
+                    lower = shiftit_local_mem(lower, inner, outer + 1, false, ref);
                 }
             }
         }

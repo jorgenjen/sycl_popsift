@@ -357,14 +357,12 @@ class ori_par
         }
         sycl::group_barrier(group);
 
-        sycl::vec<int, 2> best_index(it.get_local_id(1), it.get_local_id(1) + 32);
-
 // For small image
-// #define XPOS 26.643719f
-// #define YPOS 185.853836f
-// For medium image
-#define XPOS 1096.967896f
-#define YPOS 819.321289f
+#define XPOS 26.643719f
+#define YPOS 185.853836f
+        // For medium image
+        // #define XPOS 1096.967896f
+        // #define YPOS 819.321289f
 
         if(iext->xpos == XPOS && iext->ypos == YPOS && it.get_local_id(1) == 0)
         {
@@ -381,39 +379,50 @@ class ori_par
         // and the largets has index 3 the same orientation will be selected twize which we don't want
         // Hence need to set this to 2 in that case (popcount)
         //      --> Is the min of popcount and ORIENTATION_MAX_COUNT
-        int max_count = ORIENTATION_MAX_COUNT;
+        // int max_count = ORIENTATION_MAX_COUNT;
+#define minimal_sort 0
+
+#if minimal_sort
+        int my_index = -1; // if unmodified it was not assigned value in minimal
+#else
+        int my_index = 0; // Will always be modified by non-minimal
+#endif
         // BitonicSort
         if constexpr(useSubGroup)
         {
             // BitonicSort::Warp32<float, sycl::sub_group> sorter(yval, it, group);
             if(it.get_global_linear_id() == 0)
                 sycl::ext::oneapi::experimental::printf("OCTAVE WE DOING SORTER ON %d\n\n", octave);
-            BitonicSort::Warp32<float, sycl::sub_group> sorter(yval, it, group);
-            // sorter.sort64(best_index);
-            sorter.minimal_sort64(best_index, &max_count);
+            BitonicSort::WorkGroup32<float, sycl::sub_group> sorter(yval, it, group);
+#if minimal_sort
+            sorter.minimal_sort64(my_index);
+#else
+            sorter.sort64(my_index);
+#endif
         }
         else
         {
-            BitonicSort::Warp32<float, sycl::group<2>> sorter(yval, it, group);
-            sorter.sort64(best_index);
+            BitonicSort::WorkGroup32<float, sycl::group<2>> sorter(yval, it, group);
+            sorter.sort64(my_index);
         }
 
-        // sycl::group_barrier(group); // me test syncer :D
+        sycl::group_barrier(group); // me test syncer :D
 
         if(iext->xpos == XPOS && iext->ypos == YPOS)
         {
-            sycl::ext::oneapi::experimental::printf("\n\tthreadIdx %d --> best_index (%d, %d) --> yval(%f, %f)",
-                                                    it.get_local_id(1),
-                                                    best_index.x(),
-                                                    best_index.y(),
-                                                    yval[best_index.x()],
-                                                    yval[best_index.y()]);
+            sycl::ext::oneapi::experimental::printf("\n\tthreadIdx %d  -  best_index %d --> yval = %f",
+                                                    (int)it.get_local_id(1),
+                                                    my_index,
+                                                    my_index != -1 ? yval[my_index] : -INFINITY);
         }
 
-        // Looks correct
-        // return;
+#if minimal_sort
+        // Needed to avoid some value potentially being duplicate when running minimal
+        const float best_val = my_index != -1 ? yval[my_index] : -INFINITY;
+#else
 
-        const float best_val = yval[best_index.x()];
+        const float best_val = yval[my_index];
+#endif
 
         // Zero broadcast as it has higest yvalue
         const float yval_treshold = 0.8 * sycl::group_broadcast(group, best_val, 0);
@@ -426,12 +435,16 @@ class ori_par
 
         // Think we compute out of loop to avoid too much compute in branching?
         const bool valid = (best_val >= yval_treshold); // Only larger than threshold is accepted
+        // A -1 my_index could only be valid if all yval is -INFINITY
+        // I don't think that can happen     TODO: Verify that it can't happen
+        // This is only concern for miniimal
+
         bool written = false;
 
         Extremum* ext = &dobuf->extrema[ext_prefix_sum + extremum_index];
 
-        // if(it.get_local_id()[1] < ORIENTATION_MAX_COUNT)
-        if(it.get_local_id()[1] < max_count)
+        if(it.get_local_id()[1] < ORIENTATION_MAX_COUNT)
+        // if(it.get_local_id()[1] < max_count)
         {
             if(iext->xpos == XPOS && iext->ypos == YPOS)
             {
@@ -440,7 +453,7 @@ class ori_par
             }
             if(valid)
             {
-                float chosen_bin = refined_angle[best_index.x()];
+                float chosen_bin = refined_angle[my_index];
                 if(chosen_bin >= ORI_NBINS)
                     chosen_bin -= ORI_NBINS;
 
@@ -835,6 +848,7 @@ void Pyramid::orientation(const Config& conf)
             // NOTE: Need to make modificatons when sub-group is not 32
             // as is normaly the case on cpu's
 
+            // if(!use_subgroup_ori_par) // to debug local memory on gpu
             if(use_subgroup_ori_par)
             {
                 fprintf(stderr, "\n\tUSING SUBGOUP for Orientation\n");
