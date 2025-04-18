@@ -134,7 +134,7 @@ class Pyramid
     FeaturesHost* get_descriptors(const Config& conf);
 
     /** step 3 (alternative): make copy of descriptors on device side */
-    // FeaturesDev *clone_device_descriptors(const Config &conf);
+    FeaturesDev* clone_device_descriptors(const Config& conf);
 
     void download_and_save_array(const char* basename);
 
@@ -187,8 +187,7 @@ class Pyramid
     //                      FeaturesHost *features, bool really,
     //                      bool with_orientation);
 
-    // void clone_device_descriptors_sub(const Config &conf,
-    //                                   FeaturesDev *features);
+    void clone_device_descriptors_sub(const Config& conf, FeaturesDev* features);
 };
 
 } // namespace popsift

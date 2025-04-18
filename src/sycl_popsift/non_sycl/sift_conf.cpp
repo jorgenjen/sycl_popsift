@@ -81,6 +81,19 @@ void Config::setDescMode(const std::string& text)
         POP_FATAL("specified descriptor extraction mode must be one of loop, grid or igrid");
 }
 
+const char* Config::getDescModeUsage()
+{
+    return "Choice of descriptor extraction modes:\n"
+           "loop, vlfeat\n"
+           "Default is loop\n"
+           "  loop is OpenCV-like horizontal scanning, sampling every pixel in a radius around the "
+           "  centers or the 16 tiles arond the keypoint. Each sampled point contributes to two "
+           "  histogram bins."
+           "vlfeat is VLFeat-like horizontal scanning, sampling every pixel in a radius around "
+           "  keypoint itself, using the 16 tile centers only for weighting. Every sampled point "
+           "  contributes to up to eight historgram bins.";
+}
+
 void Config::setDescMode(Config::DescMode m) { _desc_mode = m; }
 
 void Config::setGaussMode(const std::string& m)

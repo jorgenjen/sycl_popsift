@@ -3,6 +3,7 @@
 #include "sycl/device.hpp"
 #include "sycl/device_selector.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
+#include "sycl_popsift/features.hpp"
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
@@ -72,7 +73,9 @@ inline void PopSift::initQueue()
 #endif
 }
 
-PopSift::PopSift(const popsift::Config& config)
+// PopSift::PopSift(const popsift::Config& config)
+PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode mode, ImageMode imode)
+  : _image_mode(imode)
 {
     // should use the confige here to configure but requires that you have the
     // pyramid and all that
@@ -80,16 +83,31 @@ PopSift::PopSift(const popsift::Config& config)
     initQueue();
     configure(config);
 
+    if(imode == ByteImages) // default
+    {
+        _pipe._unused.push(new popsift::Image(_device_queue));
+        _pipe._unused.push(new popsift::Image(_device_queue));
+    }
+    else
+    {
+        // _pipe._unused.push(new popsift::ImageFloat);
+        // _pipe._unused.push(new popsift::ImageFloat);
+        // TODO Add support fro float images
+        fprintf(stderr, "Currently not implemented\n");
+    }
+
     // Push two images as we use two one to load in data and other to compute
     // and they alter using the queue
-    _pipe._unused.push(new popsift::Image(_device_queue));
-    _pipe._unused.push(new popsift::Image(_device_queue));
 
     std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
 
     // TODO(jorgejen): Setup these threads.
     _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
-    _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
+    // _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
+    if(mode == popsift::Config::ExtractingMode)
+        _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
+    else
+        _pipe._thread_stage2.reset(new std::thread(&PopSift::matchPrepareLoop, this));
 
     if(_device_queue.is_in_order())
     {
@@ -379,27 +397,8 @@ void PopSift::uploadImages()
 
 void PopSift::extractDownloadLoop()
 {
-    // cudaSetDevice(_device);
-    // std::cout << "Befoe apply conf conf dong" << std::endl;
     applyConfiguration(true); // Applies configuration is only run once as
                               // the thread is started
-
-    // fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
-    // _d_gauss_write.wait();
-    //
-    // // _device_queue
-    // //   ->submit([&](sycl::handler& cgh) {
-    // //       popsift::GaussInfo* gauss = _d_gauss;
-    // //       cgh.single_task([=]() {
-    // //           sycl::ext::oneapi::experimental::printf("\n\t\t_d_gauss.required_filter_stages = %d\n\n",
-    // //                                                   gauss->required_filter_stages);
-    // //       });
-    // //   })
-    // //   .wait();
-    //
-    // fprintf(stderr, "\n\n\t\t HOY HOY HOY\n\n");
-
-    // std::cout << "Starting download loop thread" << std::endl;
     Pipe& p = _pipe;
 
     SiftJob* job;
@@ -410,45 +409,22 @@ void PopSift::extractDownloadLoop()
 
         popsift::Image* img = job->getImg();
 
-        job->printJob(); // Can probs remove
-
-        fprintf(stderr, "Before priv init\n");
         private_init(img->getWidth(), img->getHeight());
-
-        // _device_queue.wait();
-
-        fprintf(stderr, "\n\tBefore step one queue clear\n");
 
         p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
-        // p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
-
-        // popsift::ConstInfo* me_consts = _d_consts;
-        // _device_queue
-        //   .single_task([=]() {
-        //       sycl::ext::oneapi::experimental::printf(
-        //         "_d_donsts norm_multi %d -- edge_limit %f", me_consts->norm_multi, me_consts->edge_limit);
-        //   })
-        //   .wait();
-
-        // FUFULL THE PROMISE
-
-        //
-        fprintf(stderr, "before the wait \n");
-        _device_queue.wait();
-        cout << "Jobby: -- " << endl;
-
-        // idk why this does not work
-        // job->printJob();
+        _device_queue.wait(); // SHould not be needed
 
         // uploaded Image object is no longer needed, release for reuse
         p._unused.push(img);
 
-        // p._pyramid->step2(_config, {sycl::event()}, _d_consts_write);
         p._pyramid->step2(_config, _d_consts_write);
 
         // Copy featrues to host -- step 3
         popsift::FeaturesHost* features = p._pyramid->get_descriptors(_config);
+
+        // popsift::FeaturesDev* for_funsies_ja =
+        //   p._pyramid->clone_device_descriptors(_config); // Delete this line move to match loop
 
         bool log_to_file = (_config.getLogMode() == popsift::Config::All);
         if(log_to_file)
@@ -467,6 +443,49 @@ void PopSift::extractDownloadLoop()
     }
 
     // _device_queue.wait(); // Having a wait here before I have all events configured properly
+    private_uninit();
+}
+
+void PopSift::matchPrepareLoop()
+{
+    applyConfiguration(true);
+
+    Pipe& p = _pipe;
+
+    SiftJob* job;
+    while((job = p._queue_stage2.pull()) != nullptr)
+    {
+        popsift::FeaturesDev* features;
+        try
+        {
+            applyConfiguration();
+
+            popsift::Image* img = job->getImg();
+            // Should add imagebase and ImageFloat to support float images
+            // popsift::ImageBase* img = job->getImg();
+
+            private_init(img->getWidth(), img->getHeight());
+
+            p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
+
+            // uploaded Image object is no longer needed, release for reuse
+            p._unused.push(img);
+
+            p._pyramid->step2(_config, _d_consts_write);
+
+            features = p._pyramid->clone_device_descriptors(_config);
+            _device_queue.wait(); // Should be removed and only depend on dependencies events
+        }
+        catch(const std::exception& e)
+        {
+            job->setError(std::current_exception());
+            job->setFeatures(nullptr);
+            break;
+        }
+
+        job->setFeatures(features);
+    }
+
     private_uninit();
 }
 
@@ -509,6 +528,18 @@ void SiftJob::printJob() { std::printf("Width: %d -- height: %d\n", _w, _h); }
 
 // Do we need dynamic cast
 popsift::FeaturesHost* SiftJob::getHost() { return dynamic_cast<popsift::FeaturesHost*>(_f.get()); }
+
+popsift::FeaturesDev* SiftJob::getDev()
+{
+    popsift::FeaturesBase* features = _f.get();
+    if(this->_err != nullptr)
+    {
+        std::rethrow_exception(this->_err);
+    }
+    return dynamic_cast<popsift::FeaturesDev*>(features);
+}
+
+void SiftJob::setError(std::exception_ptr ptr) { this->_err = ptr; }
 
 void SiftJob::setImg(popsift::Image* img, const float& upscaleFactor)
 {
@@ -560,75 +591,11 @@ void PopSift::Pipe::uninit()
 
 void PopSift::allMainThread()
 {
-#define break_in_uploadImages 1
-
-#if break_in_uploadImages
     // Seems to be fine  with thread setup :D
 
-    // uploadImages();
-    //
-    // extractDownloadLoop();
-    // _device_queue.wait_and_throw();
+    // requires break in uploadImages to exit
+    uploadImages();
 
-#else
-
-    // START: uploadImages();
-    SiftJob* job = _pipe._queue_stage1.pull();
-
-    popsift::Image* img = _pipe._unused.pull(); // getting a unused Image (reusing it)
-
-    job->setImg(img, _device_queue, _config.getUpscaleFactor());
-
-    // _pipe._queue_stage2.push(job);
-    fprintf(stderr, "\n\n\t\tDone uploading you little DOGGY DOG\n\n");
-
-    // _device_queue.wait_and_throw();
-    // START extractDownloadLoop();
-
-    applyConfiguration(true); // Applies configuration is only run once as
-    Pipe& p = _pipe;
-
-    // SiftJob* job = p._queue_stage2.pull(); // Same job pointer as above
-
-    // popsift::Image* img = job->getImg(); // same img pointer as above
-
-    job->printJob(); // Can probs remove
-
-    private_init(img->getWidth(), img->getHeight());
-
-    // _device_queue.wait();
-
-    fprintf(stderr, "\n\tBefore step one queue clear\n");
-
-    std::vector<sycl::event> dependencies = p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
-
-    popsift::ConstInfo* me_consts = _d_consts;
-    _device_queue
-      .single_task([=]() {
-          sycl::ext::oneapi::experimental::printf(
-            "_d_donsts norm_multi %d -- edge_limit %f", me_consts->norm_multi, me_consts->edge_limit);
-      })
-      .wait();
-
-    // FUFULL THE PROMISE
-
-    cout << "Jobby: -- " << endl;
-    job->printJob();
-
-    // uploaded input image no longer needed, release for reuse
-    p._unused.push(img);
-
-    // p._pyramid->step2(_config, dependencies, _d_consts_write);
-
-    // _device_queue.wait();
+    extractDownloadLoop();
     _device_queue.wait_and_throw();
-
-    fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");
-    fflush(stdout);
-    fflush(stderr);
-    job->jobDone(5);
-
-    // _device_queue.wait(); // Having a wait here before I have all events configured properly
-    private_uninit();
-#endif
 }

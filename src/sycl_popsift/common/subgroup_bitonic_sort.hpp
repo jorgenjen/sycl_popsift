@@ -47,9 +47,12 @@ class WorkGroup32
     }
 
     // Only for sub_groups of size 32
-    inline int minimal_sort64(int& my_index)
+    inline void minimal_sort64(int& my_index) // Modifies given my_index
     {
         // sycl::ext::oneapi::sub_group_mask is the type
+
+        // Could use sycl::isinf to check if the value is infinity negative or poseetive true returned if it is so
+        // opposite of what we want however, Could use sycl::isfinite
         auto mask_lower = sycl::ext::oneapi::group_ballot(_group, _array[_it.get_local_id(1)] != -INFINITY);
         auto mask_upper = sycl::ext::oneapi::group_ballot(_group, _array[_it.get_local_id(1) + 32] != -INFINITY);
 

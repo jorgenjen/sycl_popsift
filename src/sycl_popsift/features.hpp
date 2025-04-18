@@ -74,7 +74,8 @@ class FeaturesHost : public FeaturesBase
     Descriptor* _ori;
 
   public:
-    FeaturesHost();
+    FeaturesHost() = delete; // no default constructor - need the queue
+    FeaturesHost(sycl::queue Q);
     FeaturesHost(sycl::queue Q, int num_ext, int num_ori);
     ~FeaturesHost() override;
 
@@ -106,13 +107,15 @@ std::ostream& operator<<(std::ostream& ostr, const FeaturesHost& feature);
 
 class FeaturesDev : public FeaturesBase
 {
+    sycl::queue _device_queue;
     Feature* _ext;    // array of extrema
     Descriptor* _ori; // array of desciptors
     int* _rev;        // the reverse map from descriptors to extrema
 
   public:
-    FeaturesDev();
-    FeaturesDev(int num_ext, int num_ori);
+    FeaturesDev() = delete;
+    FeaturesDev(sycl::queue Q);
+    FeaturesDev(sycl::queue Q, int num_ext, int num_ori);
     ~FeaturesDev() override;
 
     void reset(int num_ext, int num_ori);
@@ -137,6 +140,45 @@ class FeaturesDev : public FeaturesBase
      *    int3.z indicates if the match is valid (non-zero) or not (zero)
      */
     // int3* matchAndReturn(FeaturesDev* other);
+    // sycl::vec<int, 3>* matchAndReturn(FeaturesDev* other);
+
+    // void destroyMatchMatrix(sycl::vec<int, 3>* matrix_ptr)
+    // {
+    //     if(!matrix_ptr)
+    //         return;
+    //
+    //     try
+    //     {
+    //         auto alloc_kind = sycl::get_pointer_type(ptr, q.get_context());
+    //
+    //         switch(alloc_kind)
+    //         {
+    //             case sycl::usm::alloc::shared: sycl::free(ptr, q); break;
+    //             case sycl::usm::alloc::host:
+    //             case sycl::usm::alloc::device:
+    //                 std::cerr << "This is a host/device poitner and not what this function is designed to do. \nThis
+    //                 function is only to free the passed sycl::vec<int, 3>* matrix pointer returned "
+    //                              "by matchAndReturn\n";
+    //                 break;
+    //             case sycl::usm::alloc::unknown:
+    //                 // Pointer was either already freed or not allocated via SYCL
+    //                 if(verbose)
+    //                     std::cerr << "Warning: Pointer not currently allocated via SYCL (may be already freed)\n";
+    //                 break;
+    //         }
+    //     }
+    //     catch(const sycl::exception& e)
+    //     {
+    //         std::cerr << "SYCL exception during free: " << e.what() << "\n";
+    //     }
+    //     catch(...)
+    //     {
+    //         std::cerr << "Unknown exception during free\n";
+    //     }
+    // }
+
+    // Need to be freed with correct context so this will never work
+    std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> matchAndReturn(FeaturesDev* other);
 
     /** This function takes as parameters that matches returned by
      *  matchAndReturn and releases that memory.

@@ -264,7 +264,7 @@ void Pyramid::step2(const Config& conf, sycl::event d_consts_write)
 //     }
 // }
 
-class Prep_featrues
+class Prep_features
 {
   private:
     DevBuffers* dobuf;
@@ -273,7 +273,7 @@ class Prep_featrues
     const int extrema_total;
 
   public:
-    Prep_featrues(DevBuffers* dobuf, Descriptor* descriptor_base, int up_fac, const int extrema_total)
+    Prep_features(DevBuffers* dobuf, Descriptor* descriptor_base, int up_fac, const int extrema_total)
       : dobuf(dobuf)
       , descriptor_base(descriptor_base)
       , up_fac(up_fac)
@@ -332,6 +332,8 @@ FeaturesHost* Pyramid::get_descriptors(const Config& conf)
                                          // so that will be no wait here
                                          // just wait on the event but should be done a long time ago
 
+    // Need to get dct from device. We need the updated version to get access to ori_total
+
     FeaturesHost* features = new FeaturesHost(_device_queue, _hct.ext_total, _hct.ori_total);
 
     if(_hct.ext_total == 0 || _hct.ori_total == 0)
@@ -343,8 +345,9 @@ FeaturesHost* Pyramid::get_descriptors(const Config& conf)
     // as it's always used in relation to range which only takes size_t
     sycl::range global{static_cast<size_t>(grid_divide(_hct.ext_total, 32))};
     sycl::range local{32};
+
     sycl::event getDescEvent = _device_queue.parallel_for(
-      sycl::nd_range(global, local), Prep_featrues(_dobuf, features->getDescriptors(), up_fac, _hct.ext_total));
+      sycl::nd_range(global, local), Prep_features(_dobuf, features->getDescriptors(), up_fac, _hct.ext_total));
 
     sycl::event featuresCopyEvent = _device_queue.memcpy(
       features->getFeatures(), _dobuf_host.features, _hct.ext_total * sizeof(Feature), getDescEvent);
@@ -358,9 +361,69 @@ FeaturesHost* Pyramid::get_descriptors(const Config& conf)
     return features;
 }
 
+// void Pyramid::clone_device_descriptors_sub(const Config& conf, FeaturesDev* features) {}
+
+FeaturesDev* Pyramid::clone_device_descriptors(const Config& conf)
+{
+    const float up_fac = conf.getUpscaleFactor();
+
+    readDescCountersFromDevice().wait(); // should move to earlier
+                                         // god for clone and get descriptor code
+
+    FeaturesDev* features = new FeaturesDev(_device_queue, _hct.ext_total, _hct.ori_total);
+
+    // Moved in here as it is only used here
+    // clone_device_descriptors_sub(conf, features);
+
+    // dim3 grid(grid_divide(hct.ext_total, 32));
+    // prep_features<<<grid, 32, 0, _download_stream>>>(features->getDescriptors(), up_fac);
+    // POP_SYNC_CHK;
+
+    sycl::range global{static_cast<size_t>(grid_divide(_hct.ext_total, 32))};
+    sycl::range local{32};
+    sycl::event getDescEvent = _device_queue.parallel_for(
+      sycl::nd_range{global, local}, Prep_features(_dobuf, features->getDescriptors(), up_fac, _hct.ext_total));
+
+    // popcuda_memcpy_async(features->getFeatures(),
+    //                      dobuf_shadow.features,
+    //                      hct.ext_total * sizeof(Feature),
+    //                      cudaMemcpyDeviceToDevice,
+    //                      _download_stream);
+    //
+    // popcuda_memcpy_async(features->getDescriptors(),
+    //                      dbuf_shadow.desc,
+    //                      hct.ori_total * sizeof(Descriptor),
+    //                      cudaMemcpyDeviceToDevice,
+    //                      _download_stream);
+
+    sycl::event featuresCopyEvent = _device_queue.memcpy(
+      features->getFeatures(), _dobuf_host.features, _hct.ext_total * sizeof(Feature), getDescEvent);
+
+    sycl::event descCopyEvent = _device_queue.memcpy(
+      features->getDescriptors(), _dbuf_host.desc, _hct.ori_total * sizeof(Descriptor), getDescEvent);
+
+    // popcuda_memcpy_async(features->getReverseMap(),
+    //                      dobuf_shadow.feat_to_ext_map,
+    //                      hct.ori_total * sizeof(int),
+    //                      cudaMemcpyDeviceToDevice,
+    //                      _download_stream);
+
+    sycl::event mapCopyEvent = _device_queue.memcpy(
+      features->getReverseMap(), _dobuf_host.feat_to_ext_map, _hct.ori_total * sizeof(int), getDescEvent);
+
+    featuresCopyEvent.wait();
+    descCopyEvent.wait();
+    mapCopyEvent.wait();
+
+    // cudaStreamSynchronize(_download_stream);
+
+    return features;
+}
+
 void Pyramid::reset_extrema_mgmt()
 {
     // memset(&_hct, 0, sizeof(ExtremaCounters)); // TODO: Figure out if I need this
+    // Pretty sure it's not needed as we always copy dct into hct before use
 
     _zero_dct = _device_queue.memset(_dct, 0, sizeof(popsift::ExtremaCounters));
     _zero_extrema_num_blocks = _device_queue.memset(_d_extrema_num_blocks, 0, sizeof(int) * _num_octaves);

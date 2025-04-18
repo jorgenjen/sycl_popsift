@@ -25,7 +25,7 @@ add_library(
   sycl_popsift/sift_desc.cpp
   sycl_popsift/non_sycl/sift_conf.cpp
   sycl_popsift/non_sycl/sift_conf.hpp
-  sycl_popsift/common/warp_bitonic_sort.hpp
+  sycl_popsift/common/subgroup_bitonic_sort.hpp
   sycl_popsift/common/debug_macros.cpp
   sycl_popsift/common/debug_macros.hpp
   sycl_popsift/common/sync_queue.h
@@ -43,7 +43,7 @@ add_library(
 # sycl_popsift/sift_octave.hpp sycl_popsift/gauss_filter.cpp
 # sycl_popsift/gauss_filter.cpp sycl_popsift/s_extrema.cpp
 # sycl_popsift/s_orientation.cpp sycl_popsift/malloc_devt.hpp
-# sycl_popsift/common/warp_bitonic_sort.hpp )
+# sycl_popsift/common/subgroup_bitonic_sort.hpp )
 
 # GPU target_compile_options(sycl_popsift PUBLIC ${SYCL_FLAGS})
 # target_link_libraries(sycl_popsift PUBLIC Threads::Threads ${SYCL_FLAGS} )

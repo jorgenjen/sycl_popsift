@@ -17,9 +17,8 @@
 
 #include <sycl/sycl.hpp>
 // #include "common/excl_blk_prefix_sum.h"
-// #include "common/warp_bitonic_sort.h"
 // #include "s_gradiant.h"
-#include "sycl_popsift/common/warp_bitonic_sort.hpp"
+#include "sycl_popsift/common/subgroup_bitonic_sort.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
@@ -380,7 +379,7 @@ class ori_par
         // Hence need to set this to 2 in that case (popcount)
         //      --> Is the min of popcount and ORIENTATION_MAX_COUNT
         // int max_count = ORIENTATION_MAX_COUNT;
-#define minimal_sort 0
+#define minimal_sort 1
 
 #if minimal_sort
         int my_index = -1; // if unmodified it was not assigned value in minimal

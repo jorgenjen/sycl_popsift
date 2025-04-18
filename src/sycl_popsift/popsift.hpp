@@ -63,7 +63,7 @@ class SiftJob
      * @return
      */
     popsift::FeaturesHost* getHost();
-    // popsift::FeaturesDev*  getDev();
+    popsift::FeaturesDev* getDev();
 
     // int getHost(); // currently using int to have same pattern of
     // initialization and such
@@ -76,11 +76,12 @@ class SiftJob
 
     // NOTE: Temporary to fufill the promise see popsift later on for proper
     // implmentation and do that
-    void jobDone(int tmpRes);
+    // void jobDone(int tmpRes);
+
     /** fulfill the promise */
     void setFeatures(popsift::FeaturesBase* f);
     //
-    // void setError(std::exception_ptr ptr);
+    void setError(std::exception_ptr ptr);
 
     // TMP just for testing structure
     void printJob();
@@ -109,8 +110,26 @@ class PopSift
     PopSift() = delete;
     PopSift(const PopSift&) = delete;
 
-    // Constructors
-    explicit PopSift(const popsift::Config& config);
+    /**
+     * @brief Image modes
+     */
+    enum ImageMode
+    {
+        ///  byte image, value range 0..255
+        ByteImages,
+        /// float images, value range [0..1[
+        FloatImages // Currently not supported
+    };
+
+    /**
+     * @brief
+     * @param config
+     * @param mode
+     * @param imode
+     */
+    explicit PopSift(const popsift::Config& config,
+                     popsift::Config::ProcessingMode mode = popsift::Config::ExtractingMode,
+                     ImageMode imode = ByteImages);
 
     // should be one more for float images
 
@@ -146,6 +165,7 @@ class PopSift
 
     void extractDownloadLoop();
     void uploadImages();
+    void matchPrepareLoop();
 
     inline void initQueue();
     sycl::event init_gauss_filter();
@@ -174,6 +194,8 @@ class PopSift
      * in configure()
      */
     popsift::Config _shadow_config;
+
+    ImageMode _image_mode;
 
     Pipe _pipe;
     /// whether the object is initialized

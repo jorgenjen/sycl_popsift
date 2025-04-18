@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 
 using namespace std;
@@ -39,8 +40,9 @@ FeaturesBase::~FeaturesBase() = default;
  * FeaturesHost
  *************************************************************/
 
-FeaturesHost::FeaturesHost()
-  : _ext(nullptr)
+FeaturesHost::FeaturesHost(sycl::queue Q)
+  : _device_queue(Q)
+  , _ext(nullptr)
   , _ori(nullptr)
 {}
 
@@ -66,41 +68,14 @@ void FeaturesHost::reset(int num_ext, int num_ori)
 {
     if(_ext != nullptr)
     {
-        // free(_ext);
         sycl::free(_ext, _device_queue);
         _ext = nullptr;
     }
     if(_ori != nullptr)
     {
-        // free(_ori);
         sycl::free(_ori, _device_queue);
         _ori = nullptr;
     }
-
-    // _ext = (Feature*)memalign(getPageSize(), num_ext * sizeof(Feature));
-    // if(_ext == nullptr)
-    // {
-    //     std::stringstream ss;
-    //     ss << "Runtime error:" << endl
-    //        << "    Failed to (re)allocate memory for downloading " << num_ext << " features" << endl;
-    //     if(errno == EINVAL)
-    //         ss << "    Alignment is not a power of two.";
-    //     if(errno == ENOMEM)
-    //         ss << "    Not enough memory.";
-    //     POP_FATAL(ss.str());
-    // }
-    // _ori = (Descriptor*)memalign(getPageSize(), num_ori * sizeof(Descriptor));
-    // if(_ori == nullptr)
-    // {
-    //     std::stringstream ss;
-    //     ss << "Runtime error:" << endl
-    //        << "    Failed to (re)allocate memory for downloading " << num_ori << " descriptors" << endl;
-    //     if(errno == EINVAL)
-    //         ss << "    Alignment is not a power of two.";
-    //     if(errno == ENOMEM)
-    //         ss << "    Not enough memory.";
-    //     POP_FATAL(ss.str());
-    // }
 
     size_t alignment = getPreferredAlignment(_device_queue);
     _ext = sycl::aligned_alloc_host<Feature>(alignment, num_ext, _device_queue);
@@ -114,35 +89,6 @@ void FeaturesHost::reset(int num_ext, int num_ori)
     setFeatureCount(num_ext);
     setDescriptorCount(num_ori);
 }
-
-// void FeaturesHost::pin()
-// {
-//     cudaError_t err;
-//     err = cudaHostRegister(_ext, getFeatureCount() * sizeof(Feature), 0);
-//     if(err != cudaSuccess)
-//     {
-//         cerr << __FILE__ << ":" << __LINE__ << " Runtime warning:" << endl
-//              << "    Failed to register feature memory in CUDA." << endl
-//              << "    Features count: " << getFeatureCount() << endl
-//              << "    Memory size requested: " << getFeatureCount() * sizeof(Feature) << endl
-//              << "    " << cudaGetErrorString(err) << endl;
-//     }
-//     err = cudaHostRegister(_ori, getDescriptorCount() * sizeof(Descriptor), 0);
-//     if(err != cudaSuccess)
-//     {
-//         cerr << __FILE__ << ":" << __LINE__ << " Runtime warning:" << endl
-//              << "    Failed to register descriptor memory in CUDA." << endl
-//              << "    Descriptors count: " << getDescriptorCount() << endl
-//              << "    Memory size requested: " << getDescriptorCount() * sizeof(Descriptor) << endl
-//              << "    " << cudaGetErrorString(err) << endl;
-//     }
-// }
-
-// void FeaturesHost::unpin()
-// {
-//     cudaHostUnregister(_ext);
-//     cudaHostUnregister(_ori);
-// }
 
 void FeaturesHost::print(std::ostream& ostr, bool write_as_uchar) const
 {
@@ -162,111 +108,188 @@ std::ostream& operator<<(std::ostream& ostr, const FeaturesHost& feature)
  * FeaturesDev
  *************************************************************/
 
-// FeaturesDev::FeaturesDev()
-//   : _ext(nullptr)
-//   , _ori(nullptr)
-//   , _rev(nullptr)
-// {}
-//
-// FeaturesDev::FeaturesDev(int num_ext, int num_ori)
-//   : _ext(nullptr)
-//   , _ori(nullptr)
-//   , _rev(nullptr)
-// {
-//     reset(num_ext, num_ori);
-// }
-//
-// FeaturesDev::~FeaturesDev()
-// {
-//     cudaFree(_ext);
-//     cudaFree(_ori);
-//     cudaFree(_rev);
-// }
-//
-// void FeaturesDev::reset(int num_ext, int num_ori)
-// {
-//     if(_ext != nullptr)
-//     {
-//         cudaFree(_ext);
-//         _ext = nullptr;
-//     }
-//     if(_ori != nullptr)
-//     {
-//         cudaFree(_ori);
-//         _ori = nullptr;
-//     }
-//     if(_rev != nullptr)
-//     {
-//         cudaFree(_rev);
-//         _rev = nullptr;
-//     }
-//
-//     _ext = popsift::cuda::malloc_mgdT<Feature>(num_ext, __FILE__, __LINE__);
-//     _ori = popsift::cuda::malloc_mgdT<Descriptor>(num_ori, __FILE__, __LINE__);
-//     _rev = popsift::cuda::malloc_mgdT<int>(num_ori, __FILE__, __LINE__);
-//
-//     setFeatureCount(num_ext);
-//     setDescriptorCount(num_ori);
-// }
-//
-// __device__ inline float l2_in_t0(const float4* lptr, const float4* rptr)
-// {
-//     const float4 lval = lptr[threadIdx.x];
-//     const float4 rval = rptr[threadIdx.x];
-//     const float4 mval = make_float4(lval.x - rval.x, lval.y - rval.y, lval.z - rval.z, lval.w - rval.w);
-//     float res = mval.x * mval.x + mval.y * mval.y + mval.z * mval.z + mval.w * mval.w;
-//     res += shuffle_down(res, 16);
-//     res += shuffle_down(res, 8);
-//     res += shuffle_down(res, 4);
-//     res += shuffle_down(res, 2);
-//     res += shuffle_down(res, 1);
-//     return res;
-// }
-//
-// __global__ void compute_distance(int3* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len)
-// {
-//     if(blockIdx.x >= l_len)
-//         return;
-//     const int idx = blockIdx.x;
-//
-//     float match_1st_val = CUDART_INF_F;
-//     float match_2nd_val = CUDART_INF_F;
-//     int match_1st_idx = 0;
-//     int match_2nd_idx = 0;
-//
-//     const float4* lptr = (const float4*)(&l[idx]);
-//
-//     for(int i = 0; i < r_len; i++)
-//     {
-//         const float4* rptr = (const float4*)(&r[i]);
-//
-//         const float res = l2_in_t0(lptr, rptr);
-//
-//         if(threadIdx.x == 0)
-//         {
-//             if(res < match_1st_val)
-//             {
-//                 match_2nd_val = match_1st_val;
-//                 match_2nd_idx = match_1st_idx;
-//                 match_1st_val = res;
-//                 match_1st_idx = i;
-//             }
-//             else if(res < match_2nd_val)
-//             {
-//                 match_2nd_val = res;
-//                 match_2nd_idx = i;
-//             }
-//         }
-//         __syncthreads();
-//     }
-//
-//     if(threadIdx.x == 0)
-//     {
-//         bool accept = (match_1st_val / match_2nd_val < 0.8f);
-//         match_matrix[blockIdx.x] = make_int3(match_1st_idx, match_2nd_idx, accept);
-//     }
-// }
-//
+FeaturesDev::FeaturesDev(sycl::queue Q)
+  : _device_queue(Q)
+  , _ext(nullptr)
+  , _ori(nullptr)
+  , _rev(nullptr)
+{}
+
+FeaturesDev::FeaturesDev(sycl::queue Q, int num_ext, int num_ori)
+  : _device_queue(Q)
+  , _ext(nullptr)
+  , _ori(nullptr)
+  , _rev(nullptr)
+{
+    reset(num_ext, num_ori);
+}
+
+FeaturesDev::~FeaturesDev()
+{
+    // cudaFree(_ext);
+    // cudaFree(_ori);
+    // cudaFree(_rev);
+
+    fprintf(stderr, "DESTRUCTURE OGA FeaturesDev\n");
+    sycl::free(_ext, _device_queue);
+    sycl::free(_ori, _device_queue);
+    sycl::free(_rev, _device_queue);
+}
+
+void FeaturesDev::reset(int num_ext, int num_ori)
+{
+    if(_ext != nullptr)
+    {
+        sycl::free(_ext, _device_queue);
+        _ext = nullptr;
+    }
+    if(_ori != nullptr)
+    {
+        sycl::free(_ori, _device_queue);
+        _ori = nullptr;
+    }
+    if(_rev != nullptr)
+    {
+        sycl::free(_rev, _device_queue);
+        _rev = nullptr;
+    }
+
+    // TODO: Look into using malloc_deviceT as I don't see why we need shared (managed in cuda)
+    // If user want host access just get a hostPointer no?
+    _ext = popsift::sycl_common::malloc_sharedT<Feature>(
+      num_ext, __FILE__, __LINE__, "Could not allocate shared memory Feautre for clone ", _device_queue);
+    _ori = popsift::sycl_common::malloc_sharedT<Descriptor>(
+      num_ori, __FILE__, __LINE__, "Could not allocate shared memory Descriptor for clone ", _device_queue);
+    _rev = popsift::sycl_common::malloc_sharedT<int>(
+      num_ori, __FILE__, __LINE__, "Could not allocate shared memory int array for clone ", _device_queue);
+
+    setFeatureCount(num_ext);
+    setDescriptorCount(num_ori);
+}
+
+// inline float l2_in_t0(const float4* lptr, const float4* rptr)
+
+template<typename GroupType>
+inline float l2_in_t0(const sycl::vec<float, 4>* lptr,
+                      const sycl::vec<float, 4>* rptr,
+                      GroupType& group,
+                      sycl::nd_item<1>& it)
+{
+    // const float4 lval = lptr[it.get_local_id(0)];
+    // const float4 rval = rptr[it.get_local_id(0)];l
+    const sycl::vec<float, 4> lval = lptr[it.get_local_id(0)];
+    const sycl::vec<float, 4> rval = rptr[it.get_local_id(0)];
+
+    // Could be done as one minus the first one
+    const sycl::vec<float, 4> mval =
+      sycl::vec<float, 4>(lval.x() - rval.x(), lval.y() - rval.y(), lval.z() - rval.z(), lval.w() - rval.w());
+
+    // Is probably a vec functon for this aswell sycl::dot mby
+    float res = mval.x() * mval.x() + mval.y() * mval.y() + mval.z() * mval.z() + mval.w() * mval.w();
+
+    // res += shuffle_down(res, 16);
+    // res += shuffle_down(res, 8);
+    // res += shuffle_down(res, 4);
+    // res += shuffle_down(res, 1);
+    // res += shuffle_down(res, 2);
+    // return res;
+
+    // eucledian distance (without root, not needed for comparison) between the descriptors
+    return sycl::reduce_over_group(group, res, sycl::plus<float>());
+}
+
+template<bool useSubGroup>
+class Compute_distance
+{
+  private:
+    sycl::vec<int, 3>* match_matrix;
+    Descriptor* l;
+    int l_len;
+    Descriptor* r;
+    int r_len;
+
+  public:
+    Compute_distance(sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len)
+      : match_matrix(match_matrix)
+      , l(l)
+      , l_len(l_len)
+      , r(r)
+      , r_len(r_len) {};
+
+    inline void operator()(sycl::nd_item<1> it) const
+    {
+        // Could remove this statement when using global l_len * 32 and local 32 so one per
+        // Hence no group could be superflous
+        if(it.get_group(0) >= l_len) // Should be impossible (considering l_len is setting the dimension of global
+            return;
+        const int idx = it.get_group(0);
+
+        float match_1st_val = std::numeric_limits<float>::infinity();
+        float match_2nd_val = std::numeric_limits<float>::infinity();
+        int match_1st_idx = 0;
+        int match_2nd_idx = 0;
+
+        auto group = [&]() {
+            if constexpr(useSubGroup)
+                return it.get_sub_group();
+            else
+                return it.get_group();
+        }();
+
+        // const float4* lptr = (const float4*)(&l[idx]);
+        // Should use reinterpret_cast isntead mby?
+        // const sycl::vec<float, 4>* lptr = (const sycl::vec<float, 4>*)(&l[idx]);
+        const sycl::vec<float, 4>* lptr = reinterpret_cast<const sycl::vec<float, 4>*>(&l[idx]);
+
+        for(int i = 0; i < r_len; i++)
+        {
+            // const float4* rptr = (const float4*)(&r[i]);
+            // const sycl::vec<float, 4>* rptr = (const sycl::vec<float, 4>*)(&r[i]);
+            const sycl::vec<float, 4>* rptr = reinterpret_cast<const sycl::vec<float, 4>*>(&r[i]);
+
+            const float res = l2_in_t0(lptr, rptr, group, it);
+
+            // if(threadIdx.x == 0)
+            if(it.get_local_id(0) == 0) // Could use group.leader() for sub_group version
+            {
+                if(res < match_1st_val)
+                {
+                    match_2nd_val = match_1st_val;
+                    match_2nd_idx = match_1st_idx;
+                    match_1st_val = res;
+                    match_1st_idx = i;
+                }
+                else if(res < match_2nd_val)
+                {
+                    match_2nd_val = res;
+                    match_2nd_idx = i;
+                }
+            }
+            // __syncthreads();
+            sycl::group_barrier(group); // not sure if this is needed for sub_group
+        }
+
+        // if(threadIdx.x == 0)
+        if(it.get_local_id(0) == 0)
+        {
+            bool accept = ((match_1st_val / match_2nd_val) < 0.8f);
+            // if(accept)
+            // {
+            // sycl::ext::oneapi::experimental::printf(
+            //   "idx = %d ---- match_1st_idx = %d (val %f) -- match_2nd_idx = %d (val %f) --> accept = %d\n",
+            //   idx,
+            //   match_1st_idx,
+            //   match_1st_val,
+            //   match_2nd_idx,
+            //   match_2nd_val,
+            //   accept);
+            // }
+            // match_matrix[blockIdx.x] = make_int3(match_1st_idx, match_2nd_idx, accept);
+            match_matrix[it.get_group(0)] = sycl::vec<int, 3>(match_1st_idx, match_2nd_idx, accept);
+        }
+    }
+};
+
 // __global__ void show_distance(int3* match_matrix,
 //                               Feature* l_ext,
 //                               Descriptor* l_ori,
@@ -321,7 +344,10 @@ std::ostream& operator<<(std::ostream& ostr, const FeaturesHost& feature)
 //         __syncthreads();
 //     }
 // }
-//
+
+// What good are you?? -- for demo purpose I think print outs the distance in ^
+
+// class compute_distance_sub_group_match;
 // void FeaturesDev::match(FeaturesDev* other)
 // {
 //     int l_len = getDescriptorCount();
@@ -356,37 +382,87 @@ std::ostream& operator<<(std::ostream& ostr, const FeaturesHost& feature)
 //
 //     cudaFree(match_matrix);
 // }
-//
-// int3* FeaturesDev::matchAndReturn(FeaturesDev* other)
-// {
-//     int l_len = getDescriptorCount();
-//     int r_len = other->getDescriptorCount();
-//
-//     int3* match_matrix = popsift::cuda::malloc_mgdT<int3>(l_len, __FILE__, __LINE__);
-//
-//     dim3 grid;
-//     grid.x = l_len;
-//     grid.y = 1;
-//     grid.z = 1;
-//     dim3 block;
-//     block.x = 32;
-//     block.y = 1;
-//     block.z = 1;
-//
-//     compute_distance<<<grid, block>>>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len);
-//
-//     return match_matrix;
-// }
-//
+
+class compute_distance_sub_group;
+
+// Passes the pointer and a callback to wait for kernel to finish and callback to free the pointer
+// NOTE: Might not work too well to use sycl::vec for portability's sake
+std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> FeaturesDev::matchAndReturn(
+  FeaturesDev* other)
+{
+    int l_len = getDescriptorCount();
+    int r_len = other->getDescriptorCount();
+
+    // int3* match_matrix = popsift::cuda::malloc_mgdT<int3>(l_len, __FILE__, __LINE__);
+
+    // Consider using device memory and explicit copy to host memory
+    sycl::vec<int, 3>* match_matrix =
+      popsift::sycl_common::malloc_sharedT<sycl::vec<int, 3>>(l_len, __FILE__, __LINE__, "", _device_queue);
+
+    int size = get_kernel_subgroup_size<compute_distance_sub_group>(_device_queue);
+    bool useSubGroup = size >= 32;
+
+    sycl::range global{static_cast<size_t>(l_len * 32)}; // one 32 wide group per descriptor
+    sycl::range local{32};                               // Could channge to width of sub group mby
+
+    sycl::event matchEvent;
+    if(useSubGroup)
+    {
+        fprintf(stderr, "Using sub group\n");
+        matchEvent = _device_queue.parallel_for(
+          sycl::nd_range{global, local},
+          Compute_distance<true>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
+    }
+    else
+    {
+        fprintf(stderr, "Using work group\n");
+        matchEvent = _device_queue.parallel_for<compute_distance_sub_group>(
+          sycl::nd_range{global, local},
+          Compute_distance<true>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
+    }
+
+    // auto wait_for_matrix = [&matchEvent, Q = _device_queue, l_len]() {
+    // auto wait_for_matrix = [event = matchEvent, &Q = _device_queue]() {
+    //     fprintf(stderr, "Called WAIT CALLBAKC\n");
+    //     event.wait();
+    //     Q.wait();
+    // };
+
+    auto wait_for_matrix = [event = std::make_shared<sycl::event>(matchEvent), &Q = _device_queue]() {
+        fprintf(stderr, "Called WAIT CALLBACK\n");
+        event->wait();
+        Q.wait();
+    };
+
+    // If you wait  you most likely want to get the data
+    // Not sure if this is better than not having it...
+    // Q.prefetch(match_matrix, sizeof(sycl::vec<int, 3>) * l_len);
+
+    auto free_matrix = [match_matrix, ctx = _device_queue.get_context()]() {
+        if(sycl::get_pointer_type(match_matrix, ctx) != sycl::usm::alloc::unknown)
+        {
+            // Not sure if this throws and should be caught (could not see it in docs)
+            fprintf(stderr, "FREEING match_matrix with callback :D\n");
+            sycl::free(match_matrix, ctx);
+        }
+        else
+        {
+            fprintf(stderr, "Pointer already freed or invalid\n");
+        }
+    };
+
+    return std::make_tuple(match_matrix, wait_for_matrix, free_matrix);
+}
+
 // void FeaturesDev::freeMatches(int3* match_matrix) { popsift::cuda::free_mgd(match_matrix); }
-//
-// Descriptor* FeaturesDev::getDescriptor(int descIndex) { return &_ori[descIndex]; }
-//
-// const Descriptor* FeaturesDev::getDescriptor(int descIndex) const { return &_ori[descIndex]; }
-//
-// Feature* FeaturesDev::getFeatureForDescriptor(int descIndex) { return &_ext[_rev[descIndex]]; }
-//
-// const Feature* FeaturesDev::getFeatureForDescriptor(int descIndex) const { return &_ext[_rev[descIndex]]; }
+
+Descriptor* FeaturesDev::getDescriptor(int descIndex) { return &_ori[descIndex]; }
+
+const Descriptor* FeaturesDev::getDescriptor(int descIndex) const { return &_ori[descIndex]; }
+
+Feature* FeaturesDev::getFeatureForDescriptor(int descIndex) { return &_ext[_rev[descIndex]]; }
+
+const Feature* FeaturesDev::getFeatureForDescriptor(int descIndex) const { return &_ext[_rev[descIndex]]; }
 
 /*************************************************************
  * Feature

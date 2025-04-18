@@ -55,6 +55,8 @@ namespace sycl_common {
 void print_region(
   float* ptr, const char* identifier, int start_x, int end_x, int start_y, int end_y, int width, sycl::queue Q);
 
+// BUG: Modify all malloc functions to check if it is nullptr not catch exeptions. all sycl allocators does not throw
+// exception when they cant allocate they only return nullptr (Should only not work when out that type of memory)
 template<typename T>
 T* malloc_devT(int num, const char* file, int line, const char* error_message, sycl::queue& Q)
 {
