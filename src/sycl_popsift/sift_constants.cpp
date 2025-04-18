@@ -53,7 +53,7 @@ void init_constants(float sigma0,
     // TODO: look into the sycl::ext::oneapi::device_global
     // could be better than having it part of the class (also true for gauss filter)
 
-    // send constantst to device is moved to calee (method of PopSift class)
+    // send constantst to device is moved to caler (method of PopSift class)
 }
 
 } // namespace popsift

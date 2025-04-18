@@ -363,16 +363,16 @@ class ori_par
         // #define XPOS 1096.967896f
         // #define YPOS 819.321289f
 
-        if(iext->xpos == XPOS && iext->ypos == YPOS && it.get_local_id(1) == 0)
-        {
-            // printf("\nBEFORE: best_index (%d, %d)\n", best_index.x, best_index.y);
-            for(int i = 0; i < 64; i += 2)
-            {
-                sycl::ext::oneapi::experimental::printf("\tidx=%d --> %.6f  -- ", i, yval[i]);
-                sycl::ext::oneapi::experimental::printf("idx=%d --> %.6f\n ", i + 1, yval[i + 1]);
-            }
-            sycl::ext::oneapi::experimental::printf("\nAFTER");
-        }
+        // if(iext->xpos == XPOS && iext->ypos == YPOS && it.get_local_id(1) == 0)
+        // {
+        //     // printf("\nBEFORE: best_index (%d, %d)\n", best_index.x, best_index.y);
+        //     for(int i = 0; i < 64; i += 2)
+        //     {
+        //         sycl::ext::oneapi::experimental::printf("\tidx=%d --> %.6f  -- ", i, yval[i]);
+        //         sycl::ext::oneapi::experimental::printf("idx=%d --> %.6f\n ", i + 1, yval[i + 1]);
+        //     }
+        //     sycl::ext::oneapi::experimental::printf("\nAFTER");
+        // }
 
         // Needed to for sub_grop using minimal as if it's only two yval that's non -inf
         // and the largets has index 3 the same orientation will be selected twize which we don't want
@@ -407,13 +407,13 @@ class ori_par
 
         sycl::group_barrier(group); // me test syncer :D
 
-        if(iext->xpos == XPOS && iext->ypos == YPOS)
-        {
-            sycl::ext::oneapi::experimental::printf("\n\tthreadIdx %d  -  best_index %d --> yval = %f",
-                                                    (int)it.get_local_id(1),
-                                                    my_index,
-                                                    my_index != -1 ? yval[my_index] : -INFINITY);
-        }
+        // if(iext->xpos == XPOS && iext->ypos == YPOS)
+        // {
+        //     sycl::ext::oneapi::experimental::printf("\n\tthreadIdx %d  -  best_index %d --> yval = %f",
+        //                                             (int)it.get_local_id(1),
+        //                                             my_index,
+        //                                             my_index != -1 ? yval[my_index] : -INFINITY);
+        // }
 
 #if minimal_sort
         // Needed to avoid some value potentially being duplicate when running minimal
@@ -427,10 +427,10 @@ class ori_par
         const float yval_treshold = 0.8 * sycl::group_broadcast(group, best_val, 0);
 
         // if(iext->xpos == XPOS && iext->ypos == YPOS && group.leader())
-        if(iext->xpos == XPOS && iext->ypos == YPOS)
-        {
-            sycl::ext::oneapi::experimental::printf("\n\tyval_treshold = %f", yval_treshold);
-        }
+        // if(iext->xpos == XPOS && iext->ypos == YPOS)
+        // {
+        //     sycl::ext::oneapi::experimental::printf("\n\tyval_treshold = %f", yval_treshold);
+        // }
 
         // Think we compute out of loop to avoid too much compute in branching?
         const bool valid = (best_val >= yval_treshold); // Only larger than threshold is accepted
@@ -445,11 +445,12 @@ class ori_par
         if(it.get_local_id()[1] < ORIENTATION_MAX_COUNT)
         // if(it.get_local_id()[1] < max_count)
         {
-            if(iext->xpos == XPOS && iext->ypos == YPOS)
-            {
-                sycl::ext::oneapi::experimental::printf(
-                  "\n\tHELLO IN LE LOOOP -- local_id = %d max_ori = %d\n", it.get_local_id()[1], ORIENTATION_MAX_COUNT);
-            }
+            // if(iext->xpos == XPOS && iext->ypos == YPOS)
+            // {
+            //     sycl::ext::oneapi::experimental::printf(
+            //       "\n\tHELLO IN LE LOOOP -- local_id = %d max_ori = %d\n", it.get_local_id()[1],
+            //       ORIENTATION_MAX_COUNT);
+            // }
             if(valid)
             {
                 float chosen_bin = refined_angle[my_index];

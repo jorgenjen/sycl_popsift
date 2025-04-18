@@ -68,7 +68,7 @@ class SiftJob
     // int getHost(); // currently using int to have same pattern of
     // initialization and such
 
-    void setImg(popsift::Image* img, const float& upscaleFactor);
+    void setImg(popsift::Image* img, const float upscaleFactor);
 
     popsift::Image* getImg();
 
@@ -151,6 +151,8 @@ class PopSift
 
     void allMainThread();
 
+    // inline bool hasBindlessImages() { return _has_bindless_images; }
+
   private:
     void printDim();
     void printDevice();
@@ -198,6 +200,10 @@ class PopSift
     ImageMode _image_mode;
 
     Pipe _pipe;
+
+    // For runtime infomation about aspect
+    // bool _has_bindless_images;
+    // bool _has_image_array; // Binless images array aspect
     /// whether the object is initialized
     bool _isInit{true};
 };

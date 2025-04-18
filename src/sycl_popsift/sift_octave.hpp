@@ -192,6 +192,7 @@ class Octave
     void download_and_save_array(const char* basename, int octave); // need to implement
 
   private:
+    void alloc_bindless_arrays(); // For bindless_images array extension
     void alloc_arrays();
     void free_arrays();
 

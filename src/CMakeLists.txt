@@ -29,7 +29,8 @@ add_library(
   sycl_popsift/common/debug_macros.cpp
   sycl_popsift/common/debug_macros.hpp
   sycl_popsift/common/sync_queue.h
-  sycl_popsift/common/assist.h)
+  sycl_popsift/common/assist.h
+  sycl_popsift/common/bindless_helpers.hpp)
 
 # TODO: Figure out if it should be STATIC, SHARED or not set like in popsift
 # (aka using BUILD_SHARED_LIBS to do do it differntly for MSVC and shared libs

@@ -35,13 +35,12 @@ Pyramid::Pyramid(const Config& config,
   , _d_consts(d_consts)
 {
     // _octaves = new Octave[_num_octaves];
-    // Could not find a way to use C array so using vector
+    // Could not find a way to use C array so using vector due to passing queue to constructor
+    // Could pass queue when doing alloc but for realloc that feels wired...
 
-    // fprintf(stderr, "Before emplace back and reserve\n");
     _octaves.reserve(_num_octaves);
     for(int i = 0; i < _num_octaves; ++i)
     {
-        // _octaves.emplace_back(_device_queue.get_context(), _device_queue.get_device());
         _octaves.emplace_back(_device_queue);
     }
     // fprintf(stderr, "After emplace back and reserve\n");

@@ -25,21 +25,85 @@ using std::min;
 inline void PopSift::initQueue()
 {
 #ifndef CPU_ONLY
-    try
+    // should probably also have a compile time flag --experimental to enable this feature
+    if constexpr(sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
+                 sycl::any_device_has<sycl::aspect::ext_oneapi_image_array>())
     {
-        // If there is no GPU it will throw exception and use CPU in catch
-        sycl::device dev = sycl::device{sycl::gpu_selector_v};
-        _device_queue = sycl::queue(sycl::context{dev}, dev);
-        // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
-    }
-    catch(sycl::exception const& ex)
-    {
-        cout << "No GPU found falling back to CPU... Exception thrown: " << ex.what() << endl;
+        // Running with bindless image -- need to find gpu with that aspect (needed incase of multi gpu system)
 
-        sycl::device dev = sycl::device{sycl::cpu_selector_v};
-        _device_queue = sycl::queue(sycl::context{dev}, dev);
-        // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
+        for(sycl::device dev : sycl::device::get_devices(sycl::info::device_type::gpu))
+        {
+            // Find GPU with the aspect (incase of multigpu system)
+            if(dev.has(sycl::aspect::ext_oneapi_bindless_images) && dev.has(sycl::aspect::ext_oneapi_image_array))
+            {
+                std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>()
+                          << std::endl
+                          << "\t--> supports ext_oneapi_bindless_images: YES" << std::endl
+                          << "\t--> supports ext_oneapi_image_array: YES" << std::endl
+                          << std::endl;
+
+                _device_queue = sycl::queue(sycl::context{dev}, dev);
+                return; // We always select first gpu that had the aspect (might be a way to select the best one)
+                        // but most systems will be single gpu anyways
+            }
+        }
+        // Did not return hence we did not find a matching device to that was on the compiled system
+        POP_FATAL("Could not find device with support for  ext_oneapi_bindless_images and ext_oneapi_image_array "
+                  "Such a device was available at compile time... Please re-compile")
     }
+    else if constexpr(sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
+    {
+        // In case it only supports bindless we can use it for upscaling still
+        for(sycl::device dev : sycl::device::get_devices(sycl::info::device_type::gpu))
+        {
+            // Find GPU with the aspect (incase of multigpu system)
+            if(dev.has(sycl::aspect::ext_oneapi_bindless_images))
+            {
+                std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>()
+                          << std::endl
+                          << "\t--> supports ext_oneapi_bindless_images: YES" << std::endl
+                          << "\t--> supports ext_oneapi_image_array: "
+                          << (dev.has(sycl::aspect::ext_oneapi_image_array)
+                                ? "YES... But not in use due to being NO at compile time..."
+                                : "NO")
+                          << std::endl
+                          << std::endl;
+
+                _device_queue = sycl::queue(sycl::context{dev}, dev);
+                break; // We always select first gpu that had the aspect (might be a way to select the best one)
+                       // but most systems will be single gpu anyways
+            }
+        }
+
+        // Did not return hence we did not find a matching device to that was on the compiled system
+        POP_FATAL("Could not find device with ext_oneapi_bindless_images support... Such a device was  available "
+                  "at compile time... Please re-compile")
+    }
+    else
+    {
+        try
+        {
+            // Did not have bindless aspect during compile time so we just try to select any GPU
+            // If there is no GPU it will throw exception and use CPU in catch
+
+            sycl::device dev = sycl::device{sycl::gpu_selector_v};
+            _device_queue = sycl::queue(sycl::context{dev}, dev);
+        }
+        catch(sycl::exception const& ex)
+        {
+            cout << "No GPU found falling back to CPU... Exception thrown: " << ex.what() << endl;
+
+            // Could use defualt selector but not sure how would handle fpga... hence cpu selector
+            sycl::device dev = sycl::device{sycl::cpu_selector_v};
+            _device_queue = sycl::queue(sycl::context{dev}, dev);
+            // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
+        }
+    }
+
+    // Could go back to using runtime selection of bindless or not, but using compiletime for now. Makes it less
+    // portable but don't think it's that portable between systems anyways... (Without compiling on the system
+    // ofcourse)
+
 #else
     fprintf(stderr, "Running in CPU_ONLY mode\n");
     // sycl::device dev = sycl::device{sycl::cpu_selector_v};
@@ -77,14 +141,12 @@ inline void PopSift::initQueue()
 PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode mode, ImageMode imode)
   : _image_mode(imode)
 {
-    // should use the confige here to configure but requires that you have the
-    // pyramid and all that
-
     initQueue();
     configure(config);
 
     if(imode == ByteImages) // default
     {
+        // Push two images as we use two one to load in data and other to compute and they alter using the queue
         _pipe._unused.push(new popsift::Image(_device_queue));
         _pipe._unused.push(new popsift::Image(_device_queue));
     }
@@ -96,36 +158,12 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
         fprintf(stderr, "Currently not implemented\n");
     }
 
-    // Push two images as we use two one to load in data and other to compute
-    // and they alter using the queue
-
-    std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>() << endl;
-
-    // TODO(jorgejen): Setup these threads.
     _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
-    // _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
+
     if(mode == popsift::Config::ExtractingMode)
         _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
     else
         _pipe._thread_stage2.reset(new std::thread(&PopSift::matchPrepareLoop, this));
-
-    if(_device_queue.is_in_order())
-    {
-        std::cout << "Queue is in-order" << std::endl;
-    }
-    else
-    {
-        std::cout << "Queue is out-of-order" << std::endl;
-    }
-
-    // NOTE: Currently not supporting extraction and config like that
-    // _pipe._thread_stage1.reset( new std::thread( &PopSift::uploadImages, this
-    // )); if( mode == popsift::Config::ExtractingMode )
-    //   _pipe._thread_stage2.reset( new std::thread(
-    //   &PopSift::extractDownloadLoop, this ));
-    // else
-    //   _pipe._thread_stage2.reset( new std::thread(
-    //   &PopSift::matchPrepareLoop, this ));
 }
 
 PopSift::~PopSift()
@@ -178,14 +216,13 @@ void PopSift::uninit()
     popsift::ConstInfo* me_consts = _d_consts;
     // _device_queue
     //   .single_task([=]() {
-    //       sycl::ext::oneapi::experimental::printf("\n\n\tinside uninit _d_donsts norm_multi %d -- edge_limit %f\n",
+    //       sycl::ext::oneapi::experimental::printf("\n\n\tinside uninit _d_donsts norm_multi %d -- edge_limit
+    //       %f\n",
     //                                               me_consts->norm_multi,
     //                                               me_consts->edge_limit);
     //   })
     //   .wait();
 
-    // BUG: Segfaults here might be due to context going out of scope and hence freeing on _device_queue does not work?
-    // Migh be worth trying shared_ptr for the device_queue but I don't really think that is the issue...
     if(_d_consts != nullptr)
         sycl::free(_d_consts, _device_queue);
     else
@@ -202,12 +239,9 @@ void PopSift::uninit()
 
 sycl::event PopSift::init_gauss_filter()
 {
-    fprintf(stderr, "In init_gauss_filter()\n");
-
     // Crate gauss filter store it on host
     popsift::init_filter(_config, &_h_gauss);
 
-    fprintf(stderr, "AT bottom off init_gauss_filter()\n");
     // Transfer gauss filter to device
     if(_d_gauss == nullptr)
     {
@@ -224,8 +258,6 @@ sycl::event PopSift::init_gauss_filter()
 
 sycl::event PopSift::init_constants()
 {
-    fprintf(stderr, "in init contsatns\n");
-
     popsift::init_constants(_config.sigma,
                             _config.levels,
                             _config.getPeakThreshold(),
@@ -237,12 +269,9 @@ sycl::event PopSift::init_constants()
     // Transfer constants to device
     if(_d_consts == nullptr)
     {
-        fprintf(stderr, "\n\n\n\t\t\tALLOC _d_consts \n\n");
         _d_consts = popsift::sycl_common::malloc_devT<popsift::ConstInfo>(
           1, __FILE__, __LINE__, "Failed to allocate constants on device", _device_queue);
     }
-    else
-        std::cout << "\n\n\t\t_d_consts is set -- no malloc needed\n\n" << std::endl; // reomve in future
 
     // Again look into partial update (but normaly updats won't be done)
     return _device_queue.memcpy(_d_consts, &_h_consts, sizeof(popsift::ConstInfo));
@@ -272,12 +301,9 @@ void PopSift::private_apply_scale_factor(int* w, int* h)
     float upscaleFactor = _config.getUpscaleFactor();
     float scaleFactor = 1.0f / powf(2.0f, -upscaleFactor);
 
-    cout << "The scale factor: " << scaleFactor << endl;
-
     if(_config.octaves < 0)
     {
         int oct = max(int(floor(logf((float)min(*w, *h)) / logf(2.0f)) - 3.0f + scaleFactor), 1);
-        cout << "Octaves: " << oct << endl;
         _config.octaves = oct;
     }
 
@@ -285,10 +311,8 @@ void PopSift::private_apply_scale_factor(int* w, int* h)
     *h = ceilf(*h * scaleFactor);
 }
 
-// not connected to the class just namespace!
 void get_scale_factor(int* w, int* h, const float& upscaleFactor)
 {
-    // float upscaleFactor = _config.getUpscaleFactor();
     float scaleFactor = 1.0f / powf(2.0f, -upscaleFactor);
 
     *w = ceilf(*w * scaleFactor);
@@ -299,14 +323,9 @@ bool PopSift::private_init(int w, int h)
 {
     Pipe& p = _pipe;
 
-    // cout << "\n\n\t\tPopSift::private_init(" << w << "," << h << ")" << endl;
-
-    // WARNING: Already done to the job _w and _h if reverted uncomment!
+    // WARNING: Already done to the job _w and _h in case of USM not Bindless
+    // So incase of USM we are redoing the computation
     private_apply_scale_factor(&w, &h);
-
-    // cout << "\n\n\t\tPopSift::after_scale_factor(" << w << "," << h << ")" << endl;
-
-    // TODO(jorgejen): Implement pyramid
 
     if(p._pyramid != nullptr)
     {
@@ -541,13 +560,14 @@ popsift::FeaturesDev* SiftJob::getDev()
 
 void SiftJob::setError(std::exception_ptr ptr) { this->_err = ptr; }
 
-void SiftJob::setImg(popsift::Image* img, const float& upscaleFactor)
+void SiftJob::setImg(popsift::Image* img, const float upscaleFactor)
 {
-    int scaled_w = _w;
-    int scaled_h = _h;
-    get_scale_factor(&scaled_w, &scaled_h, upscaleFactor);
+    // Moved to alloc called in resetDimensions
+    // int scaled_w = _w;
+    // int scaled_h = _h;
+    // get_scale_factor(&scaled_w, &scaled_h, upscaleFactor);
 
-    img->resetDimensions(_w, _h, scaled_w, scaled_h);
+    img->resetDimensions(_w, _h, upscaleFactor);
 
     sycl::event src_img_transfer = img->copy_src_dev(_imageData);
 
@@ -555,7 +575,9 @@ void SiftJob::setImg(popsift::Image* img, const float& upscaleFactor)
     // img->load_divide(_imageData);
     // img->load_divide_point(_imageData, scaled_w);
     // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
-    _img_transfer_event = img->load_linear(scaled_w, src_img_transfer);
+
+    // _img_transfer_event = img->load_linear(scaled_w, src_img_transfer);
+    _img_transfer_event = img->load_linear(src_img_transfer);
 
     // _img_transfer_event.wait();
     // fprintf(stderr, "\n\tWe got past sending og image to device!!! and doing load lienar\n");

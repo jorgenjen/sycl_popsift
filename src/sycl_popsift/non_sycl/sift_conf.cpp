@@ -39,7 +39,7 @@ Config::Config()
   , _print_gauss_tables(false)
   , _cpu_only(false) // To turn of gpu can be handy for debugging
 {
-    int currentDev;
+    // int currentDev;
     // cudaDeviceProp currentProp;
     // cudaError_t    err;
 

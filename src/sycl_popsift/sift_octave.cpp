@@ -7,12 +7,71 @@
 
 namespace popsift {
 
-// Octave::Octave(sycl::context ctx, sycl::device dev)
-//   : _device_queue(sycl::queue(ctx, dev))
-// {}
 Octave::Octave(sycl::queue Q)
   : _device_queue(Q)
 {}
+
+void Octave::alloc(const Config& conf, int width, int height, int levels)
+{
+    _max_w = _w = width;
+    _max_h = _h = height;
+    _levels = levels;
+
+    _w_grid_divider = float(_w) / conf.getFilterGridSize();
+    _h_grid_divider = float(_h) / conf.getFilterGridSize();
+
+    _level_complete_events = new sycl::event[levels];
+
+    if constexpr(sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
+                 sycl::any_device_has<sycl::aspect::ext_oneapi_image_array>())
+    {
+        alloc_bindless_arrays();
+    }
+    else
+    {
+        // Running in USM mode (non experimental atleast memory wise :D)
+        alloc_arrays();
+    }
+}
+
+void Octave::alloc_bindless_arrays()
+{
+    // Could use shared for these ones aswell probs same end result and cleaner code
+
+    _data_array_host =
+      popsift::common::new_hostT<float*>(_levels, __FILE__, __LINE__, "Host allocation for data array failed");
+    _dog_array_host =
+      popsift::common::new_hostT<float*>(_levels - 1, __FILE__, __LINE__, "Host allocation for DoG array failed");
+
+    _data_array = popsift::sycl_common::malloc_devT<float*>(
+      _levels, __FILE__, __LINE__, "Device allocation for data array failed", _device_queue);
+
+    _dog_array = popsift::sycl_common::malloc_devT<float*>(
+      _levels - 1, __FILE__, __LINE__, "Device allocation for DoG array failed", _device_queue);
+
+    _intermediate = popsift::sycl_common::malloc_devT<float>(
+      _w * _h, __FILE__, __LINE__, "Intermediate allocation for octave failed", _device_queue);
+
+    _data_array_host[0] = popsift::sycl_common::malloc_devT<float>(
+      _w * _h * _levels, __FILE__, __LINE__, "Could not allocate all data levels as one segment", _device_queue);
+
+    _dog_array_host[0] = popsift::sycl_common::malloc_devT<float>(
+      _w * _h * (_levels - 1), __FILE__, __LINE__, "Could not allocate DoG levels as one segment", _device_queue);
+
+    // Set the pointer positions for indexing
+    for(int i = 1; i < _levels - 1; ++i)
+    {
+        _data_array_host[i] = _data_array_host[0] + (i * _w * _h);
+        _dog_array_host[i] = _dog_array_host[0] + (i * _w * _h);
+    }
+
+    // Data has one more than dog hence out of loop
+    _data_array_host[_levels - 1] = _data_array_host[0] + ((_levels - 1) * _w * _h);
+
+    // Copy host arrays to device
+    _data_array_write = _device_queue.memcpy(_data_array, _data_array_host, _levels * sizeof(float*));
+    _dog_array_write = _device_queue.memcpy(_dog_array, _dog_array_host, (_levels - 1) * sizeof(float*));
+}
 
 void Octave::alloc_arrays()
 {
@@ -35,14 +94,14 @@ void Octave::alloc_arrays()
     // Allocate all in one chunck (might be better to have it in multiple to have less chance of it failing but this is
     // propbs faster (might be insignificant))
 
-    // std::stringstream data_msg; // could use std::forat if c++20
+    // std::stringstream data_msg; // could use std::format if c++20
     // data_msg << "Could not allocate all data levels as one segment of of size " << (_w * _h * _levels) / 1000 <<
     // "kB";
 
     _data_array_host[0] = popsift::sycl_common::malloc_devT<float>(
       _w * _h * _levels, __FILE__, __LINE__, "Could not allocate all data levels as one segment", _device_queue);
 
-    // std::stringstream dog_msg; // could use std::forat if c++20
+    // std::stringstream dog_msg; // could use std::format if c++20
     // dog_msg << "Could not allocate DoG levels as one segment of of size " << (_w * _h * (_levels - 1)) / 1000 <<
     // "kB";
 
@@ -101,40 +160,6 @@ void Octave::free_arrays()
     sycl::free(_intermediate, _device_queue);
 
     // fprintf(stderr, "done freeing octave %d", _debug_octave_id);
-}
-
-// void Octave::alloc(const Config& conf, int width, int height, int levels, int gauss_group, sycl::queue& Q)
-void Octave::alloc(const Config& conf, int width, int height, int levels)
-{
-    _max_w = _w = width;
-    _max_h = _h = height;
-    _levels = levels;
-
-    _w_grid_divider = float(_w) / conf.getFilterGridSize();
-    _h_grid_divider = float(_h) / conf.getFilterGridSize();
-
-    // _level_complete_events.reserve(levels);
-    _level_complete_events = new sycl::event[levels];
-
-    // TODO: FIGURE out Replacements for these methods
-    // most of them are related to textures in CUDA
-
-    // could store them all in one malloc (single float array) but might be less readable
-    // and don't think there is much performance penalty from doing it this way...
-    // fprintf(stderr, "Before alloc_arrays \n");
-    alloc_arrays();
-
-    // alloc_data_planes();
-    // alloc_data_tex();
-    //
-    // alloc_interm_array();
-    // alloc_interm_tex();
-    //
-    // alloc_dog_array();
-    // alloc_dog_tex();
-    //
-    // alloc_streams();
-    // alloc_events();
 }
 
 void Octave::resetDimensions(const Config& conf, int w, int h)
