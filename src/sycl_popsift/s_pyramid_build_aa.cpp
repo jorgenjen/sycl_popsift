@@ -187,7 +187,7 @@ class Vert
 } // namespace absoluteSource
 
 sycl::event Pyramid::horiz_from_input_image(const Config& conf,
-                                            Image* base,
+                                            ImageBase* base,
                                             sycl::event d_gauss_write,
                                             sycl::event img_write)
 
@@ -209,14 +209,14 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf,
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
           {d_gauss_write, img_write},
-          absoluteSource::Horiz<0, true>(base->getInput(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
+          absoluteSource::Horiz<0, true>(base->getInputFloat(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
     }
     else
     {
         return _device_queue.parallel_for(
           sycl::nd_range{global, local},
           {d_gauss_write, img_write},
-          absoluteSource::Horiz<1, true>(base->getInput(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
+          absoluteSource::Horiz<1, true>(base->getInputFloat(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
     }
 }
 

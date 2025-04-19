@@ -15,7 +15,7 @@
 #include <thread>
 
 namespace popsift {
-class Image;
+class ImageBase;
 class Pyramid;
 
 // template<class T>
@@ -38,7 +38,7 @@ class SiftJob
     unsigned char* _imageData; // Copies image to this from caller (I guess due to not
                                // trusting calleer and host performance is a non issue)
 
-    popsift::Image* _img;
+    popsift::ImageBase* _img;
     std::exception_ptr _err;
     sycl::event _img_transfer_event; // pointer to event that we update
 
@@ -68,9 +68,9 @@ class SiftJob
     // int getHost(); // currently using int to have same pattern of
     // initialization and such
 
-    void setImg(popsift::Image* img, const float upscaleFactor);
+    void setImg(popsift::ImageBase* img, const float upscaleFactor);
 
-    popsift::Image* getImg();
+    popsift::ImageBase* getImg();
 
     inline sycl::event getImgTransferEvent() { return _img_transfer_event; }
 
@@ -95,7 +95,7 @@ class PopSift
         std::unique_ptr<std::thread> _thread_stage2;
         popsift::SyncQueue<SiftJob*> _queue_stage1;
         popsift::SyncQueue<SiftJob*> _queue_stage2;
-        popsift::SyncQueue<popsift::Image*> _unused; // this is a comment
+        popsift::SyncQueue<popsift::ImageBase*> _unused;
 
         popsift::Pyramid* _pyramid{nullptr};
 

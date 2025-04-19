@@ -177,7 +177,10 @@ sycl::event Pyramid::vert_from_interm(int octave,
     return sycl::event(); // just to return for now to avoid warning for compiler
 }
 
-void Pyramid::build_pyramid(const Config& conf, Image* base_img, sycl::event d_gauss_write, sycl::event img_transfer)
+void Pyramid::build_pyramid(const Config& conf,
+                            ImageBase* base_img,
+                            sycl::event d_gauss_write,
+                            sycl::event img_transfer)
 {
     // #if (PYRAMID_PRINT_DEBUG==1)
     //     cerr << "Entering " << __FUNCTION__ << " with base image "  << endl

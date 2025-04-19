@@ -147,15 +147,26 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
     if(imode == ByteImages) // default
     {
         // Push two images as we use two one to load in data and other to compute and they alter using the queue
-        _pipe._unused.push(new popsift::Image(_device_queue));
-        _pipe._unused.push(new popsift::Image(_device_queue));
+        if constexpr(sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
+        {
+            // Swap out with ImageBindless when ready
+            _pipe._unused.push(new popsift::Image(_device_queue));
+            _pipe._unused.push(new popsift::Image(_device_queue));
+        }
+        else
+        {
+            _pipe._unused.push(new popsift::Image(_device_queue));
+            _pipe._unused.push(new popsift::Image(_device_queue));
+        }
     }
     else
     {
         // _pipe._unused.push(new popsift::ImageFloat);
         // _pipe._unused.push(new popsift::ImageFloat);
         // TODO Add support fro float images
-        fprintf(stderr, "Currently not implemented\n");
+        // fprintf(stderr, "Currently not implemented\n");
+
+        POP_FATAL("Currently not implemented");
     }
 
     _pipe._thread_stage1.reset(new std::thread(&PopSift::uploadImages, this));
@@ -392,7 +403,7 @@ void PopSift::uploadImages()
     SiftJob* job;
     while((job = _pipe._queue_stage1.pull()) != nullptr)
     {
-        popsift::Image* img = _pipe._unused.pull(); // getting a unused Image (reusing it)
+        popsift::ImageBase* img = _pipe._unused.pull(); // getting a unused Image (reusing it)
 
         // WARNING: CHANGING WIDTH AND HEIGHT IN JOB BASED ON PRIVATE APPLY
         // COULD BE PROBLEMATIC DOWN THE LINE -- BE AWARE YOU ARE HERBY WARNED!
@@ -426,7 +437,7 @@ void PopSift::extractDownloadLoop()
         // will do nothing if configuraiton has not changed
         applyConfiguration();
 
-        popsift::Image* img = job->getImg();
+        popsift::ImageBase* img = job->getImg();
 
         private_init(img->getWidth(), img->getHeight());
 
@@ -479,7 +490,7 @@ void PopSift::matchPrepareLoop()
         {
             applyConfiguration();
 
-            popsift::Image* img = job->getImg();
+            popsift::ImageBase* img = job->getImg();
             // Should add imagebase and ImageFloat to support float images
             // popsift::ImageBase* img = job->getImg();
 
@@ -560,7 +571,8 @@ popsift::FeaturesDev* SiftJob::getDev()
 
 void SiftJob::setError(std::exception_ptr ptr) { this->_err = ptr; }
 
-void SiftJob::setImg(popsift::Image* img, const float upscaleFactor)
+void SiftJob::setImg(popsift::ImageBase* img, const float upscaleFactor)
+// void SiftJob::setImg(popsift::Image* img, const float upscaleFactor)
 {
     // Moved to alloc called in resetDimensions
     // int scaled_w = _w;
@@ -569,24 +581,17 @@ void SiftJob::setImg(popsift::Image* img, const float upscaleFactor)
 
     img->resetDimensions(_w, _h, upscaleFactor);
 
-    sycl::event src_img_transfer = img->copy_src_dev(_imageData);
+    img->load(_imageData);
+    // sycl::event src_img_transfer = img->copy_src_dev(_imageData);
+    //
+    // _img_transfer_event = img->load_linear(src_img_transfer);
 
-    // img->load(_imageData);
-    // img->load_divide(_imageData);
-    // img->load_divide_point(_imageData, scaled_w);
-    // _img_transfer_event = img->load_divide_linear(_imageData, scaled_w);
-
-    // _img_transfer_event = img->load_linear(scaled_w, src_img_transfer);
-    _img_transfer_event = img->load_linear(src_img_transfer);
-
-    // _img_transfer_event.wait();
-    // fprintf(stderr, "\n\tWe got past sending og image to device!!! and doing load lienar\n");
-    _img = img; // Why are you copying the image class pointer?
+    _img = img;
 }
 
 // Not sure if this is a good way of doing it
 // just doing it to have same methods as popsift code
-popsift::Image* SiftJob::getImg() { return _img; }
+popsift::ImageBase* SiftJob::getImg() { return _img; }
 
 void SiftJob::setFeatures(popsift::FeaturesBase* f) { _p.set_value(f); }
 
@@ -606,7 +611,7 @@ void PopSift::Pipe::uninit()
 
     while(!_unused.empty())
     {
-        popsift::Image* img = _unused.pull();
+        popsift::ImageBase* img = _unused.pull();
         delete img;
     }
 }
