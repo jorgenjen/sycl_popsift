@@ -176,6 +176,9 @@ sycl::event Image::load_linear(sycl::event src_img_transfer)
  * ImageBindless
  *************************************************************/
 
+// Wheter or not to use copy to aligned memory before copy to bindless image mem
+// Could result in better transfer speeds
+#define USE_ALIGNED_STAGING false
 ImageBindless::ImageBindless(sycl::queue Q)
   : ImageBase(Q)
   , _dev_img_desc(syclexp::image_descriptor({0, 0}, 1, sycl::image_channel_type::unorm_int8))
@@ -193,14 +196,15 @@ void ImageBindless::free()
     try
     {
         fprintf(stderr, "\nDESTROYING IMAGEBINDLESS\n");
-        _device_queue.wait_and_throw(); // More thorough than wait()
 
+#if USE_ALIGNED_STAGING
         if(_aligned_src_img)
         {
             sycl::free(_aligned_src_img, _device_queue);
             fprintf(stderr, "Freed host memory...\n");
             _aligned_src_img = nullptr;
         }
+#endif
 
         if(_sampled_handle_created)
         {
@@ -237,9 +241,13 @@ void ImageBindless::free()
 // POP_FATAL("Currently not implemented\n");
 sycl::event ImageBindless::load(void* input)
 {
+#if USE_ALIGNED_STAGING
     sycl::event copy_to_aligned = _device_queue.memcpy(_aligned_src_img, input, _w * _h);
 
     return _device_queue.ext_oneapi_copy(_aligned_src_img, _dev_img_mem, _dev_img_desc, copy_to_aligned);
+#else
+    return _device_queue.ext_oneapi_copy(input, _dev_img_mem, _dev_img_desc);
+#endif
 }
 
 void ImageBindless::resetDimensions(int w, int h, float /*upscaleFactor*/)
@@ -291,9 +299,11 @@ void ImageBindless::allocate()
                                                 sycl::coordinate_normalization_mode::normalized,
                                                 sycl::filtering_mode::linear);
 
+#if USE_ALIGNED_STAGING
     _aligned_src_img = sycl::aligned_alloc_host(128, _w * _h, _device_queue);
     if(!_aligned_src_img)
         POP_FATAL("Failed to allocate aligned host memory");
+#endif
 
     try
     {
