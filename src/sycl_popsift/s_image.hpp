@@ -96,7 +96,7 @@ struct ImageBindless : public ImageBase
     ImageBindless(sycl::queue Q);
     ImageBindless(int w, int h, sycl::queue Q);
 
-    ~ImageBindless() override;
+    ~ImageBindless() override { this->free(); };
 
     void resetDimensions(int w, int h, float /*upscaleFactor*/) override;
 
@@ -107,10 +107,18 @@ struct ImageBindless : public ImageBase
         return _sampled_dev_img_handle;
     }
 
+    // transfer into before transfering to host bindless image
+    void* _aligned_src_img;
+
   private:
     // Ignore upscaleFactor for bindless as it does not use it
     // void allocate(const float /*upscaleFactor*/) override;
     void allocate();
+    void free();
+
+    // To track state for destruction of handle and image_mem
+    bool _img_mem_allocated{false};
+    bool _sampled_handle_created{false};
 
   protected:
     sycl::ext::oneapi::experimental::image_descriptor _dev_img_desc;               // Descriptor for image and handle

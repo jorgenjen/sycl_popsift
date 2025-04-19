@@ -124,8 +124,7 @@ class Pyramid
     /** step 1: load image and build pyramid */
     // std::vector<sycl::event> step1(const Config& conf, Image* img, sycl::event d_gauss_wirte, sycl::event
     // img_transfer);
-    template<typename DerivedImage>
-    void step1(const Config& conf, DerivedImage* img, sycl::event d_gauss_wirte, sycl::event img_transfer);
+    void step1(const Config& conf, ImageBase* img, sycl::event d_gauss_wirte, sycl::event img_transfer);
 
     /** step 2: find extrema, orientations and descriptor */
     // void step2(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write);
@@ -150,9 +149,8 @@ class Pyramid
   private:
     // sycl::event horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
 
-    template<typename DerivedImage>
     sycl::event horiz_from_input_image(const Config& conf,
-                                       DerivedImage* base,
+                                       ImageBase* base,
                                        sycl::event d_gauss_write,
                                        sycl::event img_write);
 
@@ -170,8 +168,7 @@ class Pyramid
 
     void reset_extrema_mgmt();
 
-    template<typename DerivedImage>
-    void build_pyramid(const Config& conf, DerivedImage* base, sycl::event d_gauss_write, sycl::event img_transfer);
+    void build_pyramid(const Config& conf, ImageBase* base, sycl::event d_gauss_write, sycl::event img_transfer);
     void find_extrema(const Config& conf, sycl::event d_consts_write);
     void reallocExtrema(int numExtrema);
 

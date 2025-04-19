@@ -48,7 +48,8 @@ add_library(
 
 # GPU target_compile_options(sycl_popsift PUBLIC ${SYCL_FLAGS})
 # target_link_libraries(sycl_popsift PUBLIC Threads::Threads ${SYCL_FLAGS} )
-target_compile_options(sycl_popsift PUBLIC ${SYCL_FLAGS} ${CPU_ONLY})
+target_compile_options(sycl_popsift PUBLIC ${SYCL_FLAGS})
+# ${EXPERIMENTAL})
 target_link_libraries(sycl_popsift PUBLIC ${SYCL_FLAGS})
 
 # CPU target_link_libraries(sycl_popsift PUBLIC Threads::Threads )

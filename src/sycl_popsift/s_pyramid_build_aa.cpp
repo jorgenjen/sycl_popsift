@@ -13,6 +13,7 @@
 #include "sycl/kernel_bundle_enums.hpp"
 #include "sycl/nd_range.hpp"
 #include "sycl/usm.hpp"
+#include "sycl_popsift/s_image.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -60,7 +61,8 @@ class Horiz
     {
         // Position to write to (image that has the size of scale up)
         const int write_x = it.get_global_id(1);
-        const int write_y = it.get_global_id(0) * dst_w;
+        // const int write_y = it.get_global_id(0) * dst_w;
+        const int write_y = it.get_group(0);
         // Cant use it.get_global_range(1) inplace of dst_w due to if if_required width != it.get_global_range(1) and
         // hence positions would be off could be used in else case but not sure if it matters much (probs not)
 
@@ -79,9 +81,6 @@ class Horiz
         // Could pass dimensions as a int2 and do vector wise
         // const sycl::float2 read_pos = sycl::float2{(write_x + shift) / dst_w, (write_y + shift) / dst_h};
 
-        int idx;
-        float g;
-        float val;
         float out = 0.0f;
 
         // Look into sycl mad or fma (multiply-and-add instruction done in one clock cycle)
@@ -94,12 +93,14 @@ class Horiz
             const float offrel = float(offset) / dst_w; // relative offset
             const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
             const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
-            // const float v1 = tex2D<float>(src_linear_tex, read_x - offrel, read_y);
-            // const float v2 = tex2D<float>(src_linear_tex, read_x + offrel, read_y);
             out += ((v1 + v2) * g);
         }
 
-        dst_data[write_x + write_y * dst_w] = out;
+        const float& g = filter[0];
+        const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
+        out += (v3 * g);
+
+        dst_data[write_x + write_y * dst_w] = out * 255.0f;
     };
 };
 } // namespace normalizedSource
@@ -143,8 +144,6 @@ class Horiz
         if constexpr(initial)
         {
             // is always from source image and level 0 // called once
-
-            // Look into packing the struct differntly to avoid splitting but this might be the best way(idk)
             filter = &d_gauss->dd.filter[0];
             span = d_gauss->dd.span[0];
         }
@@ -157,10 +156,7 @@ class Horiz
         // could have two different kernels one with this and one without
         // depending on if it is perfectly divisible by 128 but might not be worth it... Test
 
-        // Using template so that we can call kernel without if if it's perfectly divisible by 128
-        // and hence would not be needed // hopefully it works like this look into
-        // NOTE: Look into if template makes this multiple kernels or not if not we might benefit from spliting them and
-        // having them as different kernels mby different namespace to separete them
+        // Using template so that we can call kernel without if iff it's perfectly divisible by 128
         if constexpr(if_required)
         {
             // Using contexpr so it is evaluated at compile time (should force it to make multiple kernels I think)
@@ -273,55 +269,68 @@ class Vert
 
 } // namespace absoluteSource
 
-template<typename DerivedImage>
 sycl::event Pyramid::horiz_from_input_image(const Config& conf,
-                                            DerivedImage* base,
+                                            ImageBase* base,
                                             sycl::event d_gauss_write,
                                             sycl::event img_write)
 
 {
-    if constexpr(std::is_same_v<DerivedImage, ImageBindless>)
-    {
-        // Bindless mode
-        fprintf(stderr, "running BINDLESS MODE YAYA\n");
-    }
-    else
-    {
-        if constexpr(std::is_same_v<DerivedImage, Image>)
-        {
-            // USM mode
-            fprintf(stderr, "running USM MODE YAYA\n");
-        }
-        else
-        {
-            fprintf(stderr, "running UNKNOWN MODE (Probs base) YAYA\n");
-        }
-    }
     Octave& oct_obj = _octaves[0];
 
     const int width = oct_obj.getWidth();
     const int height = oct_obj.getHeight();
 
-    float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
-
     sycl::range local{1, 128};
     sycl::range global{(size_t)height, (size_t)grid_divide(width, local[1])};
 
-    if(global[1] == width)
+    // _device_queue.wait();
+
+    if constexpr(USE_BINDLESS && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
     {
-        fprintf(stderr, "Running no if\n");
-        // width % 128 = 0 and hence we don't need if check in kernel
-        return _device_queue.parallel_for(
-          sycl::nd_range{global, local},
-          {d_gauss_write, img_write},
-          absoluteSource::Horiz<0, true>(base->getInputFloat(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
+        // Bindless version
+        fprintf(stderr, "Yay differey verison -- w=%d h=%d\n", width, height);
+        float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
+
+        if(global[1] == width)
+        {
+            fprintf(stderr, "Running no if\n");
+            // width % 128 = 0 and hence we don't need if check in kernel
+            return _device_queue.parallel_for(
+              sycl::nd_range{global, local},
+              {d_gauss_write, img_write},
+              normalizedSource::Horiz<false>(
+                base->getInputImage(), oct_obj.getIntermediate(), _d_gauss, width, height, shift));
+        }
+        else
+        {
+            return _device_queue.parallel_for(
+              sycl::nd_range{global, local},
+              {d_gauss_write, img_write},
+              normalizedSource::Horiz<true>(
+                base->getInputImage(), oct_obj.getIntermediate(), _d_gauss, width, height, shift));
+        }
     }
     else
     {
-        return _device_queue.parallel_for(
-          sycl::nd_range{global, local},
-          {d_gauss_write, img_write},
-          absoluteSource::Horiz<1, true>(base->getInputFloat(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
+        // Running USM for input image
+        if(global[1] == width)
+        {
+            fprintf(stderr, "Running no if IN USM MODE!!!\n");
+            // width % 128 = 0 and hence we don't need if check in kernel
+            return _device_queue.parallel_for(
+              sycl::nd_range{global, local},
+              {d_gauss_write, img_write},
+              absoluteSource::Horiz<false, true>(
+                base->getInputFloat(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
+        }
+        else
+        {
+            return _device_queue.parallel_for(
+              sycl::nd_range{global, local},
+              {d_gauss_write, img_write},
+              absoluteSource::Horiz<true, true>(
+                base->getInputFloat(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
+        }
     }
 }
 

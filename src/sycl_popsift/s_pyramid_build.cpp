@@ -177,9 +177,8 @@ sycl::event Pyramid::vert_from_interm(int octave,
     return sycl::event(); // just to return for now to avoid warning for compiler
 }
 
-template<typename DerivedImage>
 void Pyramid::build_pyramid(const Config& conf,
-                            DerivedImage* base_img,
+                            ImageBase* base_img,
                             sycl::event d_gauss_write,
                             sycl::event img_transfer)
 {
@@ -222,8 +221,10 @@ void Pyramid::build_pyramid(const Config& conf,
             {
                 if(octave == 0)
                 {
-                    sycl::event horiz =
-                      horiz_from_input_image<DerivedImage>(conf, base_img, d_gauss_write, img_transfer);
+                    _device_queue.wait();
+                    sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                    // horiz.wait();
+                    // return;
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
                 }
                 else

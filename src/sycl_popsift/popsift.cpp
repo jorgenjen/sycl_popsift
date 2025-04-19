@@ -26,7 +26,7 @@ inline void PopSift::initQueue()
 {
 #ifndef CPU_ONLY
     // should probably also have a compile time flag --experimental to enable this feature
-    if constexpr(sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
+    if constexpr(USE_BINDLESS && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
                  sycl::any_device_has<sycl::aspect::ext_oneapi_image_array>())
     {
         // Running with bindless image -- need to find gpu with that aspect (needed incase of multi gpu system)
@@ -51,7 +51,7 @@ inline void PopSift::initQueue()
         POP_FATAL("Could not find device with support for  ext_oneapi_bindless_images and ext_oneapi_image_array "
                   "Such a device was available at compile time... Please re-compile")
     }
-    else if constexpr(sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
+    else if constexpr(USE_BINDLESS && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
     {
         // In case it only supports bindless we can use it for upscaling still
         for(sycl::device dev : sycl::device::get_devices(sycl::info::device_type::gpu))
@@ -144,17 +144,37 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
     initQueue();
     configure(config);
 
+    sycl::device dev = _device_queue.get_device();
+
+    // Print device information
+    std::cout << "Device Info\n";
+    std::cout << "  Name: " << dev.get_info<sycl::info::device::name>() << "\n";
+    std::cout << "  Vendor: " << dev.get_info<sycl::info::device::vendor>() << "\n";
+    std::cout << "  Driver version: " << dev.get_info<sycl::info::device::driver_version>() << "\n";
+    std::cout << "  Device type: ";
+
+    switch(dev.get_info<sycl::info::device::device_type>())
+    {
+        case sycl::info::device_type::cpu: std::cout << "CPU"; break;
+        case sycl::info::device_type::gpu: std::cout << "GPU"; break;
+        case sycl::info::device_type::accelerator: std::cout << "Accelerator"; break;
+        case sycl::info::device_type::host: std::cout << "Host"; break;
+        default: std::cout << "Unknown";
+    }
+    std::cout << "\n";
+
     if(imode == ByteImages) // default
     {
         // Push two images as we use two one to load in data and other to compute and they alter using the queue
-        if constexpr(sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
+        if constexpr(USE_BINDLESS && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
         {
             // Swap out with ImageBindless when ready
-            _pipe._unused.push(new popsift::Image(_device_queue));
-            _pipe._unused.push(new popsift::Image(_device_queue));
+            _pipe._unused.push(new popsift::ImageBindless(_device_queue));
+            _pipe._unused.push(new popsift::ImageBindless(_device_queue));
         }
         else
         {
+            fprintf(stderr, "RUNNING NORMAL IMAGE USM\n");
             _pipe._unused.push(new popsift::Image(_device_queue));
             _pipe._unused.push(new popsift::Image(_device_queue));
         }
@@ -259,8 +279,6 @@ sycl::event PopSift::init_gauss_filter()
         _d_gauss = popsift::sycl_common::malloc_devT<popsift::GaussInfo>(
           1, __FILE__, __LINE__, "Failed to allocate gauss filter on device", _device_queue);
     }
-    else
-        std::cout << "\n\n\t\td_gauss is set -- no malloc needed\n\n" << std::endl; // Remove down the line
 
     // Look into partial updates for this one (currently any change to config would be expensive...) but again who
     // updates config while it's running...
@@ -413,6 +431,8 @@ void PopSift::uploadImages()
         // cout << "Updated w=" << job->_w << " and h=" << job->_h << endl;
         // copy image to device
         job->setImg(img, _config.getUpscaleFactor());
+
+        _device_queue.wait();
         fprintf(stderr, "After setImg");
 
         // job->setImg( img );
@@ -581,7 +601,16 @@ void SiftJob::setImg(popsift::ImageBase* img, const float upscaleFactor)
 
     img->resetDimensions(_w, _h, upscaleFactor);
 
-    img->load(_imageData);
+    sycl::event src_img_transfer = img->load(_imageData);
+
+    if constexpr(!USE_BINDLESS || !sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
+    {
+        // If either bindless disabled or no device supports it we use USM
+        fprintf(stderr, "\nRUNNING LOAD LINEAR\n");
+        auto* recast_img = dynamic_cast<popsift::Image*>(img);
+        _img_transfer_event = recast_img->load_linear(src_img_transfer);
+    }
+
     // sycl::event src_img_transfer = img->copy_src_dev(_imageData);
     //
     // _img_transfer_event = img->load_linear(src_img_transfer);

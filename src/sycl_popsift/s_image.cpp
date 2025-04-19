@@ -87,16 +87,6 @@ void Image::resetDimensions(int w, int h, float upscaleFactor)
         _max_w = _w = w;
         _max_h = _h = h;
 
-        // if constexpr(sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
-        // {
-        //     // upscaleFactor is unused in this case
-        //     allocate_bindless();
-        //     allocate_usm(upscaleFactor); // neded for now as bindless not readly
-        // }
-        // else
-        // {
-        //     allocate_usm(upscaleFactor);
-        // }
         allocate(upscaleFactor);
 
         return;
@@ -108,16 +98,9 @@ void Image::resetDimensions(int w, int h, float upscaleFactor)
 
     if(w * h <= _max_w * _max_h)
     {
-        // if constexpr(sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
-        // {
-        //     // Need to destroy and make again
-        //     fprintf(stderr, "Need to deal with this realloc stufus\n");
-        //     // Could all be done below
-        // }
-        // NOTE: wrap the return in this if ^ with negation ! and it only runs when using usm
-        // else {}
-        // TODO: Move to else when doing with texture meme version
-        // smaller than current allocated segment hence it is fine to reuse in case of USM
+        // smaller than current allocated segment hence it is fine to reuse in this object as its USM
+        // Could consider freeing and reallocing to make memory fotprint smaller as it will now stay at
+        // The largest image used in lifetime of PopSift object
         _w = w;
         _h = h;
         return;
@@ -131,15 +114,7 @@ void Image::resetDimensions(int w, int h, float upscaleFactor)
     _max_w = _w = w;
     _max_h = _h = h;
 
-    _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
-      _scaled_w * _scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
-
-    _device_img =
-      popsift::sycl_common::malloc_devT<float>(_scaled_w * _scaled_h,
-                                               __FILE__,
-                                               __LINE__,
-                                               "Could not allocate memory for float representation of image on device",
-                                               _device_queue);
+    allocate(upscaleFactor);
 }
 
 void Image::allocate(const float upscaleFactor)
@@ -150,7 +125,7 @@ void Image::allocate(const float upscaleFactor)
     _scaled_h = ceilf(_h * scaleFactor);
 
     _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
-      _scaled_w * _scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
+      _w * _h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
 
     _device_img =
       popsift::sycl_common::malloc_devT<float>(_scaled_w * _scaled_h,
@@ -203,30 +178,68 @@ sycl::event Image::load_linear(sycl::event src_img_transfer)
 
 ImageBindless::ImageBindless(sycl::queue Q)
   : ImageBase(Q)
-  , _dev_img_desc(syclexp::image_descriptor({0, 0}, 1, sycl::image_channel_type::unsigned_int8))
+  , _dev_img_desc(syclexp::image_descriptor({0, 0}, 1, sycl::image_channel_type::unorm_int8))
 {}
 
 ImageBindless::ImageBindless(int w, int h, sycl::queue Q)
   : ImageBase(w, h, Q)
-  , _dev_img_desc(syclexp::image_descriptor({0, 0}, 1, sycl::image_channel_type::unsigned_int8))
+  , _dev_img_desc(syclexp::image_descriptor({0, 0}, 1, sycl::image_channel_type::unorm_int8))
 {
     allocate();
 }
 
-ImageBindless::~ImageBindless()
+void ImageBindless::free()
 {
-    fprintf(stderr, "\n\tDESTROYING IMAGE\n");
+    try
+    {
+        fprintf(stderr, "\nDESTROYING IMAGEBINDLESS\n");
+        _device_queue.wait_and_throw(); // More thorough than wait()
 
-    // Free bindless image
-    // namespace syclexp = sycl::ext::oneapi::experimental;
-    syclexp::free_image_mem(_dev_img_mem, syclexp::image_type::standard, _device_queue);
-    syclexp::destroy_image_handle(_sampled_dev_img_handle, _device_queue);
+        if(_aligned_src_img)
+        {
+            sycl::free(_aligned_src_img, _device_queue);
+            fprintf(stderr, "Freed host memory...\n");
+            _aligned_src_img = nullptr;
+        }
+
+        if(_sampled_handle_created)
+        {
+            // Destroy handle before underlying memory structure
+            syclexp::destroy_image_handle(_sampled_dev_img_handle, _device_queue);
+            fprintf(stderr, "Destroyed image handle...\n");
+        }
+
+        if(_img_mem_allocated)
+        {
+            syclexp::free_image_mem(_dev_img_mem, syclexp::image_type::standard, _device_queue);
+            fprintf(stderr, "Freed image memory...\n");
+        }
+    }
+    catch(sycl::exception& e)
+    {
+        std::stringstream ss;
+        ss << "SYCL exception caught in BindlessImage destructor: " << e.what();
+        POP_FATAL(ss.str());
+    }
+    catch(std::exception& e)
+    {
+        std::stringstream ss;
+        ss << "std exception caught in BindlessImage destructor:" << e.what();
+        POP_FATAL(ss.str());
+    }
+    catch(...)
+    {
+        POP_FATAL("Caught unknown exception in BindlessImage destructor")
+    }
 }
 
+// fprintf(stderr, "Copying input into bindless image (%d, %d)\n", _w, _h);
+// POP_FATAL("Currently not implemented\n");
 sycl::event ImageBindless::load(void* input)
 {
-    // POP_FATAL("Currently not implemented\n");
-    return _device_queue.ext_oneapi_copy(input, _dev_img_mem, _dev_img_desc);
+    sycl::event copy_to_aligned = _device_queue.memcpy(_aligned_src_img, input, _w * _h);
+
+    return _device_queue.ext_oneapi_copy(_aligned_src_img, _dev_img_mem, _dev_img_desc, copy_to_aligned);
 }
 
 void ImageBindless::resetDimensions(int w, int h, float /*upscaleFactor*/)
@@ -245,86 +258,101 @@ void ImageBindless::resetDimensions(int w, int h, float /*upscaleFactor*/)
         return;
     /* everything OK, nothing to do */
 
-    if(w * h <= _max_w * _max_h)
-    {
-        fprintf(stderr, "Need to deal with this realloc stufus\n");
+    // if(w * h <= _max_w * _max_h)
+    // {
 
-        _w = w;
-        _h = h;
-        return;
-    }
+    // NOTE: Could have kept the _aligned_src_img as it's safe to use subset
+    // of segment I think... mby not due to alignment
+
+    //
+    //     _w = w;
+    //     _h = h;
+    //     return;
+    // }
 
     // larger than current segment hence need to free and re-malloc
+    free();
 
-    // sycl::free(_device_img, _device_queue);
-    // sycl::free(_device_src_img, _device_queue);
-    //
-    // _max_w = _w = w;
-    // _max_h = _h = h;
-    //
-    // _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
-    //   _scaled_w * _scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
-    //
-    // _device_img =
-    //   popsift::sycl_common::malloc_devT<float>(_scaled_w * _scaled_h,
-    //                                            __FILE__,
-    //                                            __LINE__,
-    //                                            "Could not allocate memory for float representation of image on
-    //                                            device", _device_queue);
+    _max_w = _w = w;
+    _max_h = _h = h;
+
+    allocate();
 }
 
 void ImageBindless::allocate()
 {
-    //  Using bindless for input image (and scaling up with interpolation)
-
-    fprintf(stderr, "Width and height used for bindless image w=%d h=%d", _w, _h);
-    // namespace syclexp = sycl::ext::oneapi::experimental;
-
+    // Rest of desc was set in constructor -- Updating widht and height
     _dev_img_desc.width = _w;
     _dev_img_desc.height = _h;
 
-    // Should remove and use _dev_img_desc
-    // syclexp::image_descriptor img_desc(
-    //   {static_cast<size_t>(_w), static_cast<size_t>(_h)}, 1, sycl::image_channel_type::unsigned_int8);
-
     // Normalized 0-1 indexing (for upscaling accessing inbetween pixels in horiz)
     // Uses linear interpolation (hardware accelerated it should be)
-    syclexp::bindless_image_sampler img_sampler(
-      sycl::addressing_mode::repeat, sycl::coordinate_normalization_mode::normalized, sycl::filtering_mode::linear);
+    syclexp::bindless_image_sampler img_sampler(sycl::addressing_mode::clamp_to_edge,
+                                                sycl::coordinate_normalization_mode::normalized,
+                                                sycl::filtering_mode::linear);
 
-    // Not using RAII version for clear destroy and alloc (usefull for resizing)
-    _dev_img_mem = syclexp::alloc_image_mem(_dev_img_desc, _device_queue);
+    _aligned_src_img = sycl::aligned_alloc_host(128, _w * _h, _device_queue);
+    if(!_aligned_src_img)
+        POP_FATAL("Failed to allocate aligned host memory");
 
-    // Uses wrapper function to supprt two overloads (due to documentation and my installation being different)
-    _sampled_dev_img_handle =
-      popsift::sycl_bindless::create_sampled_image(_dev_img_mem, img_sampler, _dev_img_desc, _device_queue);
+    try
+    {
+        // Not using RAII version for clear destroy and alloc (usefull for resizing idk if you can with RAII)
+        _dev_img_mem = syclexp::alloc_image_mem(_dev_img_desc, _device_queue);
+        _img_mem_allocated = true;
 
-    // Use this free function for
-    // void free_image_mem(image_mem_handle memHandle,
-    //                     image_type imageType,
-    //                     const sycl::queue &syclQueue);
+        // Uses wrapper function to supprt two overloads (due to documentation and my installation being different)
+        _sampled_dev_img_handle =
+          popsift::sycl_bindless::create_sampled_image(_dev_img_mem, img_sampler, _dev_img_desc, _device_queue);
+        _sampled_handle_created = true;
 
-    //     enum class image_channel_type : /* unspecified */ {
-    //   snorm_int8,
-    //   snorm_int16,
-    //   unorm_int8,
-    //   unorm_int16,
-    //   signed_int8,
-    //   signed_int16,
-    //   signed_int32,
-    //   unsigned_int8,
-    //   unsigned_int16,
-    //   unsigned_int32,
-    //   fp16,
-    //   fp32,
-    // };
-    //
-    // enum class image_type : /* unspecified */ {
-    //   standard,
-    //   mipmap,
-    //   array,
-    //   cubemap,
-    // };
+        // set flags based on function before it did not throw hence it must been allocated/created
+    }
+    catch(sycl::exception& e)
+    {
+        std::stringstream ss;
+        ss << "SYCL exception caught in allocate method in BindlessImage: " << e.what();
+        POP_FATAL(ss.str());
+    }
+    catch(std::exception& e)
+    {
+        std::stringstream ss;
+        ss << "std exception caught in allocate method in BindlessImage: " << e.what();
+        POP_FATAL(ss.str());
+    }
+    catch(...)
+    {
+        POP_FATAL("Caught unknown exception in allocate method in BindlessImage")
+    }
 }
 
 } // namespace popsift
+
+//
+
+// Use this free function for
+// void free_image_mem(image_mem_handle memHandle,
+//                     image_type imageType,
+//                     const sycl::queue &syclQueue);
+
+//     enum class image_channel_type : /* unspecified */ {
+//   snorm_int8,
+//   snorm_int16,
+//   unorm_int8,
+//   unorm_int16,
+//   signed_int8,
+//   signed_int16,
+//   signed_int32,
+//   unsigned_int8,
+//   unsigned_int16,
+//   unsigned_int32,
+//   fp16,
+//   fp32,
+// };
+//
+// enum class image_type : /* unspecified */ {
+//   standard,
+//   mipmap,
+//   array,
+//   cubemap,
+// };

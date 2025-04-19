@@ -181,17 +181,17 @@ class ori_par
 
         const InitialExtremum* iext = &dobuf->i_ext_dat[octave][iext_off];
 
-        // if(sycl::floor(iext->xpos) == 812)
-        // if(octave == 0 && group.leader())
-        // {
-        //     // sycl::ext::oneapi::experimental::printf("WORKYYY %f\n\n", iext->xpos);
-        //     sycl::ext::oneapi::experimental::printf("WORKYYY extremum_index %d, %f --> group[1] %d -- group[0] %d
-        //     \n\n",
-        //                                             extremum_index,
-        //                                             dobuf->i_ext_dat[octave][iext_off].xpos,
-        //                                             it.get_group(1),
-        //                                             it.get_group(0));
-        // }
+        if(sycl::floor(iext->xpos) == 812)
+            if(octave == 0 && group.leader())
+            {
+                // sycl::ext::oneapi::experimental::printf("WORKYYY %f\n\n", iext->xpos);
+                sycl::ext::oneapi::experimental::printf(
+                  "WORKYYY extremum_index %d, %f --> group[1] %d -- group[0] %d\n\n ",
+                  extremum_index,
+                  dobuf->i_ext_dat[octave][iext_off].xpos,
+                  it.get_group(1),
+                  it.get_group(0));
+            }
 
         // Initialize hist to zero each work-item does 2 in work-group
         hist[it.get_local_id(1) + 0] = 0.0f;

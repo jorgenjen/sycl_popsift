@@ -9,8 +9,9 @@ set(CMAKE_CXX_STANDARD 17) # required for sycl
 # # Require threads because of std::thread. find_package(Threads REQUIRED)
 
 # TODO: Add more options like Popsift has if suitable
-option(PopSift_BUILD_EXAMPLES "Build PopSift applications." ON) # JUst for a
-                                                                # test
+option(PopSift_BUILD_EXAMPLES "Build PopSift applications." ON)
+
+option(PopSift_EXPERIMENTAL "Use experimantal features." ON) # bindless images
 # option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 #
 # # TODO: Seems to be beneficial for performance (keeping for now)
@@ -50,15 +51,36 @@ include(cmake/ConfigureSYCL.cmake)
 # off cpu only
 if(${ENABLE_CUDA})
   message(STATUS "CUDA enabled")
-  set(CPU_ONLY "")
+  # set(CPU_ONLY "")
 else()
   message(STATUS "CUDA DISABLED -- Running cpu only mode")
-  set(CPU_ONLY "-DCPU_ONLY")
+  # set(CPU_ONLY "-DCPU_ONLY")
+
+  add_compile_definitions(CPU_ONLY)
 
   # set(CMAKE_BUILD_TYPE Debug) message(STATUS "Running in debug mode :D")
   # list(APPEND SYCL_FLAGS -O0 -g -fno-omit-frame-pointer)
   set(CMAKE_BUILD_TYPE Release)
   list(APPEND SYCL_FLAGS -O3)
+endif()
+
+if(PopSift_EXPERIMENTAL)
+  message(STATUS "Using experimantal features!")
+  # set(EXPERIMENTAL "-DUSE_EXPERIMENTAL")
+
+  if(${ENABLE_CUDA})
+    # Mby have one opriton for each experimental bindless and ballot and one for
+    # all on off
+    add_compile_definitions(USE_BINDLESS=1)
+  else()
+    # CPU ONLY MODE
+    add_compile_definitions(USE_BINDLESS=0) # CPU not supported
+  endif()
+else()
+  message(STATUS "Building without experimental features")
+  # set(EXPERIMENTAL "-DUSE_EXPERIMENTAL 0") set(EXPERIMENTAL "")
+
+  add_compile_definitions(USE_BINDLESS=0)
 endif()
 
 # ==============================================================================
