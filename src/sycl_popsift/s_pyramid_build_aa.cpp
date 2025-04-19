@@ -15,8 +15,95 @@
 #include "sycl/usm.hpp"
 
 #include <cmath>
+#include <cstdio>
 
 namespace popsift {
+
+// Alias used for bindlessimages
+namespace syclexp = sycl::ext::oneapi::experimental;
+
+namespace normalizedSource {
+
+// Used for ImageBindless
+// Only used on input image (initial)
+// And only works for it due to  filter and span selection
+
+// aspect::ext_oneapi_bindless_sampled_image_fetch_2d
+// This aspect is required to use sampled image need to add a check for that earlier in selection
+template<bool if_required>
+class Horiz
+{
+  private:
+    syclexp::sampled_image_handle src;
+    float* dst_data;
+    popsift::GaussInfo* d_gauss;
+    const int dst_w;
+    const int dst_h;
+    const float shift;
+
+  public:
+    Horiz(syclexp::sampled_image_handle src,
+          float* dst_data,
+          popsift::GaussInfo* d_gauss,
+          const int dst_w,
+          const int dst_h,
+          const float shift)
+      : src(src)
+      , dst_data(dst_data)
+      , d_gauss(d_gauss)
+      , dst_w(dst_w)
+      , dst_h(dst_h)
+      , shift(shift)
+    {}
+
+    inline void operator()(sycl::nd_item<2> it) const
+    {
+        // Position to write to (image that has the size of scale up)
+        const int write_x = it.get_global_id(1);
+        const int write_y = it.get_global_id(0) * dst_w;
+        // Cant use it.get_global_range(1) inplace of dst_w due to if if_required width != it.get_global_range(1) and
+        // hence positions would be off could be used in else case but not sure if it matters much (probs not)
+
+        if constexpr(if_required)
+        {
+            // Destination width was not perfectly divisible with it.get_local_range(1)
+            if(write_x >= dst_w)
+                return;
+        }
+
+        const float* filter = &d_gauss->dd.filter[0];
+        const int span = d_gauss->dd.span[0];
+        const float read_x = (write_x + shift) / dst_w;
+        const float read_y = (write_y + shift) / dst_h;
+
+        // Could pass dimensions as a int2 and do vector wise
+        // const sycl::float2 read_pos = sycl::float2{(write_x + shift) / dst_w, (write_y + shift) / dst_h};
+
+        int idx;
+        float g;
+        float val;
+        float out = 0.0f;
+
+        // Look into sycl mad or fma (multiply-and-add instruction done in one clock cycle)
+        // is probably done by the compiler anyways though
+
+#pragma unroll
+        for(int offset = span; offset > 0; offset--)
+        {
+            const float g = filter[offset];
+            const float offrel = float(offset) / dst_w; // relative offset
+            const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
+            const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
+            // const float v1 = tex2D<float>(src_linear_tex, read_x - offrel, read_y);
+            // const float v2 = tex2D<float>(src_linear_tex, read_x + offrel, read_y);
+            out += ((v1 + v2) * g);
+        }
+
+        dst_data[write_x + write_y * dst_w] = out;
+    };
+};
+} // namespace normalizedSource
+
 namespace absoluteSource {
 
 // Could also use sycl::specialization constaants that would make the decision in JIT compilation stage
@@ -186,12 +273,30 @@ class Vert
 
 } // namespace absoluteSource
 
+template<typename DerivedImage>
 sycl::event Pyramid::horiz_from_input_image(const Config& conf,
-                                            ImageBase* base,
+                                            DerivedImage* base,
                                             sycl::event d_gauss_write,
                                             sycl::event img_write)
 
 {
+    if constexpr(std::is_same_v<DerivedImage, ImageBindless>)
+    {
+        // Bindless mode
+        fprintf(stderr, "running BINDLESS MODE YAYA\n");
+    }
+    else
+    {
+        if constexpr(std::is_same_v<DerivedImage, Image>)
+        {
+            // USM mode
+            fprintf(stderr, "running USM MODE YAYA\n");
+        }
+        else
+        {
+            fprintf(stderr, "running UNKNOWN MODE (Probs base) YAYA\n");
+        }
+    }
     Octave& oct_obj = _octaves[0];
 
     const int width = oct_obj.getWidth();

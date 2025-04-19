@@ -201,7 +201,8 @@ Pyramid::~Pyramid()
     // sycl::free(_dobuf_host, _device_queue); // No need as it's a struct not malloced
 }
 
-void Pyramid::step1(const Config& conf, popsift::ImageBase* img, sycl::event d_gauss_write, sycl::event img_transfer)
+template<typename DerivedImage>
+void Pyramid::step1(const Config& conf, DerivedImage* img, sycl::event d_gauss_write, sycl::event img_transfer)
 {
     // TODO: Implement the reset -- far down the line need to find extrema first
     // reset_extrema_mgmt();

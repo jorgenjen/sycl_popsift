@@ -11,6 +11,9 @@
 
 namespace popsift {
 
+// Alias used for bindlessimages
+namespace syclexp = sycl::ext::oneapi::experimental;
+
 /*************************************************************
  * ImageBase
  *************************************************************/
@@ -200,12 +203,12 @@ sycl::event Image::load_linear(sycl::event src_img_transfer)
 
 ImageBindless::ImageBindless(sycl::queue Q)
   : ImageBase(Q)
-  , _dev_img_desc(sycl::ext::oneapi::experimental::image_descriptor({0, 0}, 1, sycl::image_channel_type::unsigned_int8))
+  , _dev_img_desc(syclexp::image_descriptor({0, 0}, 1, sycl::image_channel_type::unsigned_int8))
 {}
 
 ImageBindless::ImageBindless(int w, int h, sycl::queue Q)
   : ImageBase(w, h, Q)
-  , _dev_img_desc(sycl::ext::oneapi::experimental::image_descriptor({0, 0}, 1, sycl::image_channel_type::unsigned_int8))
+  , _dev_img_desc(syclexp::image_descriptor({0, 0}, 1, sycl::image_channel_type::unsigned_int8))
 {
     allocate();
 }
@@ -215,12 +218,16 @@ ImageBindless::~ImageBindless()
     fprintf(stderr, "\n\tDESTROYING IMAGE\n");
 
     // Free bindless image
-    namespace syclexp = sycl::ext::oneapi::experimental;
-    syclexp::free_image_mem(_dev_img_handle, syclexp::image_type::standard, _device_queue);
+    // namespace syclexp = sycl::ext::oneapi::experimental;
+    syclexp::free_image_mem(_dev_img_mem, syclexp::image_type::standard, _device_queue);
     syclexp::destroy_image_handle(_sampled_dev_img_handle, _device_queue);
 }
 
-sycl::event ImageBindless::load(void* input) { POP_FATAL("Currently not implemented\n"); }
+sycl::event ImageBindless::load(void* input)
+{
+    // POP_FATAL("Currently not implemented\n");
+    return _device_queue.ext_oneapi_copy(input, _dev_img_mem, _dev_img_desc);
+}
 
 void ImageBindless::resetDimensions(int w, int h, float /*upscaleFactor*/)
 {
@@ -271,14 +278,14 @@ void ImageBindless::allocate()
     //  Using bindless for input image (and scaling up with interpolation)
 
     fprintf(stderr, "Width and height used for bindless image w=%d h=%d", _w, _h);
-    namespace syclexp = sycl::ext::oneapi::experimental;
+    // namespace syclexp = sycl::ext::oneapi::experimental;
 
     _dev_img_desc.width = _w;
     _dev_img_desc.height = _h;
 
     // Should remove and use _dev_img_desc
-    syclexp::image_descriptor img_desc(
-      {static_cast<size_t>(_w), static_cast<size_t>(_h)}, 1, sycl::image_channel_type::unsigned_int8);
+    // syclexp::image_descriptor img_desc(
+    //   {static_cast<size_t>(_w), static_cast<size_t>(_h)}, 1, sycl::image_channel_type::unsigned_int8);
 
     // Normalized 0-1 indexing (for upscaling accessing inbetween pixels in horiz)
     // Uses linear interpolation (hardware accelerated it should be)
@@ -286,11 +293,11 @@ void ImageBindless::allocate()
       sycl::addressing_mode::repeat, sycl::coordinate_normalization_mode::normalized, sycl::filtering_mode::linear);
 
     // Not using RAII version for clear destroy and alloc (usefull for resizing)
-    _dev_img_handle = syclexp::alloc_image_mem(img_desc, _device_queue);
+    _dev_img_mem = syclexp::alloc_image_mem(_dev_img_desc, _device_queue);
 
     // Uses wrapper function to supprt two overloads (due to documentation and my installation being different)
     _sampled_dev_img_handle =
-      popsift::sycl_bindless::create_sampled_image(_dev_img_handle, img_sampler, img_desc, _device_queue);
+      popsift::sycl_bindless::create_sampled_image(_dev_img_mem, img_sampler, _dev_img_desc, _device_queue);
 
     // Use this free function for
     // void free_image_mem(image_mem_handle memHandle,

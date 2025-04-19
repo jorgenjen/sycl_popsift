@@ -114,7 +114,7 @@ struct ImageBindless : public ImageBase
 
   protected:
     sycl::ext::oneapi::experimental::image_descriptor _dev_img_desc;               // Descriptor for image and handle
-    sycl::ext::oneapi::experimental::image_mem_handle _dev_img_handle;             // Underlying meory
+    sycl::ext::oneapi::experimental::image_mem_handle _dev_img_mem;                // Underlying meory
     sycl::ext::oneapi::experimental::sampled_image_handle _sampled_dev_img_handle; // read only handle
 };
 
