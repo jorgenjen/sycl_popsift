@@ -285,7 +285,7 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf,
 
     // _device_queue.wait();
 
-    if constexpr(USE_BINDLESS && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
+    if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
     {
         // Bindless version
         fprintf(stderr, "Yay differey verison -- w=%d h=%d\n", width, height);

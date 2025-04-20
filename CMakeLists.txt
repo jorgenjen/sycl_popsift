@@ -13,6 +13,9 @@ option(PopSift_BUILD_EXAMPLES "Build PopSift applications." ON)
 
 option(PopSift_EXPERIMENTAL "Use experimantal features." ON) # bindless images
 # option(BUILD_SHARED_LIBS "Build shared libraries" ON)
+# These are toggles that only have effect whem PopSift_EXPERIMENTAl are ON
+option(BindlessInput "Use bindless input image for upscaling" ON) 
+option(BindlessArray "Use bindless image array for pyramid" ON)
 #
 # # TODO: Seems to be beneficial for performance (keeping for now)
 # message(STATUS "Building with -fPIC (Position Independent Code)")
@@ -64,23 +67,36 @@ else()
   list(APPEND SYCL_FLAGS -O3)
 endif()
 
-if(PopSift_EXPERIMENTAL)
+if(PopSift_EXPERIMENTAL AND ${ENABLE_CUDA})
   message(STATUS "Using experimantal features!")
   # set(EXPERIMENTAL "-DUSE_EXPERIMENTAL")
-
-  if(${ENABLE_CUDA})
-    # Mby have one opriton for each experimental bindless and ballot and one for
-    # all on off
-    add_compile_definitions(USE_BINDLESS=1)
-  else()
-    # CPU ONLY MODE
-    add_compile_definitions(USE_BINDLESS=0) # CPU not supported
-  endif()
+if(BindlessInput)
+    add_compile_definitions(USE_BINDLESS_INPUT=1)
 else()
-  message(STATUS "Building without experimental features")
+    add_compile_definitions(USE_BINDLESS_INPUT=0)
+endif()
+
+  if(BindlessArray)
+    add_compile_definitions(USE_BINDLESS_ARRAY=1)
+else()
+    add_compile_definitions(USE_BINDLESS_ARRAY=0)
+endif()
+else()
+# Non CUDA
+if(PopSift_EXPERIMENTAL)
+    message(STATUS "Using experimantal features!")
+    # Enable none cuda exlusive extensions
+else()
+    message(STATUS "Building without experimental features")
+    # Disable none cuda exclusive extensions
+endif()
+
   # set(EXPERIMENTAL "-DUSE_EXPERIMENTAL 0") set(EXPERIMENTAL "")
 
-  add_compile_definitions(USE_BINDLESS=0)
+  # Currentky bindless images are cuda exlusive
+  add_compile_definitions(USE_BINDLESS_INPUT=0)
+  add_compile_definitions(USE_BINDLESS_ARRAY=0)
+  
 endif()
 
 # ==============================================================================
