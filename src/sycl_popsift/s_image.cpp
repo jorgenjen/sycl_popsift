@@ -178,7 +178,7 @@ sycl::event Image::load_linear(sycl::event src_img_transfer)
 
 // Wheter or not to use copy to aligned memory before copy to bindless image mem
 // Could result in better transfer speeds
-#define USE_ALIGNED_STAGING false
+#define USE_ALIGNED_STAGING true
 ImageBindless::ImageBindless(sycl::queue Q)
   : ImageBase(Q)
   , _dev_img_desc(syclexp::image_descriptor({0, 0}, 1, sycl::image_channel_type::unorm_int8))
@@ -262,7 +262,7 @@ void ImageBindless::resetDimensions(int w, int h, float /*upscaleFactor*/)
         _max_w = _w = w;
         _max_h = _h = h;
 
-        allocate();
+        allocate<true>();
         return;
     }
 
