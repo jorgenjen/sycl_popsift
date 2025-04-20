@@ -188,23 +188,27 @@ ImageBindless::ImageBindless(int w, int h, sycl::queue Q)
   : ImageBase(w, h, Q)
   , _dev_img_desc(syclexp::image_descriptor({0, 0}, 1, sycl::image_channel_type::unorm_int8))
 {
-    allocate();
+    allocate<true>();
 }
 
+template<bool freeAlignedHost>
 void ImageBindless::free()
 {
     try
     {
         fprintf(stderr, "\nDESTROYING IMAGEBINDLESS\n");
 
-#if USE_ALIGNED_STAGING
-        if(_aligned_src_img)
+        // #if USE_ALIGNED_STAGING
+        if constexpr(USE_ALIGNED_STAGING && freeAlignedHost)
         {
-            sycl::free(_aligned_src_img, _device_queue);
-            fprintf(stderr, "Freed host memory...\n");
-            _aligned_src_img = nullptr;
+            if(_aligned_src_img)
+            {
+                sycl::free(_aligned_src_img, _device_queue);
+                fprintf(stderr, "Freed host memory...\n");
+                _aligned_src_img = nullptr;
+            }
         }
-#endif
+        // #endif
 
         if(_sampled_handle_created)
         {
@@ -266,27 +270,25 @@ void ImageBindless::resetDimensions(int w, int h, float /*upscaleFactor*/)
         return;
     /* everything OK, nothing to do */
 
-    // if(w * h <= _max_w * _max_h)
-    // {
-
-    // NOTE: Could have kept the _aligned_src_img as it's safe to use subset
-    // of segment I think... mby not due to alignment
-
-    //
-    //     _w = w;
-    //     _h = h;
-    //     return;
-    // }
+    if(w * h <= _max_w * _max_h)
+    {
+        // Can keep _aligned_src_img as it's segment is larger than needed
+        // Need to free/destroy bindless image still
+        _w = w;
+        _h = h;
+        free<false>();
+        allocate<false>();
+        return;
+    }
 
     // larger than current segment hence need to free and re-malloc
-    free();
-
     _max_w = _w = w;
     _max_h = _h = h;
-
-    allocate();
+    free<true>();
+    allocate<true>();
 }
 
+template<bool allocAlignedHost>
 void ImageBindless::allocate()
 {
     // Rest of desc was set in constructor -- Updating widht and height
@@ -299,11 +301,12 @@ void ImageBindless::allocate()
                                                 sycl::coordinate_normalization_mode::normalized,
                                                 sycl::filtering_mode::linear);
 
-#if USE_ALIGNED_STAGING
-    _aligned_src_img = sycl::aligned_alloc_host(128, _w * _h, _device_queue);
-    if(!_aligned_src_img)
-        POP_FATAL("Failed to allocate aligned host memory");
-#endif
+    if constexpr(USE_ALIGNED_STAGING && allocAlignedHost)
+    {
+        _aligned_src_img = sycl::aligned_alloc_host(128, _w * _h, _device_queue);
+        if(!_aligned_src_img)
+            POP_FATAL("Failed to allocate aligned host memory");
+    }
 
     try
     {

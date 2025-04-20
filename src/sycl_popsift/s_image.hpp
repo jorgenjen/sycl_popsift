@@ -35,10 +35,6 @@ struct ImageBase
     inline int getWidth() const { return _w; }
     inline int getHeight() const { return _h; }
 
-  private:
-    // virtual void allocate(const float upscaleFactor) = 0;
-    // void allocate_usm(const float upscaleFactor);
-
   protected:
     int _w;        // width  of current image
     int _h;        // height of current image
@@ -96,7 +92,7 @@ struct ImageBindless : public ImageBase
     ImageBindless(sycl::queue Q);
     ImageBindless(int w, int h, sycl::queue Q);
 
-    ~ImageBindless() override { this->free(); };
+    ~ImageBindless() override { this->free<true>(); };
 
     void resetDimensions(int w, int h, float /*upscaleFactor*/) override;
 
@@ -113,8 +109,12 @@ struct ImageBindless : public ImageBase
   private:
     // Ignore upscaleFactor for bindless as it does not use it
     // void allocate(const float /*upscaleFactor*/) override;
-    void allocate();
+
+    template<bool freeAlignedHost>
     void free();
+
+    template<bool allocAlignedHost>
+    void allocate();
 
     // To track state for destruction of handle and image_mem
     bool _img_mem_allocated{false};
