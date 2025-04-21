@@ -23,7 +23,8 @@ void Octave::alloc(const Config& conf, int width, int height, int levels)
     _level_complete_events = new sycl::event[levels];
 
     if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
-                 sycl::any_device_has<sycl::aspect::ext_oneapi_image_array>())
+                 sycl::any_device_has<sycl::aspect::ext_oneapi_image_array>() &&
+                 sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
     {
         alloc_bindless_arrays();
     }

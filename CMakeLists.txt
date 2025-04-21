@@ -10,13 +10,13 @@ set(CMAKE_CXX_STANDARD 17) # required for sycl
 
 # TODO: Add more options like Popsift has if suitable
 option(PopSift_BUILD_EXAMPLES "Build PopSift applications." ON)
+# option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 
 option(PopSift_EXPERIMENTAL "Use experimantal features." ON) # bindless images
-# option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 # These are toggles that only have effect whem PopSift_EXPERIMENTAl are ON
-option(BindlessInput "Use bindless input image for upscaling" ON) 
+option(BindlessInput "Use bindless input image for upscaling" ON)
 option(BindlessArray "Use bindless image array for pyramid" ON)
-#
+
 # # TODO: Seems to be beneficial for performance (keeping for now)
 # message(STATUS "Building with -fPIC (Position Independent Code)")
 # set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -70,33 +70,33 @@ endif()
 if(PopSift_EXPERIMENTAL AND ${ENABLE_CUDA})
   message(STATUS "Using experimantal features!")
   # set(EXPERIMENTAL "-DUSE_EXPERIMENTAL")
-if(BindlessInput)
+  if(BindlessInput)
     add_compile_definitions(USE_BINDLESS_INPUT=1)
-else()
+  else()
     add_compile_definitions(USE_BINDLESS_INPUT=0)
-endif()
+  endif()
 
   if(BindlessArray)
     add_compile_definitions(USE_BINDLESS_ARRAY=1)
-else()
+  else()
     add_compile_definitions(USE_BINDLESS_ARRAY=0)
-endif()
+  endif()
 else()
-# Non CUDA
-if(PopSift_EXPERIMENTAL)
+  # Non CUDA
+  if(PopSift_EXPERIMENTAL)
     message(STATUS "Using experimantal features!")
     # Enable none cuda exlusive extensions
-else()
+  else()
     message(STATUS "Building without experimental features")
     # Disable none cuda exclusive extensions
-endif()
+  endif()
 
   # set(EXPERIMENTAL "-DUSE_EXPERIMENTAL 0") set(EXPERIMENTAL "")
 
-  # Currentky bindless images are cuda exlusive
+  # Currently bindless images are cuda exclusive
   add_compile_definitions(USE_BINDLESS_INPUT=0)
   add_compile_definitions(USE_BINDLESS_ARRAY=0)
-  
+
 endif()
 
 # ==============================================================================

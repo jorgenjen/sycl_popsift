@@ -28,6 +28,7 @@ inline void PopSift::initQueue()
     // should probably also have a compile time flag --experimental to enable this feature
     if constexpr(USE_BINDLESS_INPUT && USE_BINDLESS_ARRAY &&
                  sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
+                 sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>() &&
                  sycl::any_device_has<sycl::aspect::ext_oneapi_image_array>())
     {
         // Running with bindless image -- need to find gpu with that aspect (needed incase of multi gpu system)
@@ -35,16 +36,13 @@ inline void PopSift::initQueue()
         for(sycl::device dev : sycl::device::get_devices(sycl::info::device_type::gpu))
         {
             // Find GPU with the aspect (incase of multigpu system)
-            if(dev.has(sycl::aspect::ext_oneapi_bindless_images) && dev.has(sycl::aspect::ext_oneapi_image_array))
+            if(dev.has(sycl::aspect::ext_oneapi_bindless_images) && dev.has(sycl::aspect::ext_oneapi_image_array) &&
+               dev.has(sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d))
             {
                 std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>()
                           << std::endl
                           << "\t--> supports ext_oneapi_bindless_images: YES" << std::endl
                           << "\t--> supports ext_oneapi_image_array: YES" << std::endl;
-
-                // ERRORS due to aspext not being in the header in my install (too old) This was released march 20
-                // << "\t --> supprts ext_oneapi_bindless_images_gather: " << std::endl
-                // << (dev.has(sycl::aspect::ext_oneapi_bindless_images_gather) ? "YES" : "NO")
 
                 _device_queue = sycl::queue(sycl::context{dev}, dev);
                 return; // We always select first gpu that had the aspect (might be a way to select the best one)
@@ -55,13 +53,15 @@ inline void PopSift::initQueue()
         POP_FATAL("Could not find device with support for  ext_oneapi_bindless_images and ext_oneapi_image_array "
                   "Such a device was available at compile time... Please re-compile")
     }
-    else if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
+    else if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
+                      sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
     {
         // In case it only supports bindless we can use it for upscaling still
         for(sycl::device dev : sycl::device::get_devices(sycl::info::device_type::gpu))
         {
             // Find GPU with the aspect (incase of multigpu system)
-            if(dev.has(sycl::aspect::ext_oneapi_bindless_images))
+            if(dev.has(sycl::aspect::ext_oneapi_bindless_images) &&
+               dev.has(sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d))
             {
                 std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>()
                           << std::endl
@@ -159,7 +159,8 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
     if(imode == ByteImages) // default
     {
         // Push two images as we use two one to load in data and other to compute and they alter using the queue
-        if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
+        if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
+                     sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
         {
             // Swap out with ImageBindless when ready
             _pipe._unused.push(new popsift::ImageBindless(_device_queue));
@@ -596,7 +597,8 @@ void SiftJob::setImg(popsift::ImageBase* img, const float upscaleFactor)
 
     sycl::event src_img_transfer = img->load(_imageData);
 
-    if constexpr(!USE_BINDLESS_INPUT || !sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>())
+    if constexpr(!USE_BINDLESS_INPUT || !sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() ||
+                 !sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
     {
         // If either bindless disabled or no device supports it we use USM
         fprintf(stderr, "\nRUNNING LOAD LINEAR\n");
