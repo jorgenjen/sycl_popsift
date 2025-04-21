@@ -72,7 +72,8 @@ Image::~Image()
 
 sycl::event Image::load(void* input)
 {
-    sycl::event src_img_transfer = copy_src_dev(input);
+    // sycl::event src_img_transfer = copy_src_dev(input);
+    sycl::event src_img_transfer = _device_queue.memcpy(_device_src_img, input, _w * _h);
 
     return load_linear(src_img_transfer);
 }
