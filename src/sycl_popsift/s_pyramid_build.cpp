@@ -45,7 +45,9 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave)
 
     // printf("\n\n\tIN downscale_from_prev_octave GLOBAL(%zu, %zu), OCTAVE=%d\n", global[0], global[1], octave);
     // sycl::event dependency = prev_oct_obj.getLevelEvent(_levels - PREV_LEVEL);
-    sycl::event dependency = prev_oct_obj._level_complete_events[_levels - PREV_LEVEL];
+
+    // sycl::event dependency = prev_oct_obj._level_complete_events[_levels - PREV_LEVEL];
+    sycl::event dependency = prev_oct_obj.getLevelCompleteEvent(_levels - PREV_LEVEL);
 
     return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(dependency);
