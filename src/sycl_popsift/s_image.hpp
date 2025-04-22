@@ -38,10 +38,10 @@ struct ImageBase
   protected:
     int _w;        // width  of current image
     int _h;        // height of current image
-    int _scaled_w; // scaled width
-    int _scaled_h; // scaled height
     int _max_w;    // allocated width  of image
     int _max_h;    // allocated height of image
+    int _scaled_w; // scaled width // Bindless no need  I think
+    int _scaled_h; // scaled height
     // int _init_w;   // Host image widht -- could be differnet due to apply scale factor done early
     // int _init_h;   // host image height
 
@@ -60,6 +60,7 @@ struct Image : public ImageBase
     ~Image() override;
 
     void resetDimensions(int w, int h, float upscaleFactor) override;
+    inline void setScaledDims(const float upscaleFactor); // To set scaled w and h
 
     // sycl::event copy_src_dev(unsigned char* input) { return _device_queue.memcpy(_device_src_img, input, _w * _h); }
     sycl::event copy_src_dev(void* input) { return _device_queue.memcpy(_device_src_img, input, _w * _h); }

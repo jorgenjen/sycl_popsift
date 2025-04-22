@@ -321,7 +321,7 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf,
             return _device_queue.parallel_for(
               sycl::nd_range{global, local},
               {d_gauss_write, img_write},
-              absoluteSource::Horiz<false, true>(
+              absoluteSource::Horiz<0, true>(
                 base->getInputFloat(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
         }
         else
@@ -329,7 +329,7 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf,
             return _device_queue.parallel_for(
               sycl::nd_range{global, local},
               {d_gauss_write, img_write},
-              absoluteSource::Horiz<true, true>(
+              absoluteSource::Horiz<1, true>(
                 base->getInputFloat(), oct_obj.getIntermediate(), _d_gauss, width, height, 0));
         }
     }

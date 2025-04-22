@@ -477,9 +477,9 @@ void PopSift::extractDownloadLoop()
         }
 
         // Fufill the promise
+        _device_queue.wait_and_throw();
         job->setFeatures(features);
 
-        _device_queue.wait_and_throw();
         fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");
         fflush(stdout);
         fflush(stderr);
@@ -595,16 +595,18 @@ void SiftJob::setImg(popsift::ImageBase* img, const float upscaleFactor)
 
     img->resetDimensions(_w, _h, upscaleFactor);
 
-    sycl::event src_img_transfer = img->load(_imageData);
+    _img_transfer_event = img->load(_imageData);
 
-    if constexpr(!USE_BINDLESS_INPUT || !sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() ||
-                 !sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
-    {
-        // If either bindless disabled or no device supports it we use USM
-        fprintf(stderr, "\nRUNNING LOAD LINEAR\n");
-        auto* recast_img = dynamic_cast<popsift::Image*>(img);
-        _img_transfer_event = recast_img->load_linear(src_img_transfer);
-    }
+    // if constexpr(!USE_BINDLESS_INPUT || !sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() ||
+    //              !sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
+    // {
+    //     // If either bindless disabled or no device supports it we use USM
+    //     fprintf(stderr, "\nRUNNING LOAD LINEAR\n");
+    //     auto* recast_img = dynamic_cast<popsift::Image*>(img);
+    //     _img_transfer_event = recast_img->load_linear(src_img_transfer);
+    //     _img_transfer_event.wait();
+    //     fprintf(stderr, "\nLOAD LINEAR HAS COMPLETED\n");
+    // }
 
     _img = img;
 }

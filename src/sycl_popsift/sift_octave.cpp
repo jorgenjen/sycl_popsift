@@ -22,57 +22,57 @@ void Octave::alloc(const Config& conf, int width, int height, int levels)
 
     _level_complete_events = new sycl::event[levels];
 
-    if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
-                 sycl::any_device_has<sycl::aspect::ext_oneapi_image_array>() &&
-                 sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
-    {
-        alloc_bindless_arrays();
-    }
-    else
-    {
-        // Running in USM mode (non experimental atleast memory wise :D)
-        alloc_arrays();
-    }
+    // if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
+    //              sycl::any_device_has<sycl::aspect::ext_oneapi_image_array>() &&
+    //              sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
+    // {
+    //     alloc_bindless_arrays();
+    // }
+    // else
+    // {
+    // Running in USM mode (non experimental atleast memory wise :D)
+    alloc_arrays();
+    // }
 }
 
-void Octave::alloc_bindless_arrays()
-{
-    // Could use shared for these ones aswell probs same end result and cleaner code
-
-    _data_array_host =
-      popsift::common::new_hostT<float*>(_levels, __FILE__, __LINE__, "Host allocation for data array failed");
-    _dog_array_host =
-      popsift::common::new_hostT<float*>(_levels - 1, __FILE__, __LINE__, "Host allocation for DoG array failed");
-
-    _data_array = popsift::sycl_common::malloc_devT<float*>(
-      _levels, __FILE__, __LINE__, "Device allocation for data array failed", _device_queue);
-
-    _dog_array = popsift::sycl_common::malloc_devT<float*>(
-      _levels - 1, __FILE__, __LINE__, "Device allocation for DoG array failed", _device_queue);
-
-    _intermediate = popsift::sycl_common::malloc_devT<float>(
-      _w * _h, __FILE__, __LINE__, "Intermediate allocation for octave failed", _device_queue);
-
-    _data_array_host[0] = popsift::sycl_common::malloc_devT<float>(
-      _w * _h * _levels, __FILE__, __LINE__, "Could not allocate all data levels as one segment", _device_queue);
-
-    _dog_array_host[0] = popsift::sycl_common::malloc_devT<float>(
-      _w * _h * (_levels - 1), __FILE__, __LINE__, "Could not allocate DoG levels as one segment", _device_queue);
-
-    // Set the pointer positions for indexing
-    for(int i = 1; i < _levels - 1; ++i)
-    {
-        _data_array_host[i] = _data_array_host[0] + (i * _w * _h);
-        _dog_array_host[i] = _dog_array_host[0] + (i * _w * _h);
-    }
-
-    // Data has one more than dog hence out of loop
-    _data_array_host[_levels - 1] = _data_array_host[0] + ((_levels - 1) * _w * _h);
-
-    // Copy host arrays to device
-    _data_array_write = _device_queue.memcpy(_data_array, _data_array_host, _levels * sizeof(float*));
-    _dog_array_write = _device_queue.memcpy(_dog_array, _dog_array_host, (_levels - 1) * sizeof(float*));
-}
+// void Octave::alloc_bindless_arrays()
+// {
+//     // Could use shared for these ones aswell probs same end result and cleaner code
+//
+//     _data_array_host =
+//       popsift::common::new_hostT<float*>(_levels, __FILE__, __LINE__, "Host allocation for data array failed");
+//     _dog_array_host =
+//       popsift::common::new_hostT<float*>(_levels - 1, __FILE__, __LINE__, "Host allocation for DoG array failed");
+//
+//     _data_array = popsift::sycl_common::malloc_devT<float*>(
+//       _levels, __FILE__, __LINE__, "Device allocation for data array failed", _device_queue);
+//
+//     _dog_array = popsift::sycl_common::malloc_devT<float*>(
+//       _levels - 1, __FILE__, __LINE__, "Device allocation for DoG array failed", _device_queue);
+//
+//     _intermediate = popsift::sycl_common::malloc_devT<float>(
+//       _w * _h, __FILE__, __LINE__, "Intermediate allocation for octave failed", _device_queue);
+//
+//     _data_array_host[0] = popsift::sycl_common::malloc_devT<float>(
+//       _w * _h * _levels, __FILE__, __LINE__, "Could not allocate all data levels as one segment", _device_queue);
+//
+//     _dog_array_host[0] = popsift::sycl_common::malloc_devT<float>(
+//       _w * _h * (_levels - 1), __FILE__, __LINE__, "Could not allocate DoG levels as one segment", _device_queue);
+//
+//     // Set the pointer positions for indexing
+//     for(int i = 1; i < _levels - 1; ++i)
+//     {
+//         _data_array_host[i] = _data_array_host[0] + (i * _w * _h);
+//         _dog_array_host[i] = _dog_array_host[0] + (i * _w * _h);
+//     }
+//
+//     // Data has one more than dog hence out of loop
+//     _data_array_host[_levels - 1] = _data_array_host[0] + ((_levels - 1) * _w * _h);
+//
+//     // Copy host arrays to device
+//     _data_array_write = _device_queue.memcpy(_data_array, _data_array_host, _levels * sizeof(float*));
+//     _dog_array_write = _device_queue.memcpy(_dog_array, _dog_array_host, (_levels - 1) * sizeof(float*));
+// }
 
 void Octave::alloc_arrays()
 {

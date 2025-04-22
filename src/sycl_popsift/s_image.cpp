@@ -78,6 +78,15 @@ sycl::event Image::load(void* input)
     return load_linear(src_img_transfer);
 }
 
+// Can only be called in this cpp file
+inline void Image::setScaledDims(const float upscaleFactor)
+{
+    float scaleFactor = 1.0f / powf(2.0f, -upscaleFactor);
+
+    _scaled_w = ceilf(_w * scaleFactor);
+    _scaled_h = ceilf(_h * scaleFactor);
+}
+
 // Modified using sclaed and not scaled a bit confusing and ugly so should  refator if this is part of final
 // void Image::resetDimensions(int w, int h, int scaled_w, int scaled_h)
 void Image::resetDimensions(int w, int h, float upscaleFactor)
@@ -85,7 +94,7 @@ void Image::resetDimensions(int w, int h, float upscaleFactor)
     if(_max_w == 0 && _max_h == 0)
     {
         // First time instantiating
-        _max_w = _w = w;
+        _max_w = _w = w; // Stay unscaled
         _max_h = _h = h;
 
         allocate(upscaleFactor);
@@ -104,6 +113,7 @@ void Image::resetDimensions(int w, int h, float upscaleFactor)
         // The largest image used in lifetime of PopSift object
         _w = w;
         _h = h;
+        setScaledDims(upscaleFactor);
         return;
     }
 
@@ -120,13 +130,19 @@ void Image::resetDimensions(int w, int h, float upscaleFactor)
 
 void Image::allocate(const float upscaleFactor)
 {
-    float scaleFactor = 1.0f / powf(2.0f, -upscaleFactor);
+    // float scaleFactor = 1.0f / powf(2.0f, -upscaleFactor);
+    //
+    // _scaled_w = ceilf(_w * scaleFactor);
+    // _scaled_h = ceilf(_h * scaleFactor);
 
-    _scaled_w = ceilf(_w * scaleFactor);
-    _scaled_h = ceilf(_h * scaleFactor);
+    setScaledDims(upscaleFactor);
 
+    // _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
+    //   _w * _h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
+
+    // Should only need scaled version
     _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
-      _w * _h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
+      _scaled_w * _scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
 
     _device_img =
       popsift::sycl_common::malloc_devT<float>(_scaled_w * _scaled_h,
