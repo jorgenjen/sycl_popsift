@@ -19,10 +19,6 @@
 
 namespace popsift {
 
-// struct LinearTexture {
-//     cudaSurfaceObject_t tex;
-// };
-
 class Octave
 {
     int _w{};
@@ -35,7 +31,6 @@ class Octave
     int _levels{};
     int _gauss_group{};
 
-    // sycl::queue& _device_queue; // reference to  of device queue
     sycl::queue _device_queue;
 
     float* _intermediate; // should not need an array
@@ -48,13 +43,7 @@ class Octave
     sycl::event _data_array_write;
     sycl::event _dog_array_write;
 
-    // std::vector<sycl::event> _level_complete_events;
-
   public:
-    // NOTE: consider making the evnt array private and have getter and setter
-    // so that it's abit more safe but I would not want to have to safe guard as it's not needed as long as
-    // only library code modifies it. Could make Pyramid and PopSift friend classes
-    // which would solve that problem of outsider modifying this pointer but agai why would they
     sycl::event* _level_complete_events;
     sycl::event _dog_done_event;
     sycl::event _extrema_done_event;
@@ -67,13 +56,9 @@ class Octave
         fprintf(stderr, "\n\tDESTROY OCTAVE\n");
         this->free_arrays();
     }
-    // ~Octave();
 
     void resetDimensions(const Config& conf, int w, int h);
 
-    // DON'T know why this is set to uint32_t as both parameter passed and setter is int
-    // hence no need for the extra numbers given by uint??
-    // inline void debugSetOctave( uint32_t o ) { _debug_octave_id = o; }
     inline void debugSetOctave(int o) { _debug_octave_id = o; }
 
     inline int getLevels() const { return _levels; }
@@ -84,7 +69,6 @@ class Octave
     inline float getHGridDivider() const { return _h_grid_divider; }
 
     inline float* getIntermediate() const { return _intermediate; }
-    // inline float** getIntermediateArray() const { return _intm_array; }
     inline float** getDataArray() const { return _data_array; }
     inline float** getDataArrayHost() const { return _data_array_host; }
 
@@ -93,80 +77,6 @@ class Octave
     inline float** getDogArray() const { return _dog_array; }
     inline float** getDogArrayHost() const { return _dog_array_host; }
     inline sycl::event getDogArrayWriteEvent() const { return _dog_array_write; }
-
-    // std::move might be better than just assignment
-    // inline void setLevelEvent(int level, sycl::event e) { _level_complete_events[level] = std::move(e); }
-    // inline void setLevelEvent(int level, sycl::event e)
-    // {
-    //     if(level >= 0 && level < _level_complete_events.capacity())
-    //     {
-    //         _level_complete_events.push_back(e);
-    //     }
-    //     else
-    //     {
-    //         fprintf(
-    //           stderr, "\nHow in the fuck... level = %d -- vec size = %zu", level, _level_complete_events.capacity());
-    //     }
-    // }
-
-    // inline const std::vector<sycl::event>& getLevelCompleteEvents() const noexcept { return _level_complete_events; }
-
-    // inline sycl::event getLevelEvent(int level) const
-    // {
-    //     if(level >= 0 && level < _level_complete_events.capacity())
-    //     {
-    //         // return _level_complete_events[level];
-    //         return sycl::event();
-    //     }
-    //     else
-    //     {
-    //         fprintf(
-    //           stderr, "\nHow in the fuck... level = %d -- vec size = %zu", level, _level_complete_events.capacity());
-    //         return sycl::event{};
-    //     }
-    // }
-
-    // inline cudaStream_t getStream( ) {
-    //     return _stream;
-    // }
-    // inline cudaEvent_t getEventScaleDone( ) {
-    //     return _scale_done;
-    // }
-    // inline cudaEvent_t getEventExtremaDone( ) {
-    //     return _extrema_done;
-    // }
-    // inline cudaEvent_t getEventOriDone( ) {
-    //     return _ori_done;
-    // }
-    // inline cudaEvent_t getEventDescDone( ) {
-    //     return _desc_done;
-    // }
-    //
-    // inline LinearTexture getIntermDataTexLinear( ) {
-    //     return _intm_tex_linear;
-    // }
-    // inline cudaTextureObject_t getIntermDataTexPoint( ) const {
-    //     return _intm_tex_point;
-    // }
-    // inline LinearTexture getDataTexLinear( ) {
-    //     return _data_tex_linear;
-    // }
-    // inline cudaTextureObject_t getDataTexPoint( ) const {
-    //     return _data_tex_point;
-    // }
-    // inline cudaSurfaceObject_t getDataSurface( ) const {
-    //     return _data_surf;
-    // }
-    // inline cudaSurfaceObject_t getIntermediateSurface( ) const {
-    //     return _intm_surf;
-    // }
-    //
-    // inline cudaSurfaceObject_t& getDogSurface( ) {
-    //     return _dog_3d_surf;
-    // }
-    // inline cudaTextureObject_t& getDogTexturePoint( ) {
-    //     return _dog_3d_tex_point;
-    // }
 
     /**
      * @brief Allocates all GPU memories for one octave.
@@ -188,24 +98,5 @@ class Octave
     void alloc_bindless_arrays(); // For bindless_images array extension
     void alloc_arrays();
     void free_arrays();
-
-    // void alloc_data_planes();
-    // void alloc_data_tex();
-    // void alloc_interm_array();
-    // void alloc_interm_tex();
-    // void alloc_dog_array();
-    // void alloc_dog_tex();
-    // void alloc_streams();
-    // void alloc_events();
-    //
-    // void free_events();
-    // void free_streams();
-    // void free_dog_tex();
-    // void free_dog_array();
-    // void free_interm_tex();
-    // void free_interm_array();
-    // void free_data_tex();
-    // void free_data_planes();
 };
-
 } // namespace popsift

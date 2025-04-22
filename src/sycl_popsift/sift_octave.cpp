@@ -22,57 +22,8 @@ void Octave::alloc(const Config& conf, int width, int height, int levels)
 
     _level_complete_events = new sycl::event[levels];
 
-    // if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
-    //              sycl::any_device_has<sycl::aspect::ext_oneapi_image_array>() &&
-    //              sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
-    // {
-    //     alloc_bindless_arrays();
-    // }
-    // else
-    // {
-    // Running in USM mode (non experimental atleast memory wise :D)
     alloc_arrays();
-    // }
 }
-
-// void Octave::alloc_bindless_arrays()
-// {
-//     // Could use shared for these ones aswell probs same end result and cleaner code
-//
-//     _data_array_host =
-//       popsift::common::new_hostT<float*>(_levels, __FILE__, __LINE__, "Host allocation for data array failed");
-//     _dog_array_host =
-//       popsift::common::new_hostT<float*>(_levels - 1, __FILE__, __LINE__, "Host allocation for DoG array failed");
-//
-//     _data_array = popsift::sycl_common::malloc_devT<float*>(
-//       _levels, __FILE__, __LINE__, "Device allocation for data array failed", _device_queue);
-//
-//     _dog_array = popsift::sycl_common::malloc_devT<float*>(
-//       _levels - 1, __FILE__, __LINE__, "Device allocation for DoG array failed", _device_queue);
-//
-//     _intermediate = popsift::sycl_common::malloc_devT<float>(
-//       _w * _h, __FILE__, __LINE__, "Intermediate allocation for octave failed", _device_queue);
-//
-//     _data_array_host[0] = popsift::sycl_common::malloc_devT<float>(
-//       _w * _h * _levels, __FILE__, __LINE__, "Could not allocate all data levels as one segment", _device_queue);
-//
-//     _dog_array_host[0] = popsift::sycl_common::malloc_devT<float>(
-//       _w * _h * (_levels - 1), __FILE__, __LINE__, "Could not allocate DoG levels as one segment", _device_queue);
-//
-//     // Set the pointer positions for indexing
-//     for(int i = 1; i < _levels - 1; ++i)
-//     {
-//         _data_array_host[i] = _data_array_host[0] + (i * _w * _h);
-//         _dog_array_host[i] = _dog_array_host[0] + (i * _w * _h);
-//     }
-//
-//     // Data has one more than dog hence out of loop
-//     _data_array_host[_levels - 1] = _data_array_host[0] + ((_levels - 1) * _w * _h);
-//
-//     // Copy host arrays to device
-//     _data_array_write = _device_queue.memcpy(_data_array, _data_array_host, _levels * sizeof(float*));
-//     _dog_array_write = _device_queue.memcpy(_dog_array, _dog_array_host, (_levels - 1) * sizeof(float*));
-// }
 
 void Octave::alloc_arrays()
 {
@@ -143,13 +94,6 @@ void Octave::free_arrays()
         fprintf(stderr, "\nINTERMEDIATE array is NULL at octave=%d\n", _debug_octave_id);
     }
 
-    // for(int i = 0; i < _levels - 1; ++i)
-    // {
-    //     sycl::free(_data_array[i], _device_queue);
-    //     sycl::free(_dog_array[i], _device_queue);
-    // }
-    // sycl::free(_data_array[_levels - 1], _device_queue); // has one more than DoG's
-
     sycl::free(_data_array_host[0], _device_queue); // one large segment holding all levels
     sycl::free(_data_array, _device_queue);
     delete[] _data_array_host;
@@ -159,8 +103,6 @@ void Octave::free_arrays()
     delete[] _dog_array_host;
 
     sycl::free(_intermediate, _device_queue);
-
-    // fprintf(stderr, "done freeing octave %d", _debug_octave_id);
 }
 
 void Octave::resetDimensions(const Config& conf, int w, int h)
@@ -168,23 +110,6 @@ void Octave::resetDimensions(const Config& conf, int w, int h)
     if(w == _w && h == _h)
         return;
 
-    // This could result in worse performance than reallocating
-    // as far as I understand it could lead to access starting
-    // from a non cache-algned-address and hence end up using two cache lanes
-    // instead ofo one evethout we access coaleced memory that is 128 multiple wide.
-    //   "L1/TEX and L2 have 128B cache lines. Cache lines consist of 5 32B sectors.
-    //   The tag lookup is at 128B granularity." From cuda forum
-    // So might be better of freeing and reallocating to avoid this issue
-    // or do some math check of the remainder to see if we hit cache aligned memory or not
-    // As from my readng it seems like cudamalloc and cudafree (device malloc and free) are
-    // quite expensive (much more so than cpu malloc and free) Should test this and make cases
-    // where it ends up using two cache lines if  I can and compare free and malloc
-    // vs using two cache lanes an interesting experiment would be to see how many frames
-    // on that dimension woiuld need to be computed for it to be beneficial (if any)
-    //     DISCLAIMER: I could have fully misunderstood cache lines with respect to memory
-    //     segments and the only thing that matters is that you read coaleced memory but the
-    //     said you could have non cache aligned address so tha's why  I assume this could
-    //     be the case
     if(w * h <= _max_w * _max_h)
     {
         // Smaller than current allocation hence we can reuse
