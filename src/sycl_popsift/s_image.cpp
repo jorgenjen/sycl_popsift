@@ -130,20 +130,13 @@ void Image::resetDimensions(int w, int h, float upscaleFactor)
 
 void Image::allocate(const float upscaleFactor)
 {
-    // float scaleFactor = 1.0f / powf(2.0f, -upscaleFactor);
-    //
-    // _scaled_w = ceilf(_w * scaleFactor);
-    // _scaled_h = ceilf(_h * scaleFactor);
-
     setScaledDims(upscaleFactor);
 
-    // _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
-    //   _w * _h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
-
-    // Should only need scaled version
+    // The source image that we use to compute the upscaled image
     _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
-      _scaled_w * _scaled_h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
+      _w * _h, __FILE__, __LINE__, "Could not allocate memory for image on device", _device_queue);
 
+    // The upscaled image
     _device_img =
       popsift::sycl_common::malloc_devT<float>(_scaled_w * _scaled_h,
                                                __FILE__,
@@ -156,37 +149,34 @@ void Image::allocate(const float upscaleFactor)
 // to device first before kernel launch
 sycl::event Image::load_linear(sycl::event src_img_transfer)
 {
-    return _device_queue.submit([&](sycl::handler& cgh) {
-        cgh.depends_on(src_img_transfer);
-        auto img = _device_img;
-        auto input = _device_src_img;
-        auto width = _w;
-        auto height = _h;
-        int step = _scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
-        int scaled_w = _scaled_w;
-        cgh.parallel_for(sycl::range<2>(width, height), [=](sycl::id<2> idx) {
-            auto in_pos = idx[0] + idx[1] * width;
+    return _device_queue.submit(
+      [&, img = _device_img, input = _device_src_img, width = _w, height = _h, scaled_w = _scaled_w](
+        sycl::handler& cgh) {
+          cgh.depends_on(src_img_transfer);
+          int step = scaled_w / width; // floored -- not sure if it is corretc for other than 1 and 2
+          cgh.parallel_for(sycl::range<2>(width, height), [=](sycl::id<2> idx) {
+              auto in_pos = idx[0] + idx[1] * width;
 
-            auto in_pos_right = idx[0] == width - 1 ? in_pos : in_pos + 1;
-            auto in_pos_down = idx[1] == height - 1 ? in_pos : in_pos + width;
-            auto in_pos_down_right = (idx[0] == width - 1 && idx[1] == height - 1) ? in_pos
-                                     : idx[0] == width - 1                         ? in_pos + width
-                                     : idx[1] == height - 1                        ? in_pos + 1
-                                                                                   : in_pos + width + 1; // default case
+              auto in_pos_right = idx[0] == width - 1 ? in_pos : in_pos + 1;
+              auto in_pos_down = idx[1] == height - 1 ? in_pos : in_pos + width;
+              auto in_pos_down_right = (idx[0] == width - 1 && idx[1] == height - 1) ? in_pos
+                                       : idx[0] == width - 1                         ? in_pos + width
+                                       : idx[1] == height - 1                        ? in_pos + 1
+                                                              : in_pos + width + 1; // default case
 
-            float pixel = static_cast<float>(input[in_pos]);
-            float pixel_right = static_cast<float>(input[in_pos_right]);
-            float pixel_down = static_cast<float>(input[in_pos_down]);
-            float pixel_down_right = static_cast<float>(input[in_pos_down_right]);
+              float pixel = static_cast<float>(input[in_pos]);
+              float pixel_right = static_cast<float>(input[in_pos_right]);
+              float pixel_down = static_cast<float>(input[in_pos_down]);
+              float pixel_down_right = static_cast<float>(input[in_pos_down_right]);
 
-            auto pos = idx[0] * step + idx[1] * step * scaled_w; // position in potentially upscaled image
+              auto pos = idx[0] * step + idx[1] * step * scaled_w; // position in potentially upscaled image
 
-            img[pos] = pixel;
-            img[pos + 1] = (pixel + pixel_right) / 2;
-            img[pos + scaled_w] = (pixel + pixel_down) / 2;
-            img[pos + scaled_w + 1] = (pixel + pixel_down + pixel_right + pixel_down_right) / 4;
-        });
-    });
+              img[pos] = pixel;
+              img[pos + 1] = (pixel + pixel_right) / 2;
+              img[pos + scaled_w] = (pixel + pixel_down) / 2;
+              img[pos + scaled_w + 1] = (pixel + pixel_down + pixel_right + pixel_down_right) / 4;
+          });
+      });
 }
 
 /*************************************************************
