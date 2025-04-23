@@ -384,9 +384,6 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     return _device_queue.parallel_for(sycl::nd_range{global, local},
                                       intm_write,
                                       absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
-
-    // TODO: Consider adding template argument like in Horiz and either have one for all, w, h and nothing but might be
-    // excessive need to test (and figure out if the templates works as I hope making separeate kernels or somother
-    // smart thing)
 }
+
 } // namespace popsift

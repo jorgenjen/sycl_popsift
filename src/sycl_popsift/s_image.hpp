@@ -105,7 +105,7 @@ struct ImageBindless : public ImageBase
     }
 
     // transfer into before transfering to host bindless image
-    void* _aligned_src_img;
+    void* _aligned_src_img{nullptr};
 
   private:
     // Ignore upscaleFactor for bindless as it does not use it

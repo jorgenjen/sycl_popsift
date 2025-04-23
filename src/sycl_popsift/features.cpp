@@ -187,14 +187,7 @@ inline float l2_in_t0(const sycl::vec<float, 4>* lptr,
     // Is probably a vec functon for this aswell sycl::dot mby
     float res = mval.x() * mval.x() + mval.y() * mval.y() + mval.z() * mval.z() + mval.w() * mval.w();
 
-    // res += shuffle_down(res, 16);
-    // res += shuffle_down(res, 8);
-    // res += shuffle_down(res, 4);
-    // res += shuffle_down(res, 1);
-    // res += shuffle_down(res, 2);
-    // return res;
-
-    // eucledian distance (without root, not needed for comparison) between the descriptors
+    // Sum of squared differences of complete 128 descriptors
     return sycl::reduce_over_group(group, res, sycl::plus<float>());
 }
 

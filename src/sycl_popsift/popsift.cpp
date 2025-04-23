@@ -22,6 +22,25 @@ using std::endl;
 using std::max;
 using std::min;
 
+namespace syclexp = sycl::ext::oneapi::experimental;
+
+std::string matrix_type_to_string(syclexp::matrix::matrix_type type)
+{
+    switch(type)
+    {
+        case syclexp::matrix::matrix_type::fp16: return "fp16";
+        case syclexp::matrix::matrix_type::bf16: return "bf16";
+        case syclexp::matrix::matrix_type::tf32: return "tf32";
+        case syclexp::matrix::matrix_type::fp32: return "fp32";
+        case syclexp::matrix::matrix_type::fp64: return "fp64";
+        case syclexp::matrix::matrix_type::sint8: return "sint8";
+        case syclexp::matrix::matrix_type::uint8: return "uint8";
+        case syclexp::matrix::matrix_type::sint32: return "sint32";
+        case syclexp::matrix::matrix_type::uint32: return "uint32";
+        default: return "unknown";
+    }
+}
+
 inline void PopSift::initQueue()
 {
 #ifndef CPU_ONLY
@@ -144,17 +163,22 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
     std::cout << "  Name: " << dev.get_info<sycl::info::device::name>() << "\n";
     std::cout << "  Vendor: " << dev.get_info<sycl::info::device::vendor>() << "\n";
     std::cout << "  Driver version: " << dev.get_info<sycl::info::device::driver_version>() << "\n";
-    std::cout << "  Device type: ";
 
-    switch(dev.get_info<sycl::info::device::device_type>())
+    auto combinations = dev.get_info<sycl::ext::oneapi::experimental::info::device::matrix_combinations>();
+
+    if(combinations.empty())
     {
-        case sycl::info::device_type::cpu: std::cout << "CPU"; break;
-        case sycl::info::device_type::gpu: std::cout << "GPU"; break;
-        case sycl::info::device_type::accelerator: std::cout << "Accelerator"; break;
-        case sycl::info::device_type::host: std::cout << "Host"; break;
-        default: std::cout << "Unknown";
+        std::cout << "No matrix combinations supported on this device.\n";
     }
-    std::cout << "\n";
+
+    for(const auto& combo : combinations)
+    {
+        std::cout << "M: " << combo.msize << ", N: " << combo.nsize << ", K: " << combo.ksize
+                  << ", A type: " << matrix_type_to_string(combo.atype)
+                  << ", B type: " << matrix_type_to_string(combo.btype)
+                  << ", C type: " << matrix_type_to_string(combo.ctype)
+                  << ", D type: " << matrix_type_to_string(combo.dtype) << "\n";
+    }
 
     if(imode == ByteImages) // default
     {
