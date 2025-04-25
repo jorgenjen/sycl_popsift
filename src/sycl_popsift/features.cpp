@@ -16,6 +16,7 @@
 #include <sycl/sycl.hpp> // for free and alloc and queue
 
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -272,6 +273,7 @@ class Compute_distance_matrix
     sycl::half* r;
     int r_len;
     sycl::local_accessor<sycl::half, 1> test;
+    float* write_back;
 
   public:
     Compute_distance_matrix(sycl::vec<int, 3>* match_matrix,
@@ -279,13 +281,15 @@ class Compute_distance_matrix
                             int l_len,
                             sycl::half* r,
                             int r_len,
-                            sycl::local_accessor<sycl::half, 1> test)
+                            sycl::local_accessor<sycl::half, 1> test,
+                            float* write_back)
       : match_matrix(match_matrix)
       , l(l)
       , l_len(l_len)
       , r(r)
       , r_len(r_len)
-      , test(test) {};
+      , test(test)
+      , write_back(write_back) {};
 
     inline void operator()(sycl::nd_item<1> it) const
     {
@@ -341,7 +345,7 @@ class Compute_distance_matrix
                // having to transpose)
 
         syclexp::matrix::
-          joint_matrix<sycl::sub_group, sycl::half, syclexp::matrix::use::b, 16, 16, syclexp::matrix::layout::col_major>
+          joint_matrix<sycl::sub_group, sycl::half, syclexp::matrix::use::b, 16, 16, syclexp::matrix::layout::row_major>
             B; // Subgroup keep the 8 B for the whole kernel it is responsible for those 16 descriptors
 
         syclexp::matrix::joint_matrix<sycl::sub_group,
@@ -356,83 +360,40 @@ class Compute_distance_matrix
         sycl::global_ptr<sycl::half> l_ptr(l);
         syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, l_ptr, 128); // WORKS WORKS WORKS
 
-        // auto local_ptr = sycl::ext::oneapi::group_local_memory<sycl::half[256]>(it.get_group());
-        //
-        // (*local_ptr)[5] = 2.41;
+        // auto me_loc_ptr = sycl::ext::oneapi::group_local_memory<sycl::half[512]>(it.get_group()); // Does not like
+        // this local memory for some reason...
+
+        if(it.get_local_linear_id() == 0)
+        {
+            for(int i = 0; i < 512; ++i)
+            {
+                // set everything to zero
+                local_ptr[i] = 0;
+            }
+        }
+
+        local_ptr[0] = 1;
+        local_ptr[1] = 1;
+        local_ptr[2] = 1;
+        local_ptr[3] = 1;
+        local_ptr[4] = 1;
+        local_ptr[5] = 1;
+        local_ptr[6] = 1;
+        local_ptr[7] = 1;
+        local_ptr[8] = 1;
+        local_ptr[9] = 1;
 
         sycl::global_ptr<sycl::half> r_ptr(r);
         // syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, r_ptr, 128); // WORKS ASWELL
 
         syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, local_ptr, 16); // WORKS ASWELL
+        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, me_loc_ptr, 16); // NO worky...
 
-        // C = syclexp::matrix::joint_matrix_mad(it.get_sub_group(), A, B, C);
+        // C = syclexp::matrix::joint_matrix_mad(it.get_sub_group(), A, B, C); // Not working
         syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
 
-        // syclexp::matrix::joint_matrix_load(group,
-        //                                    B,
-        //                                    local_ptr_alt, // or local_ptr_alt
-        //                                    128,           // Leading dimension for column-major
-        //                                    syclexp::matrix::layout::col_major);
-
-        // load B (our responsibility)
-
-        //
-
-        //
-
-        // DOING OLD VERSISON TO BE REMOVED
-
-        // Could remove this statement when using global l_len * 32 and local 32 so one per
-        // Hence no group could be superflous
-        //     if(it.get_group(0) >= l_len) // Should be impossible (considering l_len is setting the dimension of
-        //     global
-        //         return;
-        //     const int idx = it.get_group(0);
-        //
-        //     float match_1st_val = std::numeric_limits<float>::infinity();
-        //     float match_2nd_val = std::numeric_limits<float>::infinity();
-        //     int match_1st_idx = 0;
-        //     int match_2nd_idx = 0;
-        //
-        //     // auto group = [&]() {
-        //     //     if constexpr(useSubGroup)
-        //     //         return it.get_sub_group();
-        //     //     else
-        //     //         return it.get_group();
-        //     // }();
-        //     // auto group = it.get_sub_group();
-        //
-        //     const sycl::vec<float, 4>* lptr = reinterpret_cast<const sycl::vec<float, 4>*>(&l[idx]);
-        //
-        //     for(int i = 0; i < r_len; i++)
-        //     {
-        //         const sycl::vec<float, 4>* rptr = reinterpret_cast<const sycl::vec<float, 4>*>(&r[i]);
-        //
-        //         const float res = l2_in_t0(lptr, rptr, group, it);
-        //
-        //         if(it.get_local_id(0) == 0) // Could use group.leader() for sub_group version
-        //         {
-        //             if(res < match_1st_val)
-        //             {
-        //                 match_2nd_val = match_1st_val;
-        //                 match_2nd_idx = match_1st_idx;
-        //                 match_1st_val = res;
-        //                 match_1st_idx = i;
-        //             }
-        //             else if(res < match_2nd_val)
-        //             {
-        //                 match_2nd_val = res;
-        //                 match_2nd_idx = i;
-        //             }
-        //         }
-        //         sycl::group_barrier(group); // not sure if this is needed for sub_group
-        //     }
-        //
-        //     if(it.get_local_id(0) == 0)
-        //     {
-        //         bool accept = ((match_1st_val / match_2nd_val) < 0.8f);
-        //         match_matrix[it.get_group(0)] = sycl::vec<int, 3>(match_1st_idx, match_2nd_idx, accept);
-        //     }
+        sycl::global_ptr<float> backy(write_back);
+        syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, backy, 16, syclexp::matrix::layout::row_major);
     }
 };
 
@@ -527,6 +488,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
 
         sycl::half* l_half = sycl_common::malloc_devT<sycl::half>(l_len * 128, __FILE__, __LINE__, "", _device_queue);
         sycl::half* r_half = sycl_common::malloc_devT<sycl::half>(r_len * 128, __FILE__, __LINE__, "", _device_queue);
+        float* res = sycl_common::malloc_sharedT<float>(600, __FILE__, __LINE__, "", _device_queue);
 
         convert_float_to_half_usm(_device_queue, getDescriptors(), l_half, l_len);
         convert_float_to_half_usm(_device_queue, other->getDescriptors(), r_half, r_len);
@@ -545,8 +507,22 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
 
                 cgh.parallel_for(
                   sycl::nd_range{global, local},
-                  Compute_distance_matrix<false>(match_matrix, l_half, l_len, r_half, r_len, local_test));
+                  Compute_distance_matrix<false>(match_matrix, l_half, l_len, r_half, r_len, local_test, res));
             });
+
+            _device_queue.wait();
+
+            fprintf(stderr, "\n ");
+            fprintf(stderr, "\n ");
+            for(int i = 0; i < 16; ++i)
+            {
+                for(int j = 0; j < 16; ++j)
+                {
+                    fprintf(stderr, " %f ", res[i * 16 + j]);
+                }
+
+                fprintf(stderr, "\n ");
+            }
 
             // auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
             // matchEvent =
