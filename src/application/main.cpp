@@ -185,7 +185,6 @@ void read_job(SiftJob* job)
 
     if(write_features)
     {
-        fprintf(stderr, "\n\n\tWE ARE WRITING YEAHHH!\n");
         std::ofstream of("output-features.txt");
         feature_list->print(of, write_as_uchar);
     }
@@ -255,7 +254,7 @@ int main(int argc, char** argv)
     std::queue<SiftJob*> jobs;
     for(const auto& currFile : inputFiles)
     {
-        cout << "current file: " << currFile << endl;
+        // cout << "current file: " << currFile << endl;
         SiftJob* job = process_image(currFile, PopSift);
         jobs.push(job);
     }
@@ -274,35 +273,5 @@ int main(int argc, char** argv)
         }
     }
 
-    // unsigned char* image_data = nullptr;
-    // int w, h;
-
-    // TODO(jorgejen): Not really supposed to pass the image data to popsift in
-    // final implenentation need to refactor!!! On sunday
-
-    // Queue for multiple jobs
-    // std::queue<SiftJob*> jobs;
-    // SiftJob* leJob = process_image(inputFile, PopSift);
-
-    // print job and wait for promise to be fufilled
-    // int val = leJob->getHost();
-
-    // std::cout << "The value resturned from future/promise: " << val <<
-    // std::endl;
-
-    // Testing the PopSift class
-
-    // PopSift.printDim();
-    // PopSift.printImageRegion(sycl::range(20, 25), sycl::range(20, 25));
-    // PopSift.modifyImage();
-    // PopSift.printImageRegion(sycl::range(20, 25), sycl::range(20, 25));
-    // PopSift.printImage(10);
-    // PopSift.printDevice();
-
-    // PopSift.uninit(); // don't see the need as it will be done automatically
-    // bu the destructor of the popsift class
-
-    // fprintf(stderr, "\n\t\tI sleep now before return :D\n\n");
-    fprintf(stderr, "\n\t\tExiting main now BYE\n\n");
     return EXIT_SUCCESS;
 }

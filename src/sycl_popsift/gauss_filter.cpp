@@ -21,13 +21,6 @@ using namespace std;
 
 namespace popsift {
 
-// __device__ __constant__ GaussInfo d_gauss;
-// GaussInfo* d_gauss = nullptr;
-
-// __align__(128) thread_local GaussInfo h_gauss;
-// thread_local GaussInfo h_gauss;
-// GaussInfo h_gauss; // not sure if I need thread local and not sure how to do align
-
 // TODO: Implement an equivalent print function that would work with sycl
 // void print_gauss_filter_symbol( int columns )
 // {
@@ -92,10 +85,6 @@ namespace popsift {
 //     printf("\n");
 // }
 
-// It is probably possible to do partial updates of _d_gauss if struct is packed but not sure if it is worth it
-// TODO: Look into partial update of struct on device side as currently the whole host is copied into device no matter
-// how small or large the change is (not sure if there are cases where it would be partial updates when config changes
-// so that is a prerquisite for doing partial updates)
 void init_filter(const Config& conf, GaussInfo* h_gauss) // modifies passed h_gauss
 {
     float sigma0 = conf.sigma;

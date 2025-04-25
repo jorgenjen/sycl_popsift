@@ -83,7 +83,6 @@ class Octave : public OctaveBase
     Octave(sycl::queue Q);
     ~Octave()
     {
-        fprintf(stderr, "\n\tDESTROY OCTAVE\n");
         this->free_arrays();
         delete[] _level_complete_events;
     }
@@ -120,7 +119,6 @@ class OctaveBindless : public OctaveBase
     OctaveBindless(sycl::queue);
     ~OctaveBindless()
     {
-        fprintf(stderr, "\n\tDESTROY OCTAVEBINDLESS\n");
         this->free_arrays();
         delete[] _level_complete_events;
     }

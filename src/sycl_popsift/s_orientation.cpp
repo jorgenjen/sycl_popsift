@@ -20,6 +20,7 @@
 // #include "s_gradiant.h"
 #include "sycl_popsift/common/subgroup_bitonic_sort.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
+#include "sycl_popsift/s_gradient.hpp"
 #include "sycl_popsift/sift_constants.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 
@@ -73,14 +74,14 @@ inline float exp(const float& x)
 }
 
 // TODO: Remove and use the one in s_gradient.hpp
-inline void get_gradient(
-  float& grad, float& theta, const int x, const int y, const float* leveled_layer, const int& w, const int& h)
-{
-    float dx = leveled_layer[x + 1 + y * w] - leveled_layer[x - 1 + y * w];
-    float dy = leveled_layer[x + (y + 1) * w] - leveled_layer[x + (y - 1) * w];
-    grad = sycl::hypot(dx, dy); // Hypotenuse -- sqrt(dx^2 + dy^2)
-    theta = atan2f(dy, dx);     // Inverse tangent of dy/dx
-}
+// inline void get_gradient(
+//   float& grad, float& theta, const int x, const int y, const float* leveled_layer, const int& w, const int& h)
+// {
+//     float dx = leveled_layer[x + 1 + y * w] - leveled_layer[x - 1 + y * w];
+//     float dy = leveled_layer[x + (y + 1) * w] - leveled_layer[x + (y - 1) * w];
+//     grad = sycl::hypot(dx, dy); // Hypotenuse -- sqrt(dx^2 + dy^2)
+//     theta = atan2f(dy, dx);     // Inverse tangent of dy/dx
+// }
 
 /*
  * Histogram smoothing helper
@@ -147,15 +148,6 @@ class ori_par
                 return it.get_group();
         }();
 
-        if(it.get_global_linear_id() == 0)
-        {
-            if constexpr(useSubGroup)
-                sycl::ext::oneapi::experimental::printf("Sub group size %d\n", group.get_local_range()[0]);
-            else
-                sycl::ext::oneapi::experimental::printf("work group size %d\n",
-                                                        group.get_local_range()[0] * group.get_local_range()[1]);
-        }
-
         // Possition in the grid but 0 is always 1 so should be same as it.get_group(1)
         // This is the extrema index as we are getting index in terms of work_groups
         // const int extremum_index = it.get_group(1) * it.get_group(0);
@@ -176,22 +168,7 @@ class ori_par
         const int iext_off = dobuf->i_ext_off[octave][extremum_index]; // Should get rid of this must be an artifiact
         // from they added the second layer (octave) to structure of i_ext_dat
 
-        if(iext_off != extremum_index)
-            sycl::ext::oneapi::experimental::printf("\n\n\t\tWAHHHHATER FUCKER NO WAYYYYY WHYYYYYYY\n\n");
-
         const InitialExtremum* iext = &dobuf->i_ext_dat[octave][iext_off];
-
-        if(sycl::floor(iext->xpos) == 812)
-            if(octave == 0 && group.leader())
-            {
-                // sycl::ext::oneapi::experimental::printf("WORKYYY %f\n\n", iext->xpos);
-                sycl::ext::oneapi::experimental::printf(
-                  "WORKYYY extremum_index %d, %f --> group[1] %d -- group[0] %d\n\n ",
-                  extremum_index,
-                  dobuf->i_ext_dat[octave][iext_off].xpos,
-                  it.get_group(1),
-                  it.get_group(0));
-            }
 
         // Initialize hist to zero each work-item does 2 in work-group
         hist[it.get_local_id(1) + 0] = 0.0f;
@@ -247,7 +224,7 @@ class ori_par
 
                 float grad;
                 float theta;
-                popsift::get_gradient(grad, theta, xx, yy, layer[level], w, h);
+                popsift::get_gradient(grad, theta, xx, yy, w, h, layer, level);
 
                 float dx = xx - x;
                 float dy = yy - y;
@@ -260,15 +237,6 @@ class ori_par
                     // int bidx = (int)rintf( __fdividef( ORI_NBINS * (theta + M_PI), M_PI2 ) );
                     int bidx =
                       (int)sycl::round(popsift::divide<HALF_PRECISION>(float(ORI_NBINS) * (theta + M_PI), M_PI2));
-
-                    if(bidx > ORI_NBINS)
-                    {
-                        sycl::ext::oneapi::experimental::printf("Crashing: bin %d theta %f :-)\n", bidx, theta);
-                    }
-                    if(bidx < 0)
-                    {
-                        sycl::ext::oneapi::experimental::printf("Crashing: bin %d theta %f :-)\n", bidx, theta);
-                    }
 
                     bidx = (bidx == ORI_NBINS) ? 0 : bidx;
 
@@ -341,10 +309,7 @@ class ori_par
             bool predicate = (bin < ORI_NBINS) && (sm_hist[bin] > max(sm_hist[prev], sm_hist[next]));
 
             const float num = predicate ? 3.0f * sm_hist[prev] - 4.0f * sm_hist[bin] + 1.0f * sm_hist[next] : 0.0f;
-            // const float num  = predicate ?   2.0f * sm_hist[prev]
-            //                                - 4.0f * sm_hist[bin]
-            //                                + 2.0f * sm_hist[next]
-            //                              : 0.0f;
+
             const float denB = predicate ? 2.0f * (sm_hist[prev] - 2.0f * sm_hist[bin] + sm_hist[next]) : 1.0f;
 
             const float newbin = popsift::divide<HALF_PRECISION>(num, denB);
@@ -355,24 +320,6 @@ class ori_par
             yval[bin] = predicate ? -(num * num) / (4.0f * denB) + sm_hist[prev] : -INFINITY;
         }
         sycl::group_barrier(group);
-
-// For small image
-#define XPOS 26.643719f
-#define YPOS 185.853836f
-        // For medium image
-        // #define XPOS 1096.967896f
-        // #define YPOS 819.321289f
-
-        // if(iext->xpos == XPOS && iext->ypos == YPOS && it.get_local_id(1) == 0)
-        // {
-        //     // printf("\nBEFORE: best_index (%d, %d)\n", best_index.x, best_index.y);
-        //     for(int i = 0; i < 64; i += 2)
-        //     {
-        //         sycl::ext::oneapi::experimental::printf("\tidx=%d --> %.6f  -- ", i, yval[i]);
-        //         sycl::ext::oneapi::experimental::printf("idx=%d --> %.6f\n ", i + 1, yval[i + 1]);
-        //     }
-        //     sycl::ext::oneapi::experimental::printf("\nAFTER");
-        // }
 
         // Needed to for sub_grop using minimal as if it's only two yval that's non -inf
         // and the largets has index 3 the same orientation will be selected twize which we don't want
@@ -389,9 +336,6 @@ class ori_par
         // BitonicSort
         if constexpr(useSubGroup)
         {
-            // BitonicSort::Warp32<float, sycl::sub_group> sorter(yval, it, group);
-            if(it.get_global_linear_id() == 0)
-                sycl::ext::oneapi::experimental::printf("OCTAVE WE DOING SORTER ON %d\n\n", octave);
             BitonicSort::WorkGroup32<float, sycl::sub_group> sorter(yval, it, group);
 #if minimal_sort
             sorter.minimal_sort64(my_index);
@@ -407,14 +351,6 @@ class ori_par
 
         sycl::group_barrier(group); // me test syncer :D
 
-        // if(iext->xpos == XPOS && iext->ypos == YPOS)
-        // {
-        //     sycl::ext::oneapi::experimental::printf("\n\tthreadIdx %d  -  best_index %d --> yval = %f",
-        //                                             (int)it.get_local_id(1),
-        //                                             my_index,
-        //                                             my_index != -1 ? yval[my_index] : -INFINITY);
-        // }
-
 #if minimal_sort
         // Needed to avoid some value potentially being duplicate when running minimal
         const float best_val = my_index != -1 ? yval[my_index] : -INFINITY;
@@ -425,12 +361,6 @@ class ori_par
 
         // Zero broadcast as it has higest yvalue
         const float yval_treshold = 0.8 * sycl::group_broadcast(group, best_val, 0);
-
-        // if(iext->xpos == XPOS && iext->ypos == YPOS && group.leader())
-        // if(iext->xpos == XPOS && iext->ypos == YPOS)
-        // {
-        //     sycl::ext::oneapi::experimental::printf("\n\tyval_treshold = %f", yval_treshold);
-        // }
 
         // Think we compute out of loop to avoid too much compute in branching?
         const bool valid = (best_val >= yval_treshold); // Only larger than threshold is accepted
@@ -443,14 +373,7 @@ class ori_par
         Extremum* ext = &dobuf->extrema[ext_prefix_sum + extremum_index];
 
         if(it.get_local_id()[1] < ORIENTATION_MAX_COUNT)
-        // if(it.get_local_id()[1] < max_count)
         {
-            // if(iext->xpos == XPOS && iext->ypos == YPOS)
-            // {
-            //     sycl::ext::oneapi::experimental::printf(
-            //       "\n\tHELLO IN LE LOOOP -- local_id = %d max_ori = %d\n", it.get_local_id()[1],
-            //       ORIENTATION_MAX_COUNT);
-            // }
             if(valid)
             {
                 float chosen_bin = refined_angle[my_index];
@@ -466,7 +389,6 @@ class ori_par
                 float th = sycl::fma(M_PI2_f * chosen_bin, (1.0f / ORI_NBINS), -M_PI_f);
                 // float th = sycl::fma((M_PI2 * chosen_bin, 1.0f / ORI_NBINS, -M_PI);
 
-                // sycl::ext::oneapi::experimental::printf("Orientation %f\n", th);
                 ext->orientation[it.get_local_id()[1]] = th;
                 written = true;
             }
@@ -475,14 +397,7 @@ class ori_par
         int angles = [&]() {
             if constexpr(useSubGroup)
             {
-                // auto mask = sycl::ext::oneapi::group_ballot(group, written);
-                // return sycl::popcount(mask.get_mask());
-
-                // Using extension to use do ballot
                 return sycl::ext::oneapi::group_ballot(group, written).count();
-                // unsigned mask = sycl::ext::oneapi::extract_bits<unsigned>(ballot_result);
-                // return sycl::popcount(mask);
-                // return sycl::popcount(sycl::ext::oneapi::group_ballot(group, written));
             }
             else
             {
@@ -491,7 +406,6 @@ class ori_par
                 return sycl::popcount(mask);
             }
         }();
-        // int angles = sycl::popcount(sycl::ext::oneapi::group_ballot(group, written));
         if(it.get_local_id()[1] == 0)
         {
             ext->xpos = iext->xpos;
@@ -631,9 +545,6 @@ class ori_prefix_sum
         const int end = (total_ext_ct & (wrap - 1)) ? (total_ext_ct & ~(wrap - 1)) + wrap : total_ext_ct;
         // End is a factor of 1024 (required so every work-item reaches the barriers)
 
-        if(start == 0)
-            sycl::ext::oneapi::experimental::printf("\nEND = %d\n", end);
-
         for(int x = start; x < end; x += wrap)
         {
             // sycl::group_barrier(work_group); // could be needed to ensure we are not diverged when doing scan
@@ -684,9 +595,6 @@ class ori_prefix_sum
                 if(it.get_local_id(0) == 0 && it.get_local_id(1) == PREFIX_1_DIM - 1)
                 {
                     loop_total[0] += ibs;
-                    // sycl::ext::oneapi::experimental::printf(
-                    //   "lid=(%d,%d), ibs=%d, self=%d \n", (int)it.get_local_id(0), (int)it.get_local_id(1), ibs,
-                    //   self);
                 }
 
                 // Ensures consistency of loop_total before next iteration or before we done
@@ -695,7 +603,6 @@ class ori_prefix_sum
             else
             {
                 // ################ WORK_GROUP ######################
-                // const int ebs = loop_total[0] + sycl::exclusive_scan_over_group(work_group, self, sycl::plus<>());
                 const int ebs = sycl::exclusive_scan_over_group(work_group, self, sycl::plus<>());
 
                 if(valid)
@@ -704,20 +611,10 @@ class ori_prefix_sum
 
                     mapping_writer.set(ebs + loop_total[0], self, x); // writer needs offset
                 }
-                // if(it.get_local_id(0) == PREFIX_0_DIM - 1 && it.get_local_id(1) == PREFIX_1_DIM - 1)
                 if(it.get_local_linear_id() == wrap - 1)
                 {
                     loop_total[0] += ebs + self;
-                    // sycl::ext::oneapi::experimental::printf(
-                    //   "\n\tebs = %d | self = %d | loop_total = %d", ebs, self, ebs + self);
-                    sycl::ext::oneapi::experimental::printf("lid=(%d,%d), ebs=%d, self=%d | ibs = %d\n",
-                                                            (int)it.get_local_id(0),
-                                                            (int)it.get_local_id(1),
-                                                            ebs,
-                                                            self,
-                                                            ebs + self);
                 }
-
                 sycl::group_barrier(work_group); // ensure loop_total is consistent before next loop iteration
             }
         }
@@ -747,21 +644,7 @@ class ori_prefix_sum
                     int num_ori = dobuf->extrema[le].num_ori;
 
                     int hi_ori_index = dobuf->extrema[le].idx_ori + num_ori;
-                    // sycl::ext::oneapi::experimental::printf(
-                    //   "\n\t\tIN ORI_PREFIX_SUM -> hi_ori_index = %d - lo_ori_index = %d", hi_ori_index,
-                    //   lo_ori_index);
                     dct->ori_ct[o] = hi_ori_index - lo_ori_index;
-
-                    sycl::ext::oneapi::experimental::printf(
-                      "Octave %d: fe=%d, le=%d, lo_ori_index=%d, num_ori=%d, hi_ori_index=%d, ori_ct[o]=%d\n",
-                      o,                          // octave index
-                      fe,                         // first extremum
-                      le,                         // last extremum
-                      lo_ori_index,               // low orientation index
-                      num_ori,                    // number of orientations
-                      hi_ori_index,               // high orientation index
-                      hi_ori_index - lo_ori_index // ori_ct[o] value
-                    );
                 }
             }
 
@@ -773,8 +656,6 @@ class ori_prefix_sum
 
             dct->ori_total = dct->ori_ps[MAX_OCTAVES - 1] + dct->ori_ct[MAX_OCTAVES - 1];
             dct->ext_total = dct->ext_ps[MAX_OCTAVES - 1] + dct->ext_ct[MAX_OCTAVES - 1];
-
-            sycl::ext::oneapi::experimental::printf("\n\t\tIN ORI_PREFIX_SUM -> ori_total = %d", dct->ori_total);
         }
     }
 };
@@ -789,12 +670,10 @@ void Pyramid::orientation(const Config& conf)
     auto max_subgroup_prefix = get_kernel_subgroup_size<ori_prefix_sum_subgroup>(_device_queue);
     bool use_subgroup_prefix = max_subgroup_prefix >= 32;
 
-    fprintf(stderr, "\n\tWAITING IN ORIENTATION FOR EXTREMA FOR ALL OCTAVE TO FINISH\n");
     // Wait so that the computation is done before the memcpy
     // Look for ways to make this part faster (less waits the better)
     _device_queue.wait();
 
-    fprintf(stderr, "Sub group kernel mas sub_group_size %d -- %d", max_subgroup_ori_par, max_subgroup_prefix);
     // Need to think about if this is really necessary?
     // As now we neet to wait for all octaes to do extrema before we can do orientation
     // Not sure if we actually need to do this...
@@ -809,11 +688,9 @@ void Pyramid::orientation(const Config& conf)
         }
     }
 
-    // Works as expected
-    printf("\n\text_total for all octaves = %d\n", ext_total);
-
     // TODO: It is set up to do nothing in current configuration but should consider adding support for it
     // Seems to do nothing in my case...
+    // --> Should most certinly be done was only omited for quicker development I believe...
 
     // Filter functions are only called if necessary. They are very expensive,
     // therefore add 10% slack.
@@ -845,13 +722,9 @@ void Pyramid::orientation(const Config& conf)
             sycl::range local{1, 32};
             sycl::range global{1, num * 32};
 
-            // NOTE: Need to make modificatons when sub-group is not 32
-            // as is normaly the case on cpu's
-
             // if(!use_subgroup_ori_par) // to debug local memory on gpu
             if(use_subgroup_ori_par)
             {
-                fprintf(stderr, "\n\tUSING SUBGOUP for Orientation\n");
                 // Uses sub-group(warp) for synchronization and communication
                 _device_queue.submit([&](sycl::handler& cgh) {
                     cgh.depends_on({_dobuf_write, oct_obj._extrema_done_event});
@@ -877,7 +750,6 @@ void Pyramid::orientation(const Config& conf)
             }
             else
             {
-                fprintf(stderr, "\n\tUSING WORKGRPU for orientation\n");
                 // Uses work groip for synchronization and communication
                 _device_queue.submit([&](sycl::handler& cgh) {
                     cgh.depends_on({_dobuf_write, oct_obj._extrema_done_event});
@@ -903,17 +775,12 @@ void Pyramid::orientation(const Config& conf)
                 });
             }
         }
-
-        // _device_queue.wait(); // to test one by one
-
-        fprintf(stderr, "\n\tDone Ori par for octave %d", octave);
     }
 
     // Should remove this and addd ependencies if htare are any
     _device_queue.wait();
     // Could just for sor range for this (unless I need work_grop/sub_group)
 
-    fprintf(stderr, "\n\tWE ARE PAST ORIENTATION");
     // NOTE: We need num_orientation hence we need to wait for prev kernel could try to split up into octave but not
     // sure if that would make it faster Could try full size for first octave and half size kernel for the reset as the
     // earlier octaves always have more extremas than the later octaves
@@ -924,7 +791,6 @@ void Pyramid::orientation(const Config& conf)
     // if(!use_subgroup_prefix)    // to debugg work_group on GPU
     if(use_subgroup_prefix) // Normal
     {
-        fprintf(stderr, "Running subgroup\n");
         _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
             // sycl::local_accessor<int, 1> -- is the type
             auto sum = sycl::local_accessor<int, 1>(32, cgh);
@@ -937,7 +803,6 @@ void Pyramid::orientation(const Config& conf)
     }
     else
     {
-        fprintf(stderr, "Running work group\n");
         _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
             // sycl::local_accessor<int, 1> -- is the type
             auto sum = sycl::local_accessor<int, 1>(32, cgh);
@@ -949,7 +814,5 @@ void Pyramid::orientation(const Config& conf)
         });
     }
     _device_queue.wait(); // Required for now first should replace with events
-    fprintf(stderr, "\n\t\tPAST PREFIX SUM COMPUTE\n");
 }
-
 } // namespace popsift

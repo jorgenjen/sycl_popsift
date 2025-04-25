@@ -43,7 +43,6 @@ Pyramid::Pyramid(const Config& config,
     {
         _octaves.emplace_back(_device_queue);
     }
-    // fprintf(stderr, "After emplace back and reserve\n");
 
     int w = width;
     int h = height;
@@ -140,7 +139,6 @@ void Pyramid::reallocExtrema(int numExtrema)
     // dependency
     if(numExtrema > _hbuf.ext_allocated)
     {
-        // fprintf(stderr, "\n\tNeed to do realloc!\n");
         // Makes adds 1024 to size and removes all set bits that is below 1024 position in binary resulting in the
         // segment being a multiple of 1024 (Probs yields better performance)
         numExtrema = ((numExtrema + 1024) & (~(1024 - 1)));
@@ -182,7 +180,6 @@ void Pyramid::reallocExtrema(int numExtrema)
 Pyramid::~Pyramid()
 {
     // Octaves stored in vector so they will be destroyed/deleted by this object being destroyed
-    fprintf(stderr, "Destroying the Pyramid!\n");
     sycl::free(_dct, _device_queue);
     sycl::free(_d_extrema_num_blocks, _device_queue);
 
@@ -203,10 +200,6 @@ Pyramid::~Pyramid()
 
 void Pyramid::step1(const Config& conf, ImageBase* img, sycl::event d_gauss_write, sycl::event img_transfer)
 {
-    // TODO: Implement the reset -- far down the line need to find extrema first
-    // reset_extrema_mgmt();
-
-    // reset_extrema_mgmt(); // Required for first run aswell
     build_pyramid(conf, img, d_gauss_write, img_transfer);
 }
 
@@ -214,54 +207,17 @@ void Pyramid::step1(const Config& conf, ImageBase* img, sycl::event d_gauss_writ
 // void Pyramid::step2(const Config& conf, std::vector<sycl::event> dependencies, sycl::event d_consts_write)
 void Pyramid::step2(const Config& conf, sycl::event d_consts_write)
 {
-    // TODO: Ensure no waits before this point
-
     // Was in step1 before build_pyramid before
     // Moved here as nothing in step1 requies this to be done and nothing blocks before this so it will be scheduled
-    // quite quickly so should not add wait time but I mght be wrong (profile)
+    // quite quickly so should not add wait time but I might be wrong (profile)
     reset_extrema_mgmt(); // Required for first run aswell
 
-    // find_extrema(conf, dependencies, d_consts_write);
     find_extrema(conf, d_consts_write);
 
     orientation(conf);
 
     descriptors(conf);
 }
-
-// void prep_features(Descriptor* descriptor_base, int up_fac)
-// {
-//     int offset = blockIdx.x * 32 + threadIdx.x;
-//     if(offset >= dct.ext_total)
-//         return;
-//     const Extremum& ext = dobuf.extrema[offset];
-//     Feature& fet = dobuf.features[offset];
-//
-//     const int octave = ext.octave;
-//     const float xpos = ext.xpos * powf(2.0f, float(octave - up_fac));
-//     const float ypos = ext.ypos * powf(2.0f, float(octave - up_fac));
-//     const float sigma = ext.sigma * powf(2.0f, float(octave - up_fac));
-//     const int num_ori = ext.num_ori;
-//
-//     fet.xpos = xpos;
-//     fet.ypos = ypos;
-//     fet.sigma = sigma;
-//     fet.num_ori = num_ori;
-//
-//     fet.debug_octave = octave;
-//
-//     int ori;
-//     for(ori = 0; ori < num_ori; ori++)
-//     {
-//         fet.desc[ori] = descriptor_base + (ext.idx_ori + ori);
-//         fet.orientation[ori] = ext.orientation[ori];
-//     }
-//     for(; ori < ORIENTATION_MAX_COUNT; ori++)
-//     {
-//         fet.desc[ori] = nullptr;
-//         fet.orientation[ori] = 0;
-//     }
-// }
 
 class Prep_features
 {
@@ -281,13 +237,7 @@ class Prep_features
 
     inline void operator()(sycl::nd_item<1> it) const
     {
-        // could be const
-        // const int offset = it.get_group(0) * it.get_local_range(0) + it.get_local_id(0);
         const int offset = it.get_global_linear_id();
-
-        // if(offset != linear)
-        //     sycl::ext::oneapi::experimental::printf("\n\n\tOffset and linear is the same %d == %d\n", offset,
-        //     linear);
 
         if(offset >= extrema_total)
             return;
@@ -360,8 +310,6 @@ FeaturesHost* Pyramid::get_descriptors(const Config& conf)
     return features;
 }
 
-// void Pyramid::clone_device_descriptors_sub(const Config& conf, FeaturesDev* features) {}
-
 FeaturesDev* Pyramid::clone_device_descriptors(const Config& conf)
 {
     const float up_fac = conf.getUpscaleFactor();
@@ -374,38 +322,16 @@ FeaturesDev* Pyramid::clone_device_descriptors(const Config& conf)
     // Moved in here as it is only used here
     // clone_device_descriptors_sub(conf, features);
 
-    // dim3 grid(grid_divide(hct.ext_total, 32));
-    // prep_features<<<grid, 32, 0, _download_stream>>>(features->getDescriptors(), up_fac);
-    // POP_SYNC_CHK;
-
     sycl::range global{static_cast<size_t>(grid_divide(_hct.ext_total, 32))};
     sycl::range local{32};
     sycl::event getDescEvent = _device_queue.parallel_for(
       sycl::nd_range{global, local}, Prep_features(_dobuf, features->getDescriptors(), up_fac, _hct.ext_total));
-
-    // popcuda_memcpy_async(features->getFeatures(),
-    //                      dobuf_shadow.features,
-    //                      hct.ext_total * sizeof(Feature),
-    //                      cudaMemcpyDeviceToDevice,
-    //                      _download_stream);
-    //
-    // popcuda_memcpy_async(features->getDescriptors(),
-    //                      dbuf_shadow.desc,
-    //                      hct.ori_total * sizeof(Descriptor),
-    //                      cudaMemcpyDeviceToDevice,
-    //                      _download_stream);
 
     sycl::event featuresCopyEvent = _device_queue.memcpy(
       features->getFeatures(), _dobuf_host.features, _hct.ext_total * sizeof(Feature), getDescEvent);
 
     sycl::event descCopyEvent = _device_queue.memcpy(
       features->getDescriptors(), _dbuf_host.desc, _hct.ori_total * sizeof(Descriptor), getDescEvent);
-
-    // popcuda_memcpy_async(features->getReverseMap(),
-    //                      dobuf_shadow.feat_to_ext_map,
-    //                      hct.ori_total * sizeof(int),
-    //                      cudaMemcpyDeviceToDevice,
-    //                      _download_stream);
 
     sycl::event mapCopyEvent = _device_queue.memcpy(
       features->getReverseMap(), _dobuf_host.feat_to_ext_map, _hct.ori_total * sizeof(int), getDescEvent);
@@ -414,16 +340,12 @@ FeaturesDev* Pyramid::clone_device_descriptors(const Config& conf)
     descCopyEvent.wait();
     mapCopyEvent.wait();
 
-    // cudaStreamSynchronize(_download_stream);
-
     return features;
 }
 
 void Pyramid::reset_extrema_mgmt()
 {
-    // memset(&_hct, 0, sizeof(ExtremaCounters)); // TODO: Figure out if I need this
-    // Pretty sure it's not needed as we always copy dct into hct before use
-
+    // Removed memset of hct as we always copy from device before use anyways
     _zero_dct = _device_queue.memset(_dct, 0, sizeof(popsift::ExtremaCounters));
     _zero_extrema_num_blocks = _device_queue.memset(_d_extrema_num_blocks, 0, sizeof(int) * _num_octaves);
 }

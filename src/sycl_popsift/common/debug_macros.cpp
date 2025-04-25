@@ -30,25 +30,4 @@ void popsift::sycl_common::print_region(
       .wait();
 
     sycl::free(dev_msg, Q);
-    // With stream
-    // Q.submit([&](sycl::handler& h) {
-    //      sycl::stream out(4096, 512, h);
-    //
-    //      h.single_task([=]() {
-    //          out << "\n"
-    //              << dev_msg << " -- Region: y(" << start_y << " -> " << end_y << ") x(" << start_x << " -> " << end_x
-    //              << ")\n";
-    //
-    //          for(int y = start_y; y < end_y; ++y)
-    //          {
-    //              for(int x = start_x; x < end_x; ++x)
-    //              {
-    //                  out << ptr[x + y * width] << " ";
-    //              }
-    //              out << "\n";
-    //          }
-    //          out << "\n\n";
-    //      });
-    //  })
-    //   .wait();
 }

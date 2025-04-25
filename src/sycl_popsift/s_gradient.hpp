@@ -40,27 +40,9 @@ namespace popsift {
  */
 
 #define TO_CLAMP true
-static inline void get_gradient(float& grad,
-                                float& theta,
-                                const int x,
-                                const int y,
-                                const int width,
-                                const int height,
-                                float** data,
-                                const int level,
-                                bool do_print)
+static inline void get_gradient(
+  float& grad, float& theta, const int x, const int y, const int width, const int height, float** data, const int level)
 {
-    // float dx = readTex(layer, x + 1.0f, y, level) - readTex(layer, x - 1.0f, y, level);
-    // float dy = readTex(layer, x, y + 1.0f, level) - readTex(layer, x, y - 1.0f, level);
-
-    // Not sure if we need clamping? Think the extremas are not along the edges and hence shoudl be fine?
-
-    // TODO: Look into if we need clamping or not (currently using to be safe)
-    // SEEMS TO BE FINE WHEN NOT USING CLAMING
-
-#define XPOS 90.565437f
-#define YPOS 137.517151f
-
 #if TO_CLAMP
     const int safe_x = sycl::clamp(x, 0, width - 1);
     const int safe_y = sycl::clamp(y, 0, height - 1);
@@ -85,61 +67,41 @@ static inline void get_gradient(float& grad,
     // theta = atan2f(dy, dx)       // if using non sycl verson as in orientatoin
     // Need to include it in such a cas e cmath
 #endif
-
-    if(do_print)
-    {
-        // sycl::ext::oneapi::experimental::printf(
-        //   "\n\tx=%d y=%d || dx=%f - dy=%f || grad=%f - thetat=%f ||\n", x, y, dx, dy, grad, theta);
-        sycl::ext::oneapi::experimental::printf(
-          "\n\tx=%d y=%d lvl=%d || dx= %f - %f = %f || dy= %f - %f = %f  || grad=%f - thetat=%f ||\n",
-          x,
-          y,
-          level,
-          data[level][x + 1 + y * width],
-          data[level][x - 1 + y * width],
-          dx,
-          data[level][x + (y + 1) * width],
-          data[level][x + (y - 1) * width],
-          dy,
-          grad,
-          theta);
-    }
 }
 
 // Could mby compute the gradient on cpu side right after we are done building the pyramid atleast for the
 // first octave and mby second as that is where most of the extremas tend to be and they are done first
 // Then we do recompute for the rest
-static inline void get_gradient(
-  float& grad, float& theta, const int x, const int y, const int width, const int height, float** data, const int level)
-{
-    // TODO: Look into if we need clamping or not (currently using to be safe)
-    // SEEMS TO BE FINE WHEN NOT USING CLAMING
-
-    // #define TO_CLAMP false
-
-#if TO_CLAMP
-    const int safe_x = sycl::clamp(x, 0, width - 1);
-    const int safe_y = sycl::clamp(y, 0, height - 1);
-
-    const int right_x = sycl::min(x + 1, width - 1) + safe_y * width;
-    const int left_x = sycl::max(safe_x - 1, 0) + safe_y * width;
-
-    const int upper_y = safe_x + sycl::min(safe_y + 1, height - 1) * width;
-    const int lower_y = safe_x + sycl::max(safe_y - 1, 0) * width;
-
-    float dx = data[level][right_x] - data[level][left_x];
-    float dy = data[level][upper_y] - data[level][lower_y];
-
-    grad = sycl::hypot(dx, dy);
-    theta = sycl::atan2(dy, dx);
-#else
-
-    float dx = data[level][x + 1 + y * width] - data[level][x - 1 + y * width];
-    float dy = data[level][x + (y + 1) * width] - data[level][x + (y - 1) * width];
-    grad = sycl::hypot(dx, dy);  // Hypotenuse -- sqrt(dx^2 + dy^2)
-    theta = sycl::atan2(dy, dx); // Inverse tangent of dy/dx
-#endif
-}
+// static inline void get_gradient(
+//   float& grad, float& theta, const int x, const int y, const int width, const int height, float** data, const int
+//   level)
+// {
+//     // TODO: Look into if we need clamping or not (currently using to be safe)
+//     // Think it is required
+//
+// #if TO_CLAMP
+//     const int safe_x = sycl::clamp(x, 0, width - 1);
+//     const int safe_y = sycl::clamp(y, 0, height - 1);
+//
+//     const int right_x = sycl::min(x + 1, width - 1) + safe_y * width;
+//     const int left_x = sycl::max(safe_x - 1, 0) + safe_y * width;
+//
+//     const int upper_y = safe_x + sycl::min(safe_y + 1, height - 1) * width;
+//     const int lower_y = safe_x + sycl::max(safe_y - 1, 0) * width;
+//
+//     float dx = data[level][right_x] - data[level][left_x];
+//     float dy = data[level][upper_y] - data[level][lower_y];
+//
+//     grad = sycl::hypot(dx, dy);
+//     theta = sycl::atan2(dy, dx);
+// #else
+//
+//     float dx = data[level][x + 1 + y * width] - data[level][x - 1 + y * width];
+//     float dy = data[level][x + (y + 1) * width] - data[level][x + (y - 1) * width];
+//     grad = sycl::hypot(dx, dy);  // Hypotenuse -- sqrt(dx^2 + dy^2)
+//     theta = sycl::atan2(dy, dx); // Inverse tangent of dy/dx
+// #endif
+// }
 
 /* A version of get_gradiant that works for a (32,1,1) threadblock
  * and pulls data to shared memory before computing. Data is pulled

@@ -110,8 +110,6 @@ void Octave::alloc_arrays()
 // Assumes _levels can't change affter malloc have been done
 void Octave::free_arrays()
 {
-    fprintf(stderr, "\nFREEING OCTAVE %d\n", _debug_octave_id);
-
     if(!_data_array)
     {
         fprintf(stderr, "\nData array is NULL at octave=%d\n", _debug_octave_id);
@@ -125,6 +123,7 @@ void Octave::free_arrays()
     {
         fprintf(stderr, "\nINTERMEDIATE array is NULL at octave=%d\n", _debug_octave_id);
     }
+    // Should add guards as object could be destroyed before alloc is called
 
     sycl::free(_data_array_host[0], _device_queue); // one large segment holding all levels
     sycl::free(_data_array, _device_queue);

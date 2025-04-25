@@ -48,21 +48,8 @@ Image::Image(int w, int h, sycl::queue Q, const float upscaleFactor)
     allocate(upscaleFactor);
 }
 
-// Image::Image(int w, int h, sycl::queue Q)
-//   : ImageBase(w, h, Q)
-// {
-//     // Not sure if using w and h is correct need to refactor the whole scaling thing as it is kinda confusing
-//     // Should probably just use the scaled size and nothing else when using USM
-//     _device_src_img = popsift::sycl_common::malloc_devT<unsigned char>(
-//       w * h, __FILE__, __LINE__, "Could not allocate memory for image on device", Q);
-//
-//     _device_img = popsift::sycl_common::malloc_devT<float>(
-//       w * h, __FILE__, __LINE__, "Could not allocate memory for float representation of image on device", Q);
-// }
-
 Image::~Image()
 {
-    fprintf(stderr, "\n\tDESTROYING IMAGE\n");
     if(_max_w == 0)
         return;
 
@@ -72,7 +59,6 @@ Image::~Image()
 
 sycl::event Image::load(void* input)
 {
-    // sycl::event src_img_transfer = copy_src_dev(input);
     sycl::event src_img_transfer = _device_queue.memcpy(_device_src_img, input, _w * _h);
 
     return load_linear(src_img_transfer);
@@ -203,31 +189,24 @@ void ImageBindless::free()
 {
     try
     {
-        fprintf(stderr, "\nDESTROYING IMAGEBINDLESS\n");
-
-        // #if USE_ALIGNED_STAGING
         if constexpr(USE_ALIGNED_STAGING && freeAlignedHost)
         {
             if(_aligned_src_img)
             {
                 sycl::free(_aligned_src_img, _device_queue);
-                fprintf(stderr, "Freed host memory...\n");
                 _aligned_src_img = nullptr;
             }
         }
-        // #endif
 
         if(_sampled_handle_created)
         {
             // Destroy handle before underlying memory structure
             syclexp::destroy_image_handle(_sampled_dev_img_handle, _device_queue);
-            fprintf(stderr, "Destroyed image handle...\n");
         }
 
         if(_img_mem_allocated)
         {
             syclexp::free_image_mem(_dev_img_mem, syclexp::image_type::standard, _device_queue);
-            fprintf(stderr, "Freed image memory...\n");
         }
     }
     catch(sycl::exception& e)
@@ -248,8 +227,6 @@ void ImageBindless::free()
     }
 }
 
-// fprintf(stderr, "Copying input into bindless image (%d, %d)\n", _w, _h);
-// POP_FATAL("Currently not implemented\n");
 sycl::event ImageBindless::load(void* input)
 {
 #if USE_ALIGNED_STAGING
@@ -347,32 +324,3 @@ void ImageBindless::allocate()
 }
 
 } // namespace popsift
-
-//
-
-// Use this free function for
-// void free_image_mem(image_mem_handle memHandle,
-//                     image_type imageType,
-//                     const sycl::queue &syclQueue);
-
-//     enum class image_channel_type : /* unspecified */ {
-//   snorm_int8,
-//   snorm_int16,
-//   unorm_int8,
-//   unorm_int16,
-//   signed_int8,
-//   signed_int16,
-//   signed_int32,
-//   unsigned_int8,
-//   unsigned_int16,
-//   unsigned_int32,
-//   fp16,
-//   fp32,
-// };
-//
-// enum class image_type : /* unspecified */ {
-//   standard,
-//   mipmap,
-//   array,
-//   cubemap,
-// };

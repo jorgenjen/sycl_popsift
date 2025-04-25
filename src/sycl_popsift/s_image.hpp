@@ -62,9 +62,6 @@ struct Image : public ImageBase
     void resetDimensions(int w, int h, float upscaleFactor) override;
     inline void setScaledDims(const float upscaleFactor); // To set scaled w and h
 
-    // sycl::event copy_src_dev(unsigned char* input) { return _device_queue.memcpy(_device_src_img, input, _w * _h); }
-    sycl::event copy_src_dev(void* input) { return _device_queue.memcpy(_device_src_img, input, _w * _h); }
-
     // Would allow this to be implemented for both float and char images
     sycl::event load(void* input) override;
 

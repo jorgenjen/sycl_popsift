@@ -25,12 +25,8 @@ class Pyramid;
 
 class SiftJob
 {
-    // TODO(jorgejen): Look into using these feature constructs
     std::promise<popsift::FeaturesBase*> _p;
     std::future<popsift::FeaturesBase*> _f;
-    // NOTE: Using these simple integer features to have same pattern as popsift
-    // std::promise<int> _p;
-    // std::future<int> _f;
 
     int _w;
     int _h;
@@ -65,26 +61,16 @@ class SiftJob
     popsift::FeaturesHost* getHost();
     popsift::FeaturesDev* getDev();
 
-    // int getHost(); // currently using int to have same pattern of
-    // initialization and such
-
     void setImg(popsift::ImageBase* img, const float upscaleFactor);
 
     popsift::ImageBase* getImg();
 
     inline sycl::event getImgTransferEvent() { return _img_transfer_event; }
 
-    // NOTE: Temporary to fufill the promise see popsift later on for proper
-    // implmentation and do that
-    // void jobDone(int tmpRes);
-
     /** fulfill the promise */
     void setFeatures(popsift::FeaturesBase* f);
-    //
-    void setError(std::exception_ptr ptr);
 
-    // TMP just for testing structure
-    void printJob();
+    void setError(std::exception_ptr ptr);
 };
 
 class PopSift
@@ -149,13 +135,9 @@ class PopSift
 
     SiftJob* enqueue(int w, int h, const unsigned char* imageData);
 
-    void allMainThread();
-
-    // inline bool hasBindlessImages() { return _has_bindless_images; }
+    inline static bool matrixSupported = false;
 
   private:
-    void printDim();
-    void printDevice();
     void modifyImage();
     void printImageRegion(sycl::range<2> horiz, sycl::range<2> vert);
 
@@ -179,7 +161,6 @@ class PopSift
     // Private attributes:
     int _w;
     int _h;
-    // sycl::buffer<unsigned char, 2> _imageData;
     sycl::queue _device_queue;
 
     popsift::GaussInfo* _d_gauss = nullptr;
@@ -201,9 +182,6 @@ class PopSift
 
     Pipe _pipe;
 
-    // For runtime infomation about aspect
-    // bool _has_bindless_images;
-    // bool _has_image_array; // Binless images array aspect
     /// whether the object is initialized
     bool _isInit{true};
 };

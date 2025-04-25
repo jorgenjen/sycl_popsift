@@ -283,18 +283,14 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf,
     sycl::range local{1, 128};
     sycl::range global{(size_t)height, (size_t)grid_divide(width, local[1])};
 
-    // _device_queue.wait();
-
     if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
                  sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
     {
         // Bindless version
-        fprintf(stderr, "Yay differey verison -- w=%d h=%d\n", width, height);
         float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
 
         if(global[1] == width)
         {
-            fprintf(stderr, "Running no if\n");
             // width % 128 = 0 and hence we don't need if check in kernel
             return _device_queue.parallel_for(
               sycl::nd_range{global, local},
@@ -316,7 +312,6 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf,
         // Running USM for input image
         if(global[1] == width)
         {
-            fprintf(stderr, "Running no if IN USM MODE!!!\n");
             // width % 128 = 0 and hence we don't need if check in kernel
             return _device_queue.parallel_for(
               sycl::nd_range{global, local},
@@ -353,7 +348,6 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level)
     float* prev_level = oct_obj.getDataArrayHost()[level - 1]; // src
     float* cur_intm = oct_obj.getIntermediate();               // dst_data
 
-    // sycl::event dependency = oct_obj.getLevelEvent(level-1); // wrong
     sycl::event prev_lvl_event = oct_obj._level_complete_events[level - 1]; // prev level
     return _device_queue.parallel_for(
       sycl::nd_range{global, local},
@@ -373,13 +367,6 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
 
     float* intermediate = oct_obj.getIntermediate();
     float* dst_data = oct_obj.getDataArrayHost()[level]; // Uses host array to get device pointer
-
-    // fprintf(stderr,
-    //         "INSIDE VERT_FROM_INTERM_BASIC --> Event created: %p Status: %d\n",
-    //         &intm_write,
-    //         intm_write.get_info<sycl::info::event::command_execution_status>());
-
-    // _device_queue.wait_and_throw();
 
     return _device_queue.parallel_for(sycl::nd_range{global, local},
                                       intm_write,

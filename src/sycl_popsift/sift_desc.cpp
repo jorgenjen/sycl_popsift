@@ -290,9 +290,6 @@ class Ext_desc_loop
     inline void operator()(sycl::nd_item<3> it) const
     {
         const int o_offset = dct->ori_ps[octave] + it.get_group(2);
-        // if(it.get_local_linear_id() == 0)
-        //     sycl::ext::oneapi::experimental::printf(
-        //       "\n\to_offset = %d -- = %d + %d\n", o_offset, dct->ori_ps[octave], it.get_group(2));
 
         Descriptor* desc = &dbuf->desc[o_offset];
         const int ext_idx = dobuf->feat_to_ext_map[o_offset];
@@ -365,12 +362,6 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool
     if(_hct.ori_ct[octave] == 0)
         return;
 
-    fprintf(stderr,
-            "Orientation count for octave(%d) = %d -- prefix sum for octave = %d\n",
-            octave,
-            _hct.ori_ct[octave],
-            _hct.ori_ps[octave]);
-
 #ifndef BLOCK_3_DIMS
     sycl::range global{4, 4, static_cast<size_t>(_hct.ori_ct[octave] * 32)};
     sycl::range local{4, 4, 32};
@@ -381,23 +372,14 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool
     sycl::range local{16, 1, 32};
 #endif
 
-    // fprintf(stderr, "using global(%)
-    // Print global range dimensions
-    // fprintf(stderr, "Global range: [%zu, %zu, %zu]\n", global[0], global[1], global[2]);
-
-    // Print local range dimensions
-    // fprintf(stderr, "Local range: [%zu, %zu, %zu]\n", local[0], local[1], local[2]);
-
     if(use_sub_group)
     {
-        // fprintf(stderr, "I'M RUNNING SUB GROUP MODE\n");
         _device_queue.parallel_for<sub_group_desc_loop>(
           sycl::nd_range{global, local},
           Ext_desc_loop(_dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
     }
     else
     {
-        // fprintf(stderr, "I'M RUNNING THE LOCLAL ACCESSOR STUFS\n");
         _device_queue.submit([&](sycl::handler& cgh) {
             // need 7 for storing the older result values final is stored in current work range idx 7
             auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
@@ -407,15 +389,12 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool
               Ext_desc_loop_local_mem(
                 sum, _dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
         });
-
-        // fprintf(stderr, "\n\tCOMPLETE WITH EXT DESC LOOP MEM\n");
     }
 }
 
 void popsift::Pyramid::descriptors(const Config& conf)
 {
     sycl::event readDesc = readDescCountersFromDevice();
-    // readDescCountersFromDevice().wait();
 
     auto group_size = get_kernel_subgroup_size<sub_group_desc_loop>(_device_queue);
     bool use_sub_group = group_size >= 32;
@@ -425,18 +404,6 @@ void popsift::Pyramid::descriptors(const Config& conf)
     // const bool sub_group_normalize = normalize_size >= 32;
 
     readDesc.wait();
-
-    for(int o = 0; o < _num_octaves; o++)
-    {
-        fprintf(stderr,
-                "\n\toctave = %d | num_extrema %d | num_ori = %d | extrema_prefixsum = %d | ori_prefix_sum = %d\n",
-                o,
-                _hct.ext_ct[o],
-                _hct.ori_ct[o],
-                _hct.ext_ps[o],
-                _hct.ori_ps[o]);
-    }
-    fprintf(stderr, "\n\t Extrema total = %d | ori_total = %d", _hct.ext_total, _hct.ori_total);
 
     for(int octave = _num_octaves - 1; octave >= 0; octave--)
     // for( int octave=0; octave<_num_octaves; octave++ )
@@ -448,11 +415,6 @@ void popsift::Pyramid::descriptors(const Config& conf)
             if(conf.getDescMode() == Config::Loop)
             {
                 // Default
-
-                fprintf(stderr,
-                        "\nRunning start_ext_desc_loop for octave %d, with num ori = %d\n",
-                        octave,
-                        _hct.ori_ct[octave]);
                 start_ext_desc_loop(octave, oct_obj, use_sub_group);
             }
             else if(conf.getDescMode() == Config::VLFeat_Desc)
@@ -464,7 +426,6 @@ void popsift::Pyramid::descriptors(const Config& conf)
                 POP_FATAL("not yet");
             }
         }
-        // _device_queue.wait(); // just for testing
     }
 
     if(_hct.ori_total == 0)
@@ -472,9 +433,6 @@ void popsift::Pyramid::descriptors(const Config& conf)
         fprintf(stderr, "Warning: no descriptors extracted\n");
         return;
     }
-    // _device_queue.wait(); // just for testing
-
-    // fprintf(stderr, "\n\tPAST start_ext_loop loop\n");
 
     sycl::range global{32, static_cast<size_t>(popsift::grid_divide(_hct.ori_total, 32))};
     sycl::range local{32, 32};
@@ -502,10 +460,9 @@ void popsift::Pyramid::descriptors(const Config& conf)
     }
     else
     {
-        // normalize_histogram<NormalizeL2><<<grid, block, 0, _download_stream>>>();
-        // POP_SYNC_CHK;
+        // Missing alternative VLfeat version
     }
-    _device_queue.wait();
+    _device_queue.wait(); // should use events
 }
 
 } // namespace popsift

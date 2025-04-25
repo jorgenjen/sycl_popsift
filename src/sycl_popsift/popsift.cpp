@@ -24,6 +24,26 @@ using std::min;
 
 namespace syclexp = sycl::ext::oneapi::experimental;
 
+// bool matrixSuported()
+// {
+//     using myparams =
+//       syclexp::matrix::matrix_params<syclexp::architecture::nvidia_gpu_sm_86, int8_t, int8_t, int, int, 16, 16, 32>;
+//     size_t NDRangeM = M / myparams::M; // Assertion would happen at this line
+//     size_t NDRangeN = N / myparams::N;
+//
+//     return true;
+// }
+
+// Primary template: assumes unsupported
+
+// template<typename Group,
+//          typename T,
+//          size_t Rows,
+//          size_t Cols,
+//          syclexp::matrix::matrix_layout Layout,
+//          syclexp::matrix::access::mode Mode>
+// struct joint_matrix_supported;
+
 std::string matrix_type_to_string(syclexp::matrix::matrix_type type)
 {
     switch(type)
@@ -131,6 +151,7 @@ inline void PopSift::initQueue()
     fprintf(stderr, "Running in CPU_ONLY mode\n");
     try
     {
+        // For in order queue use this (usefull for debugging)
         // sycl::device cpu_dev = sycl::device{sycl::cpu_selector_v};
         // _device_queue = sycl::queue(
         //   cpu_dev, sycl::property_list{sycl::property::queue::in_order{},
@@ -156,30 +177,6 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
     initQueue();
     configure(config);
 
-    sycl::device dev = _device_queue.get_device();
-
-    // Print device information
-    std::cout << "Device Info\n";
-    std::cout << "  Name: " << dev.get_info<sycl::info::device::name>() << "\n";
-    std::cout << "  Vendor: " << dev.get_info<sycl::info::device::vendor>() << "\n";
-    std::cout << "  Driver version: " << dev.get_info<sycl::info::device::driver_version>() << "\n";
-
-    auto combinations = dev.get_info<sycl::ext::oneapi::experimental::info::device::matrix_combinations>();
-
-    if(combinations.empty())
-    {
-        std::cout << "No matrix combinations supported on this device.\n";
-    }
-
-    for(const auto& combo : combinations)
-    {
-        std::cout << "M: " << combo.msize << ", N: " << combo.nsize << ", K: " << combo.ksize
-                  << ", A type: " << matrix_type_to_string(combo.atype)
-                  << ", B type: " << matrix_type_to_string(combo.btype)
-                  << ", C type: " << matrix_type_to_string(combo.ctype)
-                  << ", D type: " << matrix_type_to_string(combo.dtype) << "\n";
-    }
-
     if(imode == ByteImages) // default
     {
         // Push two images as we use two one to load in data and other to compute and they alter using the queue
@@ -192,7 +189,6 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
         }
         else
         {
-            fprintf(stderr, "RUNNING NORMAL IMAGE USM\n");
             _pipe._unused.push(new popsift::Image(_device_queue));
             _pipe._unused.push(new popsift::Image(_device_queue));
         }
@@ -201,8 +197,7 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
     {
         // _pipe._unused.push(new popsift::ImageFloat);
         // _pipe._unused.push(new popsift::ImageFloat);
-        // TODO Add support fro float images
-        // fprintf(stderr, "Currently not implemented\n");
+        // TODO: Add support for float images
 
         POP_FATAL("Currently not implemented");
     }
@@ -213,11 +208,30 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
         _pipe._thread_stage2.reset(new std::thread(&PopSift::extractDownloadLoop, this));
     else
         _pipe._thread_stage2.reset(new std::thread(&PopSift::matchPrepareLoop, this));
+
+#if USE_JOINT_MATRIX
+    // Should be done before first call to match if not it will use normal version until it's true
+    // This could be done at compile time if you pass the arcitecture from cmake check and use the compile time query
+    // But I think in this case it does not matter much. As this way is more flexible (and easier to implement :D)
+    sycl::device dev = _device_queue.get_device();
+    auto combinations = dev.get_info<sycl::ext::oneapi::experimental::info::device::matrix_combinations>();
+    for(const auto& combo : combinations)
+    {
+        if(combo.atype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp16 &&
+           combo.btype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp16 &&
+           combo.ctype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp32 &&
+           combo.dtype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp32 && combo.msize == 16 &&
+           combo.nsize == 16 && combo.ksize == 16)
+        {
+            matrixSupported = true;
+            break; // No need to continue search
+        }
+    }
+#endif
 }
 
 PopSift::~PopSift()
 {
-    fprintf(stderr, "\n\tDESTROYING POPSIFT CLASS\n");
     if(_isInit)
     {
         uninit();
@@ -247,41 +261,17 @@ void PopSift::uninit()
         return;
     }
 
-    // Uncommeetn for now not in use an global...
-    // if(popsift::d_consts != nullptr)
-    //     sycl::free(popsift::d_consts, _device_queue);
-    // else
-    //     std::cout << "d_consts was a nullptr hennce not freeing" << std::endl;
-
-    fprintf(stderr, "\n\tINSIDE UNINIT OF POPSIFT\n");
-
     if(_d_gauss != nullptr)
         sycl::free(_d_gauss, _device_queue);
     else
         std::cout << "_d_gauss was a nullptr hennce not freeing" << std::endl;
-
-    fprintf(stderr, "\n\tFreed _d_gauss -- next is _d_consts = %p\n", _d_consts);
-
-    popsift::ConstInfo* me_consts = _d_consts;
-    // _device_queue
-    //   .single_task([=]() {
-    //       sycl::ext::oneapi::experimental::printf("\n\n\tinside uninit _d_donsts norm_multi %d -- edge_limit
-    //       %f\n",
-    //                                               me_consts->norm_multi,
-    //                                               me_consts->edge_limit);
-    //   })
-    //   .wait();
 
     if(_d_consts != nullptr)
         sycl::free(_d_consts, _device_queue);
     else
         std::cout << "_d_consts was a nullptr hennce not freeing" << std::endl;
 
-    fprintf(stderr, "\n\tFreed _d_consts\n");
-
     _pipe.uninit();
-
-    fprintf(stderr, "\n\tUninted the pipe\n");
 
     _isInit = false;
 }
@@ -389,30 +379,10 @@ bool PopSift::private_init(int w, int h)
 // Don't see a purpose of returning true here as popsift did hence making it void
 void PopSift::private_uninit()
 {
-    fprintf(stderr, "\npriv unint\n");
     Pipe& p = _pipe;
 
     delete p._pyramid;
     p._pyramid = nullptr;
-}
-
-void PopSift::printDim() { cout << "Width: " << _w << endl; }
-
-void PopSift::printDevice()
-{
-    {
-        try
-        {
-            // queue q& = _device_queue;
-
-            std::cout << "Selected device in PopSift method using SYCL: "
-                      << _device_queue.get_device().get_info<sycl::info::device::name>() << "\n";
-        }
-        catch(const sycl::exception& e)
-        {
-            std::cout << "Exception caught: " << e.what() << std::endl;
-        }
-    }
 }
 
 SiftJob* PopSift::enqueue(int w, int h, const unsigned char* imageData)
@@ -427,8 +397,6 @@ SiftJob* PopSift::enqueue(int w, int h, const unsigned char* imageData)
     //     POP_FATAL(ss.str());
     // }
 
-    // HERE TEXTURE FIT WAS DONE -- NOt currently using texture memory
-
     SiftJob* job = new SiftJob(w, h, imageData);
     _pipe._queue_stage1.push(job);
     return job;
@@ -441,23 +409,12 @@ void PopSift::uploadImages()
     {
         popsift::ImageBase* img = _pipe._unused.pull(); // getting a unused Image (reusing it)
 
-        // WARNING: CHANGING WIDTH AND HEIGHT IN JOB BASED ON PRIVATE APPLY
-        // COULD BE PROBLEMATIC DOWN THE LINE -- BE AWARE YOU ARE HERBY WARNED!
-        // USING firend class so breaking encapsulateion... (should change this)
-        // private_apply_scale_factor(&job->_w, &job->_h);
-
-        // cout << "Updated w=" << job->_w << " and h=" << job->_h << endl;
-        // copy image to device
         job->setImg(img, _config.getUpscaleFactor());
 
         _device_queue.wait();
-        fprintf(stderr, "After setImg");
 
-        // job->setImg( img );
         _pipe._queue_stage2.push(job);
-        // break;
     }
-    fprintf(stderr, "\n\n\t\tDone uploading\n\n");
     // Push nullptr to stage2 queue to make that one terminates aswell
     // safe to do as we know know no more jobs will be pushed to stage 1 queue
     _pipe._queue_stage2.push(nullptr);
@@ -491,23 +448,16 @@ void PopSift::extractDownloadLoop()
         // Copy featrues to host -- step 3
         popsift::FeaturesHost* features = p._pyramid->get_descriptors(_config);
 
-        // popsift::FeaturesDev* for_funsies_ja =
-        //   p._pyramid->clone_device_descriptors(_config); // Delete this line move to match loop
-
         bool log_to_file = (_config.getLogMode() == popsift::Config::All);
         if(log_to_file)
         {
             // Log to file functions
+            // Missing function
         }
 
         // Fufill the promise
-        _device_queue.wait_and_throw();
+        _device_queue.wait_and_throw(); // SHoud use event to wait for last part
         job->setFeatures(features);
-
-        fprintf(stderr, "\n\tEverytying done now we shut down the shop\n");
-        fflush(stdout);
-        fflush(stderr);
-        // job->jobDone(5);
     }
 
     // _device_queue.wait(); // Having a wait here before I have all events configured properly
@@ -578,21 +528,7 @@ SiftJob::SiftJob(int w, int h, const unsigned char* imageData)
     }
 }
 
-SiftJob::~SiftJob()
-{
-    fprintf(stderr, "\n\tDESTROYING SIFTJOB\n");
-    free(_imageData);
-}
-
-// To fufill promise temporary promise solution while I don't have a
-// featuresBase object to return
-// void SiftJob::jobDone(int tmpRes) { _p.set_value(tmpRes); }
-
-// TMP function for testing structure
-void SiftJob::printJob() { std::printf("Width: %d -- height: %d\n", _w, _h); }
-
-// int SiftJob::getHost() { return _f.get(); }
-// int SiftJob::getHost() { return _f.get(); }
+SiftJob::~SiftJob() { free(_imageData); }
 
 // Do we need dynamic cast
 popsift::FeaturesHost* SiftJob::getHost() { return dynamic_cast<popsift::FeaturesHost*>(_f.get()); }
@@ -610,27 +546,10 @@ popsift::FeaturesDev* SiftJob::getDev()
 void SiftJob::setError(std::exception_ptr ptr) { this->_err = ptr; }
 
 void SiftJob::setImg(popsift::ImageBase* img, const float upscaleFactor)
-// void SiftJob::setImg(popsift::Image* img, const float upscaleFactor)
 {
-    // Moved to alloc called in resetDimensions
-    // int scaled_w = _w;
-    // int scaled_h = _h;
-    // get_scale_factor(&scaled_w, &scaled_h, upscaleFactor);
-
     img->resetDimensions(_w, _h, upscaleFactor);
 
     _img_transfer_event = img->load(_imageData);
-
-    // if constexpr(!USE_BINDLESS_INPUT || !sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() ||
-    //              !sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
-    // {
-    //     // If either bindless disabled or no device supports it we use USM
-    //     fprintf(stderr, "\nRUNNING LOAD LINEAR\n");
-    //     auto* recast_img = dynamic_cast<popsift::Image*>(img);
-    //     _img_transfer_event = recast_img->load_linear(src_img_transfer);
-    //     _img_transfer_event.wait();
-    //     fprintf(stderr, "\nLOAD LINEAR HAS COMPLETED\n");
-    // }
 
     _img = img;
 }
@@ -660,15 +579,4 @@ void PopSift::Pipe::uninit()
         popsift::ImageBase* img = _unused.pull();
         delete img;
     }
-}
-
-void PopSift::allMainThread()
-{
-    // Seems to be fine  with thread setup :D
-
-    // requires break in uploadImages to exit
-    uploadImages();
-
-    extractDownloadLoop();
-    _device_queue.wait_and_throw();
 }
