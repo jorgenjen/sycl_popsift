@@ -313,16 +313,14 @@ int main(int argc, char** argv)
     cout << "Number of features:    " << rFeatures->getFeatureCount() << endl;
     cout << "Number of descriptors: " << rFeatures->getDescriptorCount() << endl;
 
-    // int3* matches = lFeatures->matchAndReturn(rFeatures);
     auto [match_matirx, matrix_wait, matrix_free] = lFeatures->matchAndReturn(rFeatures);
+    // auto [match_matirx, matrix_wait, matrix_free] = lFeatures->matrixMatchAndReturn(rFeatures); // Non-working matrix
 
-    // lFeatures->match( rFeatures );
     matrix_wait(); // Wait for matrix compute to finish before use
 
     for(int i = 0; i < lFeatures->getDescriptorCount(); i++)
     {
         sycl::vec<int, 3>& match = match_matirx[i];
-        // fprintf(stderr, "Running feature loop %d, match(%d, %d, %d)\n", i, match.x(), match.y(), match.z());
         if(match.z())
         {
             const popsift::Feature* l_f = lFeatures->getFeatureForDescriptor(i);
@@ -333,7 +331,6 @@ int main(int argc, char** argv)
     }
 
     matrix_free(); // Free the match_matrix
-    // lFeatures->freeMatches(matches);
 
     delete lFeatures;
     delete rFeatures;

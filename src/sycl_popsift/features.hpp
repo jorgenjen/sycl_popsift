@@ -179,6 +179,8 @@ class FeaturesDev : public FeaturesBase
 
     // Need to be freed with correct context so this will never work
     std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> matchAndReturn(FeaturesDev* other);
+    std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> matrixMatchAndReturn(
+      FeaturesDev* other);
 
     /** This function takes as parameters that matches returned by
      *  matchAndReturn and releases that memory.

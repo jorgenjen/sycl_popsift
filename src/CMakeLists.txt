@@ -7,7 +7,7 @@ add_library(
   sycl_popsift/sift_pyramid.cpp
   sycl_popsift/sift_pyramid.hpp
   sycl_popsift/s_pyramid_build.cpp
-  sycl_popsift/s_pyramid_build_ra.cpp
+  # sycl_popsift/s_pyramid_build_ra.cpp
   sycl_popsift/s_pyramid_build_aa.cpp
   sycl_popsift/sift_constants.cpp
   sycl_popsift/sift_constants.hpp

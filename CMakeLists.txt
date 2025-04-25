@@ -15,11 +15,12 @@ option(PopSift_BUILD_EXAMPLES "Build PopSift applications." ON)
 option(PopSift_EXPERIMENTAL "Use experimantal features." ON) # bindless images
 # These are toggles that only have effect whem PopSift_EXPERIMENTAl are ON
 option(BindlessInput "Use bindless input image for upscaling" ON)
-option(BindlessArray "Use bindless image array for pyramid" ON)
 
-# # TODO: Seems to be beneficial for performance (keeping for now)
-# message(STATUS "Building with -fPIC (Position Independent Code)")
-# set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# Not fully implemented (hence should stay off, Uses USM when ON anyways)
+option(BindlessArray "Use bindless image array for pyramid" OFF)
+
+# Set to off as default and should stay off until it has a working version
+option(JointMatrix "Use Joint Matrix for matching (specific funtion)" OFF)
 
 # To generate compile_commands.json -- useful for clangd LSP
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -67,6 +68,8 @@ else()
   list(APPEND SYCL_FLAGS -O3)
 endif()
 
+# this if and above can be refactored to a better logic.. Currently not that
+# readable
 if(PopSift_EXPERIMENTAL AND ${ENABLE_CUDA})
   message(STATUS "Using experimantal features!")
   # set(EXPERIMENTAL "-DUSE_EXPERIMENTAL")
@@ -81,11 +84,24 @@ if(PopSift_EXPERIMENTAL AND ${ENABLE_CUDA})
   else()
     add_compile_definitions(USE_BINDLESS_ARRAY=0)
   endif()
+
+  # Not cuda exclusive
+  if(JointMatrix)
+    add_compile_definitions(USE_JOINT_MATRIX=1)
+  else()
+    add_compile_definitions(USE_JOINT_MATRIX=0)
+  endif()
 else()
-  # Non CUDA
+  # Non CUDA or non Experimental
   if(PopSift_EXPERIMENTAL)
     message(STATUS "Using experimantal features!")
     # Enable none cuda exlusive extensions
+
+    if(JointMatrix)
+      add_compile_definitions(USE_JOINT_MATRIX=1)
+    else()
+      add_compile_definitions(USE_JOINT_MATRIX=0)
+    endif()
   else()
     message(STATUS "Building without experimental features")
     # Disable none cuda exclusive extensions
@@ -96,6 +112,8 @@ else()
   # Currently bindless images are cuda exclusive
   add_compile_definitions(USE_BINDLESS_INPUT=0)
   add_compile_definitions(USE_BINDLESS_ARRAY=0)
+  # Not cuda exclusive
+  add_compile_definitions(USE_JOINT_MATRIX=0)
 
 endif()
 
