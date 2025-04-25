@@ -234,55 +234,15 @@ float Config::getPeakThreshold() const { return (_threshold * 0.5f * 255.0f / le
 
 bool Config::ifPrintGaussTables() const { return _print_gauss_tables; }
 
-// bool Config::equal( const Config& other ) const
-// {
-//     #define COMPARE(a) ( this->a != other.a )
-//     if( COMPARE( octaves ) ||
-//         COMPARE( levels ) ||
-//         COMPARE( sigma ) ||
-//         COMPARE( _edge_limit ) ||
-//         COMPARE( _threshold ) ||
-//         COMPARE( _upscale_factor ) ||
-//         COMPARE( _max_extrema ) ||
-//         COMPARE( _gauss_mode ) ||
-//         COMPARE( _sift_mode ) ||
-//         COMPARE( _assume_initial_blur ) ||
-//         COMPARE( _initial_blur ) ||
-//         COMPARE( _normalization_mode ) ||
-//         COMPARE( _normalization_multiplier ) ) return false;
-//     return true;
-// }
-
 bool Config::equal(const Config& other) const
 {
-    bool return_val = true;
-#define COMPARE_AND_LOG(a)                                                                                             \
-    if(this->a != other.a)                                                                                             \
-    {                                                                                                                  \
-        std::cerr << "Mismatch found in " #a << std::endl;                                                             \
-        return_val = false;                                                                                            \
-    }
-
-    COMPARE_AND_LOG(octaves);
-    COMPARE_AND_LOG(levels);
-    COMPARE_AND_LOG(sigma);
-    COMPARE_AND_LOG(_edge_limit);
-    COMPARE_AND_LOG(_threshold);
-    COMPARE_AND_LOG(_upscale_factor);
-    COMPARE_AND_LOG(_max_extrema);
-    COMPARE_AND_LOG(_gauss_mode);
-    COMPARE_AND_LOG(_sift_mode);
-    COMPARE_AND_LOG(_assume_initial_blur);
-    COMPARE_AND_LOG(_initial_blur);
-    COMPARE_AND_LOG(_normalization_mode);
-    COMPARE_AND_LOG(_normalization_multiplier);
-
-    // return true;
-    // std::cout << "Before the return and only one fucked up" << std::endl;
-
-    return return_val;
-
-#undef COMPARE_AND_LOG
+#define COMPARE(a) (this->a != other.a)
+    if(COMPARE(octaves) || COMPARE(levels) || COMPARE(sigma) || COMPARE(_edge_limit) || COMPARE(_threshold) ||
+       COMPARE(_upscale_factor) || COMPARE(_max_extrema) || COMPARE(_gauss_mode) || COMPARE(_sift_mode) ||
+       COMPARE(_assume_initial_blur) || COMPARE(_initial_blur) || COMPARE(_normalization_mode) ||
+       COMPARE(_normalization_multiplier))
+        return false;
+    return true;
 }
 
 }; // namespace popsift

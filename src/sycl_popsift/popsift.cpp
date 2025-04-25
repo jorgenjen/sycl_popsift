@@ -366,7 +366,6 @@ bool PopSift::private_init(int w, int h)
 
     if(p._pyramid != nullptr)
     {
-        cout << "\tNot null ptr" << endl;
         p._pyramid->resetDimensions(_config, w, h);
         return true;
     }
