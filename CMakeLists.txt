@@ -20,7 +20,7 @@ option(BindlessInput "Use bindless input image for upscaling" ON)
 option(BindlessArray "Use bindless image array for pyramid" OFF)
 
 # Set to off as default and should stay off until it has a working version
-option(JointMatrix "Use Joint Matrix for matching (specific funtion)" OFF)
+option(JointMatrix "Use Joint Matrix for matching (specific funtion)" ON)
 
 # To generate compile_commands.json -- useful for clangd LSP
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
