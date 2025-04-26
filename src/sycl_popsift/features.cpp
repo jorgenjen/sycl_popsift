@@ -262,6 +262,39 @@ class Compute_distance
     }
 };
 
+// Bitonic sort helper (same as in bitonic sort class)
+inline int shiftit(const int my_index, const int shift, const int direction, const bool increasing)
+{
+    const T my_val = _array[my_index];
+
+    const T other_val = sycl::permute_group_by_xor(_group, my_val, 1 << shift);
+
+    const bool reverse = (_it.get_local_id(1) & (1 << direction));
+
+    const bool id_less = ((_it.get_local_id(1) & (1 << shift)) == 0);
+
+    // If it thread get other_val from a thread with higher id it will be true if it's value is higher than
+    // other otherwise if it gets other_val from lower thread id it will be true if my_val is smaler than
+    // other_val if equal it's always false
+    const bool my_more = id_less ? (my_val > other_val) : (my_val < other_val);
+
+    // xor my_more with reverse and then xor that with increasing ^ is bitwise xor but onely one bit for bool
+    const bool must_swap = !(my_more ^ reverse ^ increasing);
+
+    // If we must swap we pass the mask so we swap with the assigned lane
+    // otherwise we pass 0 and we don't (not sure if using different masks is alowed in sycl for a permute)
+    int lane = must_swap ? (1 << shift) : 0;
+    // Should not be allowed according to docs but seem to work...
+    return sycl::permute_group_by_xor(_group, my_index, lane);
+}
+
+struct scan_state
+{
+    float v1;
+    float v2;
+    sycl::vec<sycl::byte, 2>; // For indecies 0 - 255 (enough for local search) need int for permanent storage
+}
+
 // Probs need to be quite many for this to be advantageous
 template<bool Swap> // Wheter l is the objects descriptrs or if it was swaped due to l_len < r_len
 class Compute_distance_matrix
@@ -274,7 +307,9 @@ class Compute_distance_matrix
     int r_len;
     sycl::local_accessor<sycl::half, 1> test;
     sycl::local_accessor<float, 1> b_norm;
+    sycl::local_accessor<float, 1> a_norm;
     sycl::local_accessor<sycl::half, 1> a_staging_tile;
+    sycl::local_accessor<float, 1> compute_tile;
     float* write_back;
 
   public:
@@ -285,7 +320,9 @@ class Compute_distance_matrix
                             int r_len,
                             sycl::local_accessor<sycl::half, 1> test,
                             sycl::local_accessor<float, 1> b_norm,
+                            sycl::local_accessor<float, 1> a_norm,
                             sycl::local_accessor<sycl::half, 1> a_staging_tile,
+                            sycl::local_accessor<float, 1> compute_tile,
                             float* write_back) // tmp testing
       : match_matrix(match_matrix)
       , l(l)
@@ -294,7 +331,9 @@ class Compute_distance_matrix
       , r_len(r_len)
       , test(test)
       , b_norm(b_norm)
+      , a_norm(a_norm)
       , a_staging_tile(a_staging_tile)
+      , compute_tile(compute_tile)
       , write_back(write_back) {};
 
     inline void operator()(sycl::nd_item<1> it) const
@@ -314,6 +353,7 @@ class Compute_distance_matrix
           sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(r);
 
         auto a_tile = a_staging_tile.get_multi_ptr<sycl::access::decorated::yes>();
+        auto compute = compute_tile.get_multi_ptr<sycl::access::decorated::yes>();
 
         int x = it.get_local_id(0);
         int desc_start = it.get_group(0); // only for global reads of B
@@ -328,6 +368,9 @@ class Compute_distance_matrix
         // Both needs to be decorated pointers...
         // Needed to be loaded like this If I want to store in array (can't use vector) and default constructor is
         // deleted for device event
+
+        // Would like to get this dimension to 32 (or rather the other one but this load as that would be faster as 32
+        // wide I think) Want to keep the other 16 to have better occupancy
         sycl::device_event events[16] = {it.get_group().async_work_group_copy(a_tile, r_ptr, 16),
                                          it.get_group().async_work_group_copy(a_tile + 16, r_ptr + 128, 16),
                                          it.get_group().async_work_group_copy(a_tile + 16 * 2, r_ptr + 128 * 2, 16),
@@ -344,12 +387,6 @@ class Compute_distance_matrix
                                          it.get_group().async_work_group_copy(a_tile + 16 * 13, r_ptr + 128 * 13, 16),
                                          it.get_group().async_work_group_copy(a_tile + 16 * 14, r_ptr + 128 * 14, 16),
                                          it.get_group().async_work_group_copy(a_tile + 16 * 15, r_ptr + 128 * 15, 16)};
-
-        // Both needs to be decorated pointers...
-        // tile_events[0] = it.get_group().async_work_group_copy(b_tile, r_ptr, 16);
-
-        // auto tile_r0 = it.get_group().async_work_group_copy(b_tile, r_ptr, 16, 128);
-        // auto tile_r1 = sycl::async_work_group_copy(b_tile + 16, r_ptr * 128, 16); // next row
 
 #define use_register 0
 #if use_register
@@ -379,19 +416,11 @@ class Compute_distance_matrix
             my_matrix[(i * 128) + x + 64] = item_loads.z();
             my_matrix[(i * 128) + x + 96] = item_loads.w();
 
-            // Working load
-            // my_matrix[(i * 128) + x] = l[(desc_start + i) * 128 + x];
-            // my_matrix[(i * 128) + x + 32] = l[(desc_start + i) * 128 + x + 32];
-            // my_matrix[(i * 128) + x + 64] = l[(desc_start + i) * 128 + x + 64];
-            // my_matrix[(i * 128) + x + 96] = l[(desc_start + i) * 128 + x + 96];
-
             // NOTE: Could try to transpose and load as row_major
             // This would require to use stride 17 and larger shared memory to avoid bank conflicts
         }
 
         // my_matrix[128] = 0.1;
-
-        sycl::group_barrier(it.get_group()); // Ensure shared memory is done
 
         syclexp::matrix::joint_matrix<sycl::sub_group,
                                       sycl::half,
@@ -401,19 +430,6 @@ class Compute_distance_matrix
                                       syclexp::matrix::layout::row_major>
           A; // Loaded in on the fly (colums is desc from other set(smaller one)) (this one is cheaper due to not
              // having to transpose)
-
-        // syclexp::matrix::joint_matrix<sycl::sub_group,
-        //                               sycl::half,
-        //                               syclexp::matrix::use::a,
-        //                               16,
-        //                               16,
-        //                               syclexp::matrix::layout::row_major>
-        //   A_squared; // Stores the sum of squares of A (used to compute A norm on the fly)
-
-        // syclexp::matrix::use::a,
-        // syclexp::matrix::joint_matrix<sycl::sub_group, float, syclexp::matrix::use::accumulator, 16, 16>
-        //   // syclexp::matrix::layout::row_major>
-        //   A_squared; // Stores the sum of squares of A (used to compute A norm on the fly)
 
         syclexp::matrix::joint_matrix<sycl::sub_group,
                                       sycl::half,
@@ -430,15 +446,9 @@ class Compute_distance_matrix
                                       16>
           C; // Accumulate the term for the vector pairs
 
-        // syclexp::matrix::joint_matrix<sycl::sub_group,
-        //                               float,
-        //                               syclexp::matrix::use::accumulator,
-        //                               16,
-        //                               16>
-        //   for_copy; // Accumulate the term for the vector pairs
+        sycl::group_barrier(it.get_group());
 
         joint_matrix_fill(it.get_sub_group(), C, 0);
-
         // Do first iteration out of loop as we are writing to A_squared in loop we add to it
         // Avoids the need to fil it with zeros
 
@@ -448,64 +458,150 @@ class Compute_distance_matrix
         // Not sure if I could only wait on the last one but don'T think that's guaranteed to work
         for(auto& e : events)
             e.wait();
+        // Not sure if the barrier makes this wait call redundant?
 
         syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, a_tile, 16);
-        // less precise due to only using fp16 but only option while using loaded A
-        // As matrecies need to be same use and float type for use::a is not suported
-        // syclexp::matrix::joint_matrix_apply(
-        //   group, A, A_squared, [=](sycl::half& a, sycl::half& a_sum) {
-        //     a_sum = a * a; });
 
         syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
+
+        // Done with the a_tile so we compute A^2 inplace
+        for(int i = 0; i < 8; ++i)
+        {
+            a_tile[i * 32 + x] *= a_tile[i * 32 + x];
+        }
+
+        sycl::group_barrier(it.get_group());
+
+        int row = x / 8; //  0 1 2 3 -- spliting task
+
+        // We do 256 wide reduction but within the rows that are 16 to get 16 values total one per row
+
+        // take upper 8 from a row of 16 and add with lower 8 in row and store to lower 8 upper index read is 63
+        a_tile[x + (row << 3)] += a_tile[x + ((row + 1) << 3)];
+        a_tile[x + (row << 3) + 64] += a_tile[x + ((row + 1) << 3) + 64];
+        a_tile[x + (row << 3) + 128] += a_tile[x + ((row + 1) << 3) + 128];
+        a_tile[x + (row << 3) + 192] += a_tile[x + ((row + 1) << 3) + 192];
+        // No overlapping regions of these first steps
+
+        row = x / 4; // 0 1 2 3 4 5 6 7
+        sycl::group_barrier(it.get_group());
+
+        // The bank conflicts are getting worse for evely level... (sestructure if possible)
+        a_tile[x + (row * 12)] += a_tile[x + (row * 12) + 4];
+        a_tile[x + (row * 12) + 128] += a_tile[x + (row * 12) + 4 + 128];
+
+        row = x / 2; // [0 - 15]
+        sycl::group_barrier(it.get_group());
+
+        // full width 256
+        a_tile[x + (row * 14)] += a_tile[x + (row * 14) + 2];
+
+        sycl::group_barrier(it.get_group());
+
+        if(x < 16)
+        {
+            a_norm[x] = a_tile[x * 16] + a_tile[x * 16 + 1]; // extreme bank conflicts...
+        }
 
         // Inner loop computing for 16 descriptors of r_ptr
         for(int i = 1; i < 8; ++i)
         {
+            // Should prefetch next here and double buffer this
+            sycl::device_event events[16] = {
+              it.get_group().async_work_group_copy(a_tile, r_ptr, 16),
+              it.get_group().async_work_group_copy(a_tile + 16, r_ptr + 128, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 2, r_ptr + 128 * 2, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 3, r_ptr + 128 * 3, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 4, r_ptr + 128 * 4, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 5, r_ptr + 128 * 5, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 6, r_ptr + 128 * 6, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 7, r_ptr + 128 * 7, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 8, r_ptr + 128 * 8, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 9, r_ptr + 128 * 9, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 10, r_ptr + 128 * 10, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 11, r_ptr + 128 * 11, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 12, r_ptr + 128 * 12, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 13, r_ptr + 128 * 13, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 14, r_ptr + 128 * 14, 16),
+              it.get_group().async_work_group_copy(a_tile + 16 * 15, r_ptr + 128 * 15, 16)};
+
             // Compute the whole descriptor ab so 256 total in the end 16 x 16 descriptor pairs
 
             // Load from global should prefetch
-            syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr + i * 16, 128);
+            // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr + i * 16, 128);
 
             // Load from shared_memory
             syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix + i * 16, 128);
 
-            // Computes A^2
-            // syclexp::matrix::joint_matrix_apply(
-            //   group, A, A_squared, [=](sycl::half& a, sycl::half& a_sum) { a_sum += a * a; });
+            for(auto& e : events)
+                e.wait();
+
+            // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr + i * 16, 128);
+            syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, a_tile, 16);
 
             syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
+
+            // Compute a^2 for tile
+
+            for(int i = 0; i < 8; ++i)
+            {
+                a_tile[i * 32 + x] *= a_tile[i * 32 + x];
+            }
+
+            sycl::group_barrier(it.get_group());
+            // sum rows and store += a_norm
+
+            int row = x / 8; //  0 1 2 3 -- spliting task
+
+            // We do 256 wide reduction but within the rows that are 16 to get 16 values total one per row
+
+            // take upper 8 from a row of 16 and add with lower 8 in row and store to lower 8 upper index read is 63
+            a_tile[x + (row << 3)] += a_tile[x + ((row + 1) << 3)];
+            a_tile[x + (row << 3) + 64] += a_tile[x + ((row + 1) << 3) + 64];
+            a_tile[x + (row << 3) + 128] += a_tile[x + ((row + 1) << 3) + 128];
+            a_tile[x + (row << 3) + 192] += a_tile[x + ((row + 1) << 3) + 192];
+            // No overlapping regions of these first steps
+
+            row = x / 4; // 0 1 2 3 4 5 6 7
+            sycl::group_barrier(it.get_group());
+
+            // The bank conflicts are getting worse for evely level... (sestructure if possible)
+            a_tile[x + (row * 12)] += a_tile[x + (row * 12) + 4];
+            a_tile[x + (row * 12) + 128] += a_tile[x + (row * 12) + 4 + 128];
+
+            row = x / 2; // [0 - 15]
+            sycl::group_barrier(it.get_group());
+
+            // full width 256
+            a_tile[x + (row * 14)] += a_tile[x + (row * 14) + 2];
+
+            sycl::group_barrier(it.get_group());
+
+            if(x < 16)
+            {
+                a_norm[x] += a_tile[x * 16] + a_tile[x * 16 + 1]; // extreme bank conflicts...
+            }
         }
 
-        // copy A_squared to a accumulator then we can copy it to shared mem
-        // then we can do the stuff we need on that
-        // syclexp::matrix::joint_matrix_copy(group, A_squared, for_copy);
-        // syclexp::matrix::joint_matrix_copy(group, C, for_copy);
+        // Compute the actual SSD
 
-        //
+        // Copy the resulting AB stored in C into a_tile as that is currently not in use
+        syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, compute, 16, syclexp::matrix::layout::row_major);
 
-        //
+        sycl::group_barrier(it.get_group()); // not sure if required
 
-        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, l_ptr, 128); // WORKS WORKS WORKS
-        //
-        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix, 128); // WORKS ASWELL
-        //
-        // syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
-        //
+        // compute[x] = a_norm[pos] + b_nor[pos] - 2 * compute[x];
+
+        int pos = x / 16; // split
+        for(int i = 0; i < 8; ++i)
+        {
+            compute[x + i * 32] = a_norm[pos + i * 2] + b_norm[pos + i * 2] - 2 * compute[x + i * 32];
+        }
+
+        // Now we have SSD computed in a 16x16 matrix we need to find the best two along the rows
+        // Bitonic sort time
+
         syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, backy, 16, syclexp::matrix::layout::row_major);
-
-        //
-        //
-
-        //
-
-        //
-        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, local_ptr, 16); // WORKS ASWELL
-        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, me_loc_ptr, 16); // NO worky...
-
-        // C = syclexp::matrix::joint_matrix_mad(it.get_sub_group(), A, B, C); // Not working
-
-        // sycl::global_ptr<sycl::half> r_ptr(r);
-        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr + 256, 128); // WORKS WORKS WORKS
     }
 };
 
@@ -618,13 +714,23 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
                 // need 7 for storing the older result values final is stored in current work range idx 7
                 auto local_test = sycl::local_accessor<sycl::half, 1>(128 * 16, cgh); // one per row in work-group
                 auto b_norm = sycl::local_accessor<float, 1>(16, cgh);                // one per row in work-group
+                auto a_norm = sycl::local_accessor<float, 1>(16, cgh);                // one per row in work-group
                 // auto local_a_square = sycl::local_accessor<sycl::half, 1>(16 * 16, cgh); // one per row in work-group
                 auto b_staging_tile = sycl::local_accessor<sycl::half, 1>(16 * 16, cgh); // one per row in work-group
+                auto compute_tile = sycl::local_accessor<float, 1>(16 * 16, cgh);        // one per row in work-group
 
-                cgh.parallel_for(
-                  sycl::nd_range{global, local},
-                  Compute_distance_matrix<false>(
-                    match_matrix, l_half, l_len, r_half, r_len, local_test, b_norm, b_staging_tile, res));
+                cgh.parallel_for(sycl::nd_range{global, local},
+                                 Compute_distance_matrix<false>(match_matrix,
+                                                                l_half,
+                                                                l_len,
+                                                                r_half,
+                                                                r_len,
+                                                                local_test,
+                                                                b_norm,
+                                                                a_norm,
+                                                                b_staging_tile,
+                                                                compute_tile,
+                                                                res));
             });
 
             _device_queue.wait();
