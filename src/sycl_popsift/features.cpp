@@ -273,6 +273,7 @@ class Compute_distance_matrix
     sycl::half* r;
     int r_len;
     sycl::local_accessor<sycl::half, 1> test;
+    sycl::local_accessor<float, 1> b_norm;
     float* write_back;
 
   public:
@@ -282,6 +283,7 @@ class Compute_distance_matrix
                             sycl::half* r,
                             int r_len,
                             sycl::local_accessor<sycl::half, 1> test,
+                            sycl::local_accessor<float, 1> b_norm,
                             float* write_back)
       : match_matrix(match_matrix)
       , l(l)
@@ -289,64 +291,83 @@ class Compute_distance_matrix
       , r(r)
       , r_len(r_len)
       , test(test)
+      , b_norm(b_norm)
       , write_back(write_back) {};
 
     inline void operator()(sycl::nd_item<1> it) const
     {
-        // // Load the matrix B that we are responsible for into shared memory and transpose it
-        //
-        // // First compute B^2 --> Save the 16 values --> Then transpose the matrix
-        //
-        // // Padded to 17 to avoid bank conflicts during transpose
-        // sycl::multi_ptr<sycl::half[128][17], sycl::access::address_space::local_space> ptr =
-        //   sycl::ext::oneapi::group_local_memory<sycl::half[128][17]>(it.get_group());
-        //
-        // // The descriptors sub_group is responsible for transposed (after getting descT ^ 2)
-        // auto& descT = *ptr;
-        //
-        // sycl::sub_group group = it.get_sub_group();
-        //
-        // sycl::half b_norms[16]; // hopefully fine to store in regsters (consider moving to local_memory)
-        // for(int i = 0; i < 16; ++i)
-        // {
-        //     // Compute the 16 norms && transpose:
-        //
-        //     // Coaleced memory reads from global mem
-        //     sycl::vec<sycl::half, 4> item_loads{l[it.get_global_id(0) * 16 + i].features[it.get_local_id(1)],
-        //                                         l[it.get_global_id(0) * 16 + i].features[it.get_local_id(1) + 32],
-        //                                         l[it.get_global_id(0) * 16 + i].features[it.get_local_id(1) + 32 *
-        //                                         2], l[it.get_global_id(0) * 16 + i].features[it.get_local_id(1) + 32
-        //                                         * 3]};
-        //
-        //     b_norms[i] = sycl::dot(item_loads, item_loads);
-        //     b_norms[i] = sycl::reduce_over_group(group, b_norms[i], sycl::plus<sycl::half>());
-        //
-        //     // Store transposed to local memoroy
-        //     // Should not be bank conflicty due to stride being 17 (padded with one column)
-        //     descT[it.get_local_id(1)][i] = item_loads.x();
-        //     descT[it.get_local_id(1) + 32][i] = item_loads.y();
-        //     descT[it.get_local_id(1) + 32 * 2][i] = item_loads.z();
-        //     descT[it.get_local_id(1) + 32 * 3][i] = item_loads.w();
-        // }
+        // Should move this to the command group like the example docs
+        sycl::global_ptr<sycl::half> l_ptr(l);
+        sycl::global_ptr<sycl::half> r_ptr(r);
+        sycl::global_ptr<float> backy(write_back);
 
-        //
+        auto my_matrix = test.get_multi_ptr<sycl::access::decorated::no>();
 
-        //
+        int x = it.get_local_id(0);
+        int desc_start = it.get_group(0); // only for global reads of B
 
-        //
+        sycl::sub_group group = it.get_sub_group();
 
-        auto local_ptr = test.get_multi_ptr<sycl::access::decorated::no>();
+        // b_norm[0] = 5.2;
 
-        // Compute a^2 here for each of the 16 desc we are responsible for so storing 16 floats in registers(mby local
-        // mem) Not sure if we wan't to reaload the 8 A's or keep them as A0 A1 ... A7
-        syclexp::matrix::
-          joint_matrix<sycl::sub_group, sycl::half, syclexp::matrix::use::a, 16, 16, syclexp::matrix::layout::row_major>
-            A; // Loaded in on the fly (colums is desc from other set(smaller one)) (this one is cheaper due to not
-               // having to transpose)
+#define use_register 0
+#if use_register
+        // This takes up 16 registers per work_item so it might bee to much more than a tile actually
+        float my_norms[16]; // mby use shared mem  verssion b_norm (think you need to chnage reduce to joint_reduce then
 
-        syclexp::matrix::
-          joint_matrix<sycl::sub_group, sycl::half, syclexp::matrix::use::b, 16, 16, syclexp::matrix::layout::row_major>
-            B; // Subgroup keep the 8 B for the whole kernel it is responsible for those 16 descriptors
+#endif
+        for(int i = 0; i < 16; ++i)
+        {
+            sycl::vec<sycl::half, 4> item_loads{l[(desc_start + i) * 128 + x],
+                                                l[(desc_start + i) * 128 + x + 32],
+                                                l[(desc_start + i) * 128 + x + 64],
+                                                l[(desc_start + i) * 128 + x + 96]};
+
+#if use_register
+            my_norms[i] = sycl::dot(item_loads, item_loads);
+            my_norms[i] = sycl::reduce_over_group(group, my_norms[i], sycl::plus<float>());
+#else
+            // Store norm in shared memory to reduce register usage
+            float item_dot = sycl::dot(item_loads, item_loads);
+            b_norm[i] = sycl::reduce_over_group(group, item_dot, sycl::plus<float>());
+#endif
+
+            // Store B to shred memory - without transposing need to load as column major
+            my_matrix[(i * 128) + x] = item_loads.x();
+            my_matrix[(i * 128) + x + 32] = item_loads.y();
+            my_matrix[(i * 128) + x + 64] = item_loads.z();
+            my_matrix[(i * 128) + x + 96] = item_loads.w();
+
+            // Working load
+            // my_matrix[(i * 128) + x] = l[(desc_start + i) * 128 + x];
+            // my_matrix[(i * 128) + x + 32] = l[(desc_start + i) * 128 + x + 32];
+            // my_matrix[(i * 128) + x + 64] = l[(desc_start + i) * 128 + x + 64];
+            // my_matrix[(i * 128) + x + 96] = l[(desc_start + i) * 128 + x + 96];
+
+            // NOTE: Could try to transpose and load as row_major
+            // This would require to use stride 17 and larger shared memory to avoid bank conflicts
+        }
+
+        // my_matrix[128] = 0.1;
+
+        sycl::group_barrier(it.get_group()); // Ensure shared memory is done
+
+        syclexp::matrix::joint_matrix<sycl::sub_group,
+                                      sycl::half,
+                                      syclexp::matrix::use::a,
+                                      16,
+                                      16,
+                                      syclexp::matrix::layout::row_major>
+          A; // Loaded in on the fly (colums is desc from other set(smaller one)) (this one is cheaper due to not
+             // having to transpose)
+
+        syclexp::matrix::joint_matrix<sycl::sub_group,
+                                      sycl::half,
+                                      syclexp::matrix::use::b,
+                                      16,
+                                      16,
+                                      syclexp::matrix::layout::col_major>
+          B; // Subgroup keep the 8 B for the whole kernel it is responsible for those 16 descriptors
 
         syclexp::matrix::joint_matrix<sycl::sub_group,
                                       float,
@@ -357,43 +378,42 @@ class Compute_distance_matrix
 
         joint_matrix_fill(it.get_sub_group(), C, 0);
 
-        sycl::global_ptr<sycl::half> l_ptr(l);
-        syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, l_ptr, 128); // WORKS WORKS WORKS
-
-        // auto me_loc_ptr = sycl::ext::oneapi::group_local_memory<sycl::half[512]>(it.get_group()); // Does not like
-        // this local memory for some reason...
-
-        if(it.get_local_linear_id() == 0)
+        for(int i = 0; i < 8; ++i)
         {
-            for(int i = 0; i < 512; ++i)
-            {
-                // set everything to zero
-                local_ptr[i] = 0;
-            }
+            // Compute the whole descriptor ab so 256 total in the end 16 x 16 descriptor pairs
+
+            // Load from global should prefetch
+            syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, l_ptr + i * 16, 128);
+
+            // Load from shared_memroy
+            syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix + i * 16, 128);
+
+            // Also compute a^2 bo doing apply and storing to a different matrix
+
+            syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
         }
 
-        local_ptr[0] = 1;
-        local_ptr[1] = 1;
-        local_ptr[2] = 1;
-        local_ptr[3] = 1;
-        local_ptr[4] = 1;
-        local_ptr[5] = 1;
-        local_ptr[6] = 1;
-        local_ptr[7] = 1;
-        local_ptr[8] = 1;
-        local_ptr[9] = 1;
+        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, l_ptr, 128); // WORKS WORKS WORKS
+        //
+        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix, 128); // WORKS ASWELL
+        //
+        // syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
+        //
+        syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, backy, 16, syclexp::matrix::layout::row_major);
 
-        sycl::global_ptr<sycl::half> r_ptr(r);
-        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, r_ptr, 128); // WORKS ASWELL
+        //
+        //
 
-        syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, local_ptr, 16); // WORKS ASWELL
+        //
+
+        //
+        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, local_ptr, 16); // WORKS ASWELL
         // syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, me_loc_ptr, 16); // NO worky...
 
         // C = syclexp::matrix::joint_matrix_mad(it.get_sub_group(), A, B, C); // Not working
-        syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
 
-        sycl::global_ptr<float> backy(write_back);
-        syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, backy, 16, syclexp::matrix::layout::row_major);
+        // sycl::global_ptr<sycl::half> r_ptr(r);
+        // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr + 256, 128); // WORKS WORKS WORKS
     }
 };
 
@@ -497,17 +517,19 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
         if(true) // We want most of the descriptrs on left side
         {
             fprintf(stderr, "Trying to do matrix stuff yayayayayay\n");
-            sycl::range global{static_cast<size_t>(l_len * 32)}; // one 32 wide group per descriptor
+            // sycl::range global{static_cast<size_t>(l_len * 32)}; // one 32 wide group per descriptor
+            sycl::range global{static_cast<size_t>(1 * 32)}; // Running for one as a test
             sycl::range local{32};
             // SWAP
 
             _device_queue.submit([&](sycl::handler& cgh) {
                 // need 7 for storing the older result values final is stored in current work range idx 7
-                auto local_test = sycl::local_accessor<sycl::half, 1>(512, cgh); // one per row in work-group
+                auto local_test = sycl::local_accessor<sycl::half, 1>(128 * 16, cgh); // one per row in work-group
+                auto b_norm = sycl::local_accessor<float, 1>(16, cgh);                // one per row in work-group
 
                 cgh.parallel_for(
                   sycl::nd_range{global, local},
-                  Compute_distance_matrix<false>(match_matrix, l_half, l_len, r_half, r_len, local_test, res));
+                  Compute_distance_matrix<false>(match_matrix, l_half, l_len, r_half, r_len, local_test, b_norm, res));
             });
 
             _device_queue.wait();
@@ -527,7 +549,8 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
             // auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
             // matchEvent =
             //   _device_queue.parallel_for(sycl::nd_range{global, local},
-            //                              Compute_distance_matrix<false>(match_matrix, l_half, l_len, r_half, r_len));
+            //                              Compute_distance_matrix<false>(match_matrix, l_half, l_len, r_half,
+            //                              r_len));
         }
         {
             // sycl::range global{static_cast<size_t>(l_len * 32)}; // one 32 wide group per descriptor
@@ -640,3 +663,49 @@ std::ostream& operator<<(std::ostream& ostr, const Feature& feature)
 }
 
 } // namespace popsift
+
+// Failed as it made the result of matrix compute 0 for all locations when it shoudl not be
+// Veri sensetive these matrecies
+
+// hopefully fine to store in regsters (consider moving to local_memory)
+// for(int i = 0; i < 16; ++i)
+// for(int i = 0; i < 1; ++i)
+// {
+//     // Compute the 16 norms && transpose:
+//
+//     // Coaleced memory reads from global mem
+//     // sycl::vec<sycl::half, 4> item_loads{l[it.get_global_id(0) * 16 + i].features[it.get_local_id(1)],
+//     //                                     l[it.get_global_id(0) * 16 + i].features[it.get_local_id(1) + 32],
+//     //                                     l[it.get_global_id(0) * 16 + i].features[it.get_local_id(1) + 32 *
+//     //                                     2], l[it.get_global_id(0) * 16 + i].features[it.get_local_id(1) +
+//     // 32
+//     //                                     * 3]};
+//
+//     // sycl::vec<sycl::half, 4> item_loads{l[(it.get_global_id(0) * 16 + i) * 128 + it.get_local_id(1)],
+//     //                                     l[(it.get_global_id(0) * 16 + i) * 128 + it.get_local_id(1) + 32],
+//     //                                     l[(it.get_global_id(0) * 16 + i) * 128 + it.get_local_id(1) + 64],
+//     //                                     l[(it.get_global_id(0) * 16 + i) * 128 + it.get_local_id(1) +
+//     96]};
+//     //
+//     // b_norms[i] = sycl::dot(item_loads, item_loads);
+//     // b_norms[i] = sycl::reduce_over_group(group, b_norms[i], sycl::plus<sycl::half>());
+//
+//     // Store transposed to local memoroy
+//     // Should not be bank conflicty due to stride being 17 (padded with one column)
+//
+//     // Skipping to teset
+//     // my_matrix[i * 128 + it.get_local_id(1)] = item_loads.x();
+//     // my_matrix[i * 128 + it.get_local_id(1) + 32] = item_loads.y();
+//     // my_matrix[i * 128 + it.get_local_id(1) + 64] = item_loads.z();
+//     // my_matrix[i * 128 + it.get_local_id(1) + 96] = item_loads.w();
+//
+//     my_matrix[i * 128 + it.get_local_id(1)] = 5;
+//     my_matrix[i * 128 + it.get_local_id(1) + 32] = 10;
+//     my_matrix[i * 128 + it.get_local_id(1) + 64] = 15;
+//     my_matrix[i * 128 + it.get_local_id(1) + 96] = 21;
+// }
+
+// my_matrix[1 * 128 + it.get_local_id(1)] = 5.5;
+// my_matrix[1 * 128 + it.get_local_id(1) + 32] = 10.2;
+// my_matrix[1 * 128 + it.get_local_id(1) + 64] = 15.2;
+// my_matrix[1 * 128 + it.get_local_id(1) + 96] = 21.1;
