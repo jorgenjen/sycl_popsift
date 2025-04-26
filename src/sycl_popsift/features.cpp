@@ -363,6 +363,19 @@ class Compute_distance_matrix
 
         syclexp::matrix::joint_matrix<sycl::sub_group,
                                       sycl::half,
+                                      syclexp::matrix::use::a,
+                                      16,
+                                      16,
+                                      syclexp::matrix::layout::row_major>
+          A_squared; // Stores the sum of squares of A (used to compute A norm on the fly)
+
+        // syclexp::matrix::use::a,
+        // syclexp::matrix::joint_matrix<sycl::sub_group, float, syclexp::matrix::use::accumulator, 16, 16>
+        //   // syclexp::matrix::layout::row_major>
+        //   A_squared; // Stores the sum of squares of A (used to compute A norm on the fly)
+
+        syclexp::matrix::joint_matrix<sycl::sub_group,
+                                      sycl::half,
                                       syclexp::matrix::use::b,
                                       16,
                                       16,
@@ -378,17 +391,34 @@ class Compute_distance_matrix
 
         joint_matrix_fill(it.get_sub_group(), C, 0);
 
-        for(int i = 0; i < 8; ++i)
+        // Do first iteration out of loop as we are writing to A_squared in loop we add to it
+        // Avoids the need to fil it with zeros
+
+        syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr, 128);
+
+        syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix, 128);
+
+        // less precise due to only using fp16 but only option while using loaded A
+        // As matrecies need to be same use and float type for use::a is not suported
+        syclexp::matrix::joint_matrix_apply(
+          group, A, A_squared, [=](sycl::half& a, sycl::half& a_sum) { a_sum = a * a; });
+
+        syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
+
+        // Inner loop computing for 16 descriptors of r_ptr
+        for(int i = 1; i < 8; ++i)
         {
             // Compute the whole descriptor ab so 256 total in the end 16 x 16 descriptor pairs
 
             // Load from global should prefetch
-            syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, l_ptr + i * 16, 128);
+            syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr + i * 16, 128);
 
-            // Load from shared_memroy
+            // Load from shared_memory
             syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix + i * 16, 128);
 
-            // Also compute a^2 bo doing apply and storing to a different matrix
+            // Computes A^2
+            syclexp::matrix::joint_matrix_apply(
+              group, A, A_squared, [=](sycl::half& a, sycl::half& a_sum) { a_sum += a * a; });
 
             syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
         }
