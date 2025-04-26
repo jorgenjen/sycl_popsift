@@ -274,6 +274,7 @@ class Compute_distance_matrix
     int r_len;
     sycl::local_accessor<sycl::half, 1> test;
     sycl::local_accessor<float, 1> b_norm;
+    sycl::local_accessor<sycl::half, 1> a_staging_tile;
     float* write_back;
 
   public:
@@ -284,7 +285,8 @@ class Compute_distance_matrix
                             int r_len,
                             sycl::local_accessor<sycl::half, 1> test,
                             sycl::local_accessor<float, 1> b_norm,
-                            float* write_back)
+                            sycl::local_accessor<sycl::half, 1> a_staging_tile,
+                            float* write_back) // tmp testing
       : match_matrix(match_matrix)
       , l(l)
       , l_len(l_len)
@@ -292,23 +294,62 @@ class Compute_distance_matrix
       , r_len(r_len)
       , test(test)
       , b_norm(b_norm)
+      , a_staging_tile(a_staging_tile)
       , write_back(write_back) {};
 
     inline void operator()(sycl::nd_item<1> it) const
     {
         // Should move this to the command group like the example docs
         sycl::global_ptr<sycl::half> l_ptr(l);
-        sycl::global_ptr<sycl::half> r_ptr(r);
         sycl::global_ptr<float> backy(write_back);
 
         auto my_matrix = test.get_multi_ptr<sycl::access::decorated::no>();
+        // sycl::global_ptr<sycl::half> r_ptr(r);
+
+        // auto r_ptr =
+        //   sycl::get_multi_ptr<sycl::half, sycl::access::address_space::global_space,
+        //   sycl::access::decorated::yes>(r);
+
+        auto r_ptr =
+          sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(r);
+
+        auto a_tile = a_staging_tile.get_multi_ptr<sycl::access::decorated::yes>();
 
         int x = it.get_local_id(0);
         int desc_start = it.get_group(0); // only for global reads of B
 
         sycl::sub_group group = it.get_sub_group();
 
-        // b_norm[0] = 5.2;
+        // Could load it all in but that would take wayy to much shared memory I think
+        // Aka loading in 16x128. currently just loading 16x16 but needs 16 events for that...
+
+        // std::array<sycl::device_event, 16> events;
+
+        // Both needs to be decorated pointers...
+        // Needed to be loaded like this If I want to store in array (can't use vector) and default constructor is
+        // deleted for device event
+        sycl::device_event events[16] = {it.get_group().async_work_group_copy(a_tile, r_ptr, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16, r_ptr + 128, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 2, r_ptr + 128 * 2, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 3, r_ptr + 128 * 3, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 4, r_ptr + 128 * 4, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 5, r_ptr + 128 * 5, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 6, r_ptr + 128 * 6, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 7, r_ptr + 128 * 7, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 8, r_ptr + 128 * 8, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 9, r_ptr + 128 * 9, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 10, r_ptr + 128 * 10, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 11, r_ptr + 128 * 11, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 12, r_ptr + 128 * 12, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 13, r_ptr + 128 * 13, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 14, r_ptr + 128 * 14, 16),
+                                         it.get_group().async_work_group_copy(a_tile + 16 * 15, r_ptr + 128 * 15, 16)};
+
+        // Both needs to be decorated pointers...
+        // tile_events[0] = it.get_group().async_work_group_copy(b_tile, r_ptr, 16);
+
+        // auto tile_r0 = it.get_group().async_work_group_copy(b_tile, r_ptr, 16, 128);
+        // auto tile_r1 = sycl::async_work_group_copy(b_tile + 16, r_ptr * 128, 16); // next row
 
 #define use_register 0
 #if use_register
@@ -361,13 +402,13 @@ class Compute_distance_matrix
           A; // Loaded in on the fly (colums is desc from other set(smaller one)) (this one is cheaper due to not
              // having to transpose)
 
-        syclexp::matrix::joint_matrix<sycl::sub_group,
-                                      sycl::half,
-                                      syclexp::matrix::use::a,
-                                      16,
-                                      16,
-                                      syclexp::matrix::layout::row_major>
-          A_squared; // Stores the sum of squares of A (used to compute A norm on the fly)
+        // syclexp::matrix::joint_matrix<sycl::sub_group,
+        //                               sycl::half,
+        //                               syclexp::matrix::use::a,
+        //                               16,
+        //                               16,
+        //                               syclexp::matrix::layout::row_major>
+        //   A_squared; // Stores the sum of squares of A (used to compute A norm on the fly)
 
         // syclexp::matrix::use::a,
         // syclexp::matrix::joint_matrix<sycl::sub_group, float, syclexp::matrix::use::accumulator, 16, 16>
@@ -389,19 +430,31 @@ class Compute_distance_matrix
                                       16>
           C; // Accumulate the term for the vector pairs
 
+        // syclexp::matrix::joint_matrix<sycl::sub_group,
+        //                               float,
+        //                               syclexp::matrix::use::accumulator,
+        //                               16,
+        //                               16>
+        //   for_copy; // Accumulate the term for the vector pairs
+
         joint_matrix_fill(it.get_sub_group(), C, 0);
 
         // Do first iteration out of loop as we are writing to A_squared in loop we add to it
         // Avoids the need to fil it with zeros
 
-        syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr, 128);
-
         syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix, 128);
 
+        // Wait for A tile to be loaded
+        // Not sure if I could only wait on the last one but don'T think that's guaranteed to work
+        for(auto& e : events)
+            e.wait();
+
+        syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, a_tile, 16);
         // less precise due to only using fp16 but only option while using loaded A
         // As matrecies need to be same use and float type for use::a is not suported
-        syclexp::matrix::joint_matrix_apply(
-          group, A, A_squared, [=](sycl::half& a, sycl::half& a_sum) { a_sum = a * a; });
+        // syclexp::matrix::joint_matrix_apply(
+        //   group, A, A_squared, [=](sycl::half& a, sycl::half& a_sum) {
+        //     a_sum = a * a; });
 
         syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
 
@@ -417,11 +470,20 @@ class Compute_distance_matrix
             syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix + i * 16, 128);
 
             // Computes A^2
-            syclexp::matrix::joint_matrix_apply(
-              group, A, A_squared, [=](sycl::half& a, sycl::half& a_sum) { a_sum += a * a; });
+            // syclexp::matrix::joint_matrix_apply(
+            //   group, A, A_squared, [=](sycl::half& a, sycl::half& a_sum) { a_sum += a * a; });
 
             syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
         }
+
+        // copy A_squared to a accumulator then we can copy it to shared mem
+        // then we can do the stuff we need on that
+        // syclexp::matrix::joint_matrix_copy(group, A_squared, for_copy);
+        // syclexp::matrix::joint_matrix_copy(group, C, for_copy);
+
+        //
+
+        //
 
         // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, l_ptr, 128); // WORKS WORKS WORKS
         //
@@ -556,10 +618,13 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
                 // need 7 for storing the older result values final is stored in current work range idx 7
                 auto local_test = sycl::local_accessor<sycl::half, 1>(128 * 16, cgh); // one per row in work-group
                 auto b_norm = sycl::local_accessor<float, 1>(16, cgh);                // one per row in work-group
+                // auto local_a_square = sycl::local_accessor<sycl::half, 1>(16 * 16, cgh); // one per row in work-group
+                auto b_staging_tile = sycl::local_accessor<sycl::half, 1>(16 * 16, cgh); // one per row in work-group
 
                 cgh.parallel_for(
                   sycl::nd_range{global, local},
-                  Compute_distance_matrix<false>(match_matrix, l_half, l_len, r_half, r_len, local_test, b_norm, res));
+                  Compute_distance_matrix<false>(
+                    match_matrix, l_half, l_len, r_half, r_len, local_test, b_norm, b_staging_tile, res));
             });
 
             _device_queue.wait();
