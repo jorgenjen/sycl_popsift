@@ -263,37 +263,38 @@ class Compute_distance
 };
 
 // Bitonic sort helper (same as in bitonic sort class)
-inline int shiftit(const int my_index, const int shift, const int direction, const bool increasing)
-{
-    const T my_val = _array[my_index];
+// inline int shiftit(const int my_index, const int shift, const int direction, const bool increasing)
+// {
+//     const T my_val = _array[my_index];
+//
+//     const T other_val = sycl::permute_group_by_xor(_group, my_val, 1 << shift);
+//
+//     const bool reverse = (_it.get_local_id(1) & (1 << direction));
+//
+//     const bool id_less = ((_it.get_local_id(1) & (1 << shift)) == 0);
+//
+//     // If it thread get other_val from a thread with higher id it will be true if it's value is higher than
+//     // other otherwise if it gets other_val from lower thread id it will be true if my_val is smaler than
+//     // other_val if equal it's always false
+//     const bool my_more = id_less ? (my_val > other_val) : (my_val < other_val);
+//
+//     // xor my_more with reverse and then xor that with increasing ^ is bitwise xor but onely one bit for bool
+//     const bool must_swap = !(my_more ^ reverse ^ increasing);
+//
+//     // If we must swap we pass the mask so we swap with the assigned lane
+//     // otherwise we pass 0 and we don't (not sure if using different masks is alowed in sycl for a permute)
+//     int lane = must_swap ? (1 << shift) : 0;
+//     // Should not be allowed according to docs but seem to work...
+//     return sycl::permute_group_by_xor(_group, my_index, lane);
+// }
 
-    const T other_val = sycl::permute_group_by_xor(_group, my_val, 1 << shift);
-
-    const bool reverse = (_it.get_local_id(1) & (1 << direction));
-
-    const bool id_less = ((_it.get_local_id(1) & (1 << shift)) == 0);
-
-    // If it thread get other_val from a thread with higher id it will be true if it's value is higher than
-    // other otherwise if it gets other_val from lower thread id it will be true if my_val is smaler than
-    // other_val if equal it's always false
-    const bool my_more = id_less ? (my_val > other_val) : (my_val < other_val);
-
-    // xor my_more with reverse and then xor that with increasing ^ is bitwise xor but onely one bit for bool
-    const bool must_swap = !(my_more ^ reverse ^ increasing);
-
-    // If we must swap we pass the mask so we swap with the assigned lane
-    // otherwise we pass 0 and we don't (not sure if using different masks is alowed in sycl for a permute)
-    int lane = must_swap ? (1 << shift) : 0;
-    // Should not be allowed according to docs but seem to work...
-    return sycl::permute_group_by_xor(_group, my_index, lane);
-}
-
+template<typename T>
 struct scan_state
 {
     float v1;
     float v2;
-    sycl::vec<sycl::byte, 2>; // For indecies 0 - 255 (enough for local search) need int for permanent storage
-}
+    sycl::vec<T, 2> idx; // For indecies 0 - 255 (enough for local search) need int for permanent storage
+};
 
 // Probs need to be quite many for this to be advantageous
 template<bool Swap> // Wheter l is the objects descriptrs or if it was swaped due to l_len < r_len
@@ -363,14 +364,8 @@ class Compute_distance_matrix
         // Could load it all in but that would take wayy to much shared memory I think
         // Aka loading in 16x128. currently just loading 16x16 but needs 16 events for that...
 
-        // std::array<sycl::device_event, 16> events;
-
-        // Both needs to be decorated pointers...
-        // Needed to be loaded like this If I want to store in array (can't use vector) and default constructor is
-        // deleted for device event
-
-        // Would like to get this dimension to 32 (or rather the other one but this load as that would be faster as 32
-        // wide I think) Want to keep the other 16 to have better occupancy
+        // Would like to get this dimension to 32 (or rather the other one but this load as that would be faster as
+        // 32 wide I think) Want to keep the other 16 to have better occupancy
         sycl::device_event events[16] = {it.get_group().async_work_group_copy(a_tile, r_ptr, 16),
                                          it.get_group().async_work_group_copy(a_tile + 16, r_ptr + 128, 16),
                                          it.get_group().async_work_group_copy(a_tile + 16 * 2, r_ptr + 128 * 2, 16),
@@ -387,6 +382,12 @@ class Compute_distance_matrix
                                          it.get_group().async_work_group_copy(a_tile + 16 * 13, r_ptr + 128 * 13, 16),
                                          it.get_group().async_work_group_copy(a_tile + 16 * 14, r_ptr + 128 * 14, 16),
                                          it.get_group().async_work_group_copy(a_tile + 16 * 15, r_ptr + 128 * 15, 16)};
+
+        // std::array<sycl::device_event, 16> events;
+
+        // Both needs to be decorated pointers...
+        // Needed to be loaded like this If I want to store in array (can't use vector) and default constructor is
+        // deleted for device event
 
 #define use_register 0
 #if use_register
@@ -448,108 +449,32 @@ class Compute_distance_matrix
 
         sycl::group_barrier(it.get_group());
 
-        joint_matrix_fill(it.get_sub_group(), C, 0);
-        // Do first iteration out of loop as we are writing to A_squared in loop we add to it
-        // Avoids the need to fil it with zeros
-
-        syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix, 128);
-
-        // Wait for A tile to be loaded
-        // Not sure if I could only wait on the last one but don'T think that's guaranteed to work
-        for(auto& e : events)
-            e.wait();
-        // Not sure if the barrier makes this wait call redundant?
-
-        syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, a_tile, 16);
-
-        syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
-
-        // Done with the a_tile so we compute A^2 inplace
-        for(int i = 0; i < 8; ++i)
+        // Should move around the async copies mby use double buffering
+        for(int outer = 0; outer < r_len; outer += 16)
         {
-            a_tile[i * 32 + x] *= a_tile[i * 32 + x];
-        }
+            joint_matrix_fill(it.get_sub_group(), C, 0);
+            // Do first iteration out of loop as we are writing to A_squared in loop we add to it
+            // Avoids the need to fil it with zeros
 
-        sycl::group_barrier(it.get_group());
+            syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix, 128);
 
-        int row = x / 8; //  0 1 2 3 -- spliting task
-
-        // We do 256 wide reduction but within the rows that are 16 to get 16 values total one per row
-
-        // take upper 8 from a row of 16 and add with lower 8 in row and store to lower 8 upper index read is 63
-        a_tile[x + (row << 3)] += a_tile[x + ((row + 1) << 3)];
-        a_tile[x + (row << 3) + 64] += a_tile[x + ((row + 1) << 3) + 64];
-        a_tile[x + (row << 3) + 128] += a_tile[x + ((row + 1) << 3) + 128];
-        a_tile[x + (row << 3) + 192] += a_tile[x + ((row + 1) << 3) + 192];
-        // No overlapping regions of these first steps
-
-        row = x / 4; // 0 1 2 3 4 5 6 7
-        sycl::group_barrier(it.get_group());
-
-        // The bank conflicts are getting worse for evely level... (sestructure if possible)
-        a_tile[x + (row * 12)] += a_tile[x + (row * 12) + 4];
-        a_tile[x + (row * 12) + 128] += a_tile[x + (row * 12) + 4 + 128];
-
-        row = x / 2; // [0 - 15]
-        sycl::group_barrier(it.get_group());
-
-        // full width 256
-        a_tile[x + (row * 14)] += a_tile[x + (row * 14) + 2];
-
-        sycl::group_barrier(it.get_group());
-
-        if(x < 16)
-        {
-            a_norm[x] = a_tile[x * 16] + a_tile[x * 16 + 1]; // extreme bank conflicts...
-        }
-
-        // Inner loop computing for 16 descriptors of r_ptr
-        for(int i = 1; i < 8; ++i)
-        {
-            // Should prefetch next here and double buffer this
-            sycl::device_event events[16] = {
-              it.get_group().async_work_group_copy(a_tile, r_ptr, 16),
-              it.get_group().async_work_group_copy(a_tile + 16, r_ptr + 128, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 2, r_ptr + 128 * 2, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 3, r_ptr + 128 * 3, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 4, r_ptr + 128 * 4, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 5, r_ptr + 128 * 5, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 6, r_ptr + 128 * 6, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 7, r_ptr + 128 * 7, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 8, r_ptr + 128 * 8, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 9, r_ptr + 128 * 9, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 10, r_ptr + 128 * 10, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 11, r_ptr + 128 * 11, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 12, r_ptr + 128 * 12, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 13, r_ptr + 128 * 13, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 14, r_ptr + 128 * 14, 16),
-              it.get_group().async_work_group_copy(a_tile + 16 * 15, r_ptr + 128 * 15, 16)};
-
-            // Compute the whole descriptor ab so 256 total in the end 16 x 16 descriptor pairs
-
-            // Load from global should prefetch
-            // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr + i * 16, 128);
-
-            // Load from shared_memory
-            syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix + i * 16, 128);
-
+            // Wait for A tile to be loaded
+            // Not sure if I could only wait on the last one but don'T think that's guaranteed to work
             for(auto& e : events)
                 e.wait();
+            // Not sure if the barrier makes this wait call redundant?
 
-            // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr + i * 16, 128);
             syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, a_tile, 16);
 
             syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
 
-            // Compute a^2 for tile
-
+            // Done with the a_tile so we compute A^2 inplace
             for(int i = 0; i < 8; ++i)
             {
                 a_tile[i * 32 + x] *= a_tile[i * 32 + x];
             }
 
             sycl::group_barrier(it.get_group());
-            // sum rows and store += a_norm
 
             int row = x / 8; //  0 1 2 3 -- spliting task
 
@@ -579,27 +504,255 @@ class Compute_distance_matrix
 
             if(x < 16)
             {
-                a_norm[x] += a_tile[x * 16] + a_tile[x * 16 + 1]; // extreme bank conflicts...
+                a_norm[x] = a_tile[x * 16] + a_tile[x * 16 + 1]; // extreme bank conflicts...
             }
+
+            // Inner loop computing for 16 descriptors of r_ptr
+            for(int i = 1; i < 8; ++i)
+            {
+                // Should prefetch next here and double buffer this
+                // Look at simplifying and optimizing this math
+                sycl::device_event events_inner[16] = {
+                  it.get_group().async_work_group_copy(a_tile, (r_ptr + outer * 128) + 16 * i, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16, (r_ptr + outer * 128) + 16 * i + 128, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 2, (r_ptr + outer * 128) + 16 * i + 128 * 2, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 3, (r_ptr + outer * 128) + 16 * i + 128 * 3, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 4, (r_ptr + outer * 128) + 16 * i + 128 * 4, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 5, (r_ptr + outer * 128) + 16 * i + 128 * 5, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 6, (r_ptr + outer * 128) + 16 * i + 128 * 6, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 7, (r_ptr + outer * 128) + 16 * i + 128 * 7, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 8, (r_ptr + outer * 128) + 16 * i + 128 * 8, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 9, (r_ptr + outer * 128) + 16 * i + 128 * 9, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 10, (r_ptr + outer * 128) + 16 * i + 128 * 10, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 11, (r_ptr + outer * 128) + 16 * i + 128 * 11, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 12, (r_ptr + outer * 128) + 16 * i + 128 * 12, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 13, (r_ptr + outer * 128) + 16 * i + 128 * 13, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 14, (r_ptr + outer * 128) + 16 * i + 128 * 14, 16),
+                  it.get_group().async_work_group_copy(a_tile + 16 * 15, (r_ptr + outer * 128) + 16 * i + 128 * 15, 16)
+
+                };
+
+                // Compute the whole descriptor ab so 256 total in the end 16 x 16 descriptor pairs
+
+                // Load from global should prefetch
+                // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr + i * 16, 128);
+
+                // Load from shared_memory
+                syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix + i * 16, 128);
+
+                for(auto& e : events_inner)
+                    e.wait();
+
+                // syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, r_ptr + i * 16, 128);
+                syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, a_tile, 16);
+
+                syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
+
+                // Compute a^2 for tile
+
+                for(int i = 0; i < 8; ++i)
+                {
+                    a_tile[i * 32 + x] *= a_tile[i * 32 + x];
+                }
+
+                // Reduction along rows to go from 16 values per row donw to one sum of them
+                sycl::group_barrier(it.get_group());
+                // sum rows and store += a_norm
+
+                int row = x / 8; //  0 1 2 3 -- spliting task
+
+                // We do 256 wide reduction but within the rows that are 16 to get 16 values total one per row
+
+                // take upper 8 from a row of 16 and add with lower 8 in row and store to lower 8 upper index read is 63
+                a_tile[x + (row << 3)] += a_tile[x + ((row + 1) << 3)];
+                a_tile[x + (row << 3) + 64] += a_tile[x + ((row + 1) << 3) + 64];
+                a_tile[x + (row << 3) + 128] += a_tile[x + ((row + 1) << 3) + 128];
+                a_tile[x + (row << 3) + 192] += a_tile[x + ((row + 1) << 3) + 192];
+                // No overlapping regions of these first steps
+
+                row = x / 4; // 0 1 2 3 4 5 6 7
+                sycl::group_barrier(it.get_group());
+
+                // The bank conflicts are getting worse for evely level... (sestructure if possible)
+                a_tile[x + (row * 12)] += a_tile[x + (row * 12) + 4];
+                a_tile[x + (row * 12) + 128] += a_tile[x + (row * 12) + 4 + 128];
+
+                row = x / 2; // [0 - 15]
+                sycl::group_barrier(it.get_group());
+
+                // full width 256
+                a_tile[x + (row * 14)] += a_tile[x + (row * 14) + 2];
+
+                sycl::group_barrier(it.get_group());
+
+                if(x < 16)
+                {
+                    // Stor filan sum for the row
+                    a_norm[x] += a_tile[x * 16] + a_tile[x * 16 + 1]; // extreme bank conflicts...
+                }
+            }
+
+            sycl::group_barrier(it.get_group()); // not sure if needed
+
+            // Compute the actual SSD
+
+            // Need to store to shred mem
+            syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, compute, 17, syclexp::matrix::layout::row_major);
+
+            sycl::group_barrier(it.get_group()); // not sure if required
+
+            // compute[x] = a_norm[pos] + b_nor[pos] - 2 * compute[x];
+
+            int pos = x / 16; // split
+            for(int i = 0; i < 8; ++i)
+            {
+                // Added padding so this will no longer work
+                // compute[x + i * 32] = a_norm[pos + i * 2] + b_norm[pos + i * 2] - 2 * compute[x + i * 32];
+
+                // Results in bank conflict between top element due to +1 in middle causing (0, 32) (34, 66)... to
+                // conflict per iteration. This is however much better than the 16 way bank conflict we would have
+                // gotten without stride Could try to use manualy strided starts with wrap around(then we dont load this
+                // strided) and get no bank conflicts for this loop
+
+                // Same as shift version below it
+                // compute[x + (i * 2 + pos) * 16] = a_norm[pos + i * 2] + b_norm[pos + i * 2] - 2 * compute[x + (i * 2
+                // + pos) * 16];
+                compute[x + (((i << 1) + pos) << 4)] =
+                  a_norm[pos + (i << 1)] + b_norm[pos + (i << 1)] - 2 * compute[x + (((i << 1) + pos) << 4)];
+            }
+            // Start fetching the data for a_tile here (should be enough time as we have some steps left :D)
+
+            if(outer + 16 < r_len)
+            {
+                // prefetch next tile
+                events[0] = it.get_group().async_work_group_copy(a_tile, (r_ptr + (outer + 16) * 128), 16);
+                events[1] = it.get_group().async_work_group_copy(a_tile + 16, (r_ptr + (outer + 16) * 128) + 128, 16);
+                events[2] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 2, (r_ptr + (outer + 16) * 128) + 128 * 2, 16);
+                events[3] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 3, (r_ptr + (outer + 16) * 128) + 128 * 3, 16);
+                events[4] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 4, (r_ptr + (outer + 16) * 128) + 128 * 4, 16);
+                events[5] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 5, (r_ptr + (outer + 16) * 128) + 128 * 5, 16);
+                events[6] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 6, (r_ptr + (outer + 16) * 128) + 128 * 6, 16);
+                events[7] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 7, (r_ptr + (outer + 16) * 128) + 128 * 7, 16);
+                events[8] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 8, (r_ptr + (outer + 16) * 128) + 128 * 8, 16);
+                events[9] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 9, (r_ptr + (outer + 16) * 128) + 128 * 9, 16);
+                events[10] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 10, (r_ptr + (outer + 16) * 128) + 128 * 10, 16);
+                events[11] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 11, (r_ptr + (outer + 16) * 128) + 128 * 11, 16);
+                events[12] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 12, (r_ptr + (outer + 16) * 128) + 128 * 12, 16);
+                events[13] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 13, (r_ptr + (outer + 16) * 128) + 128 * 13, 16);
+                events[14] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 14, (r_ptr + (outer + 16) * 128) + 128 * 14, 16);
+                events[15] =
+                  it.get_group().async_work_group_copy(a_tile + 16 * 15, (r_ptr + (outer + 16) * 128) + 128 * 15, 16);
+            }
+
+            // Now we have SSD computed in a 16x16 matrix we need to find the best two along the rows
+
+            // Scan for the best two elements in the 16 rows
+
+            scan_state<unsigned char> lead;
+
+            // int scan_start = x*8 + x/2;
+            unsigned char scan_start = (x << 3) + (x >> 1);
+
+            // v1 smallest v2 second smallest)
+            lead.v1 = compute[scan_start];
+            lead.v2 = compute[scan_start + 1];
+
+            // Storing 0 - 16 idx as we want the idx of the best matching descriptor for the whole
+            // Final store of idx need to be offset by outer most loop * 16
+            // unsigned char idx_base = ((x % 2) << 3); // x % 2 * 8
+            unsigned char idx_base = ((x & 1) << 3); // x % 2 * 8 (Should be the same as mod 2)
+            if(lead.v2 < lead.v1)
+            {
+                // swap
+                float tmp = lead.v1;
+                lead.v1 = lead.v2;
+                lead.v2 = tmp;
+
+                lead.idx.x() = idx_base + 1;
+                lead.idx.y() = idx_base;
+            }
+            else
+            {
+                // store idx
+                lead.idx.x() = idx_base;
+                lead.idx.y() = idx_base + 1;
+            }
+
+            // Now loop over remaining 6 values
+
+            for(unsigned char i = 2; i < 8; ++i)
+            {
+                float cur = compute[scan_start + i];
+                if(cur < lead.v1)
+                {
+                    // Move down leader to second
+                    lead.v2 = lead.v1;
+                    lead.idx.y() = lead.idx.x();
+                    // place cur as new leader
+                    lead.v1 = cur;
+                    lead.idx.x() = idx_base + i;
+                }
+                else if(cur < lead.v2)
+                {
+                    lead.v2 = cur;
+                    lead.idx.y() = idx_base + i;
+                }
+            }
+            // Now we have the best two from the 8 values that we scaned over
+            // Need to sort the 4 that belongs to one row
+            // -> then compare to the global state when outer loop exists
+
+            // Swap with neigour
+            // const bool id_more = !(_it.get_local_id(1) & 1 == 0);
+            const bool id_more = x & 1; // even is false odd is true same as x % 2
+
+            float other = sycl::permute_group_by_xor(group, lead.v1, 1); // compare smallest
+
+            // Smallest to smallest idx
+            bool swap = id_more ? (lead.v1 < other) : (lead.v1 > other);
+            if(swap)
+            {
+                lead.v1 = other;
+            }
+
+            // Compare the two second samllest
+            other = sycl::permute_group_by_xor(group, lead.v2, 1); // compare smallest
+
+            // Smallest to smallest idx
+            swap = id_more ? (lead.v2 < other) : (lead.v2 > other);
+            if(swap)
+            {
+                lead.v1 = other;
+            }
+
+            // Compare the middle values of the four
+            other = sycl::permute_group_by_xor(group, id_more ? lead.v1 : lead.v2, 1); // middle
+
+            // Don't care what happens to the ID more case here as that value is now don't care anyways
+            // swap = id_more ? (lead.v2 < other) : (lead.v2 > other);
+            if(lead.v2 <
+               other) // only care what even ID's do odd don't care as the values in it's lead is not used anymore
+            {
+                lead.v2 = other;
+            }
+
+            // Now the even work_items have their respective rows two best stored in it's leader struct
+            // This now needs to be compared to global leader and if updated need to store it's index in the global
+            // context
         }
-
-        // Compute the actual SSD
-
-        // Copy the resulting AB stored in C into a_tile as that is currently not in use
-        syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, compute, 16, syclexp::matrix::layout::row_major);
-
-        sycl::group_barrier(it.get_group()); // not sure if required
-
-        // compute[x] = a_norm[pos] + b_nor[pos] - 2 * compute[x];
-
-        int pos = x / 16; // split
-        for(int i = 0; i < 8; ++i)
-        {
-            compute[x + i * 32] = a_norm[pos + i * 2] + b_norm[pos + i * 2] - 2 * compute[x + i * 32];
-        }
-
-        // Now we have SSD computed in a 16x16 matrix we need to find the best two along the rows
-        // Bitonic sort time
 
         syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, backy, 16, syclexp::matrix::layout::row_major);
     }
@@ -712,12 +865,14 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
 
             _device_queue.submit([&](sycl::handler& cgh) {
                 // need 7 for storing the older result values final is stored in current work range idx 7
-                auto local_test = sycl::local_accessor<sycl::half, 1>(128 * 16, cgh); // one per row in work-group
-                auto b_norm = sycl::local_accessor<float, 1>(16, cgh);                // one per row in work-group
-                auto a_norm = sycl::local_accessor<float, 1>(16, cgh);                // one per row in work-group
-                // auto local_a_square = sycl::local_accessor<sycl::half, 1>(16 * 16, cgh); // one per row in work-group
-                auto b_staging_tile = sycl::local_accessor<sycl::half, 1>(16 * 16, cgh); // one per row in work-group
-                auto compute_tile = sycl::local_accessor<float, 1>(16 * 16, cgh);        // one per row in work-group
+                auto local_test = sycl::local_accessor<sycl::half, 1>(128 * 16, cgh);
+                auto b_norm = sycl::local_accessor<float, 1>(16, cgh);
+                auto a_norm = sycl::local_accessor<float, 1>(16, cgh);
+                // auto local_a_square = sycl::local_accessor<sycl::half, 1>(16 * 16, cgh);
+                auto a_staging_tile = sycl::local_accessor<sycl::half, 1>(16 * 16, cgh);
+
+                // Added one column for stagger avoiding bank conflits for row reduce
+                auto compute_tile = sycl::local_accessor<float, 1>(16 * 17, cgh);
 
                 cgh.parallel_for(sycl::nd_range{global, local},
                                  Compute_distance_matrix<false>(match_matrix,
@@ -728,7 +883,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
                                                                 local_test,
                                                                 b_norm,
                                                                 a_norm,
-                                                                b_staging_tile,
+                                                                a_staging_tile,
                                                                 compute_tile,
                                                                 res));
             });
