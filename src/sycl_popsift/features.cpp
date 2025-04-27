@@ -311,6 +311,7 @@ class Compute_distance_matrix
     sycl::local_accessor<float, 1> a_norm;
     sycl::local_accessor<sycl::half, 1> a_staging_tile;
     sycl::local_accessor<float, 1> compute_tile;
+    sycl::local_accessor<scan_state<int>, 1> global_leader;
     float* write_back;
 
   public:
@@ -324,6 +325,7 @@ class Compute_distance_matrix
                             sycl::local_accessor<float, 1> a_norm,
                             sycl::local_accessor<sycl::half, 1> a_staging_tile,
                             sycl::local_accessor<float, 1> compute_tile,
+                            sycl::local_accessor<scan_state<int>, 1> global_leader,
                             float* write_back) // tmp testing
       : match_matrix(match_matrix)
       , l(l)
@@ -335,6 +337,7 @@ class Compute_distance_matrix
       , a_norm(a_norm)
       , a_staging_tile(a_staging_tile)
       , compute_tile(compute_tile)
+      , global_leader(global_leader)
       , write_back(write_back) {};
 
     inline void operator()(sycl::nd_item<1> it) const
@@ -355,6 +358,7 @@ class Compute_distance_matrix
 
         auto a_tile = a_staging_tile.get_multi_ptr<sycl::access::decorated::yes>();
         auto compute = compute_tile.get_multi_ptr<sycl::access::decorated::yes>();
+        auto row_leaders = global_leader.get_multi_ptr<sycl::access::decorated::no>();
 
         int x = it.get_local_id(0);
         int desc_start = it.get_group(0); // only for global reads of B
@@ -450,13 +454,14 @@ class Compute_distance_matrix
         sycl::group_barrier(it.get_group());
 
         // Should move around the async copies mby use double buffering
-        for(int outer = 0; outer < r_len; outer += 16)
+        // for(int outer = 0; outer < r_len; outer += 16)
+        for(int outer = 0; outer < r_len - 16; outer += 16) // ensure safe
         {
-            joint_matrix_fill(it.get_sub_group(), C, 0);
+            joint_matrix_fill(it.get_sub_group(), C, 0); // reset
             // Do first iteration out of loop as we are writing to A_squared in loop we add to it
             // Avoids the need to fil it with zeros
 
-            syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix, 128);
+            syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix, 128); // first tile of main
 
             // Wait for A tile to be loaded
             // Not sure if I could only wait on the last one but don'T think that's guaranteed to work
@@ -464,11 +469,12 @@ class Compute_distance_matrix
                 e.wait();
             // Not sure if the barrier makes this wait call redundant?
 
-            syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, a_tile, 16);
+            syclexp::matrix::joint_matrix_load(it.get_sub_group(), A, a_tile, 16); // first tile of new
 
             syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
 
-            // Done with the a_tile so we compute A^2 inplace
+            // NOTE: Should stsart load here into another tile for a double buffer
+            // Done with the a_tile so we compute A^2 inplace for tile
             for(int i = 0; i < 8; ++i)
             {
                 a_tile[i * 32 + x] *= a_tile[i * 32 + x];
@@ -506,6 +512,8 @@ class Compute_distance_matrix
             {
                 a_norm[x] = a_tile[x * 16] + a_tile[x * 16 + 1]; // extreme bank conflicts...
             }
+
+            sycl::group_barrier(it.get_group());
 
             // Inner loop computing for 16 descriptors of r_ptr
             for(int i = 1; i < 8; ++i)
@@ -587,7 +595,7 @@ class Compute_distance_matrix
 
                 if(x < 16)
                 {
-                    // Stor filan sum for the row
+                    // Add final sum for row to it's row result
                     a_norm[x] += a_tile[x * 16] + a_tile[x * 16 + 1]; // extreme bank conflicts...
                 }
             }
@@ -754,6 +762,8 @@ class Compute_distance_matrix
             // context
         }
 
+        sycl::group_barrier(it.get_group()); // not sure if required
+
         syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, backy, 16, syclexp::matrix::layout::row_major);
     }
 };
@@ -873,6 +883,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
 
                 // Added one column for stagger avoiding bank conflits for row reduce
                 auto compute_tile = sycl::local_accessor<float, 1>(16 * 17, cgh);
+                auto global_leader = sycl::local_accessor<scan_state<int>, 1>(16, cgh);
 
                 cgh.parallel_for(sycl::nd_range{global, local},
                                  Compute_distance_matrix<false>(match_matrix,
@@ -885,6 +896,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
                                                                 a_norm,
                                                                 a_staging_tile,
                                                                 compute_tile,
+                                                                global_leader,
                                                                 res));
             });
 
@@ -901,6 +913,8 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
 
                 fprintf(stderr, "\n ");
             }
+
+            fprintf(stderr, "\n DONE PRINT ");
 
             // auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
             // matchEvent =
