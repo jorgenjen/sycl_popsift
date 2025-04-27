@@ -321,13 +321,15 @@ int main(int argc, char** argv)
     for(int i = 0; i < lFeatures->getDescriptorCount(); i++)
     {
         sycl::vec<int, 3>& match = match_matirx[i];
-        if(match.z())
-        {
-            const popsift::Feature* l_f = lFeatures->getFeatureForDescriptor(i);
-            const popsift::Feature* r_f = rFeatures->getFeatureForDescriptor(match.x());
-            cout << setprecision(5) << showpoint << "point (" << l_f->xpos << "," << l_f->ypos << ") in l matches "
-                 << "point (" << r_f->xpos << "," << r_f->ypos << ") in r" << endl;
-        }
+        // if(match.z())
+        // {
+        //     const popsift::Feature* l_f = lFeatures->getFeatureForDescriptor(i);
+        //     const popsift::Feature* r_f = rFeatures->getFeatureForDescriptor(match.x());
+        //     cout << setprecision(5) << showpoint << "point (" << l_f->xpos << "," << l_f->ypos << ") in l matches "
+        //          << "point (" << r_f->xpos << "," << r_f->ypos << ") in r" << endl;
+        // }
+
+        fprintf(stderr, "Match matrix %d, %d, %d \n", match.x(), match.y(), match.z());
     }
 
     matrix_free(); // Free the match_matrix
