@@ -329,7 +329,10 @@ int main(int argc, char** argv)
         //          << "point (" << r_f->xpos << "," << r_f->ypos << ") in r" << endl;
         // }
 
-        fprintf(stderr, "Match matrix %d, %d, %d \n", match.x(), match.y(), match.z());
+        if(match.x() != 0)
+        {
+            fprintf(stderr, "Match matrix %d, %d, %d \n", match.x(), match.y(), match.z());
+        }
     }
 
     matrix_free(); // Free the match_matrix

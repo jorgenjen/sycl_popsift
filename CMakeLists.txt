@@ -17,10 +17,12 @@ option(PopSift_EXPERIMENTAL "Use experimantal features." ON) # bindless images
 option(BindlessInput "Use bindless input image for upscaling" ON)
 
 # Not fully implemented (hence should stay off, Uses USM when ON anyways)
-option(BindlessArray "Use bindless image array for pyramid" OFF)
+option(BindlessArray "Use bindless image array for pyramid" ON)
 
 # Set to off as default and should stay off until it has a working version
 option(JointMatrix "Use Joint Matrix for matching (specific funtion)" ON)
+
+# option(Profiling "For profiling mode (used for nsight)" ON)
 
 # To generate compile_commands.json -- useful for clangd LSP
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -60,13 +62,17 @@ else()
   message(STATUS "CUDA DISABLED -- Running cpu only mode")
   # set(CPU_ONLY "-DCPU_ONLY")
 
-  add_compile_definitions(CPU_ONLY)
+  add_compile_definitions(CPU_ONLY=1)
 
   # set(CMAKE_BUILD_TYPE Debug) message(STATUS "Running in debug mode :D")
   # list(APPEND SYCL_FLAGS -O0 -g -fno-omit-frame-pointer)
   set(CMAKE_BUILD_TYPE Release)
   list(APPEND SYCL_FLAGS -O3)
 endif()
+
+# if(${Profiling}) message(STATUS "Running with lineinfo flag fro profiling")
+#
+# list(APPEND SYCL_FLAGS -lineinfo) endif()
 
 # this if and above can be refactored to a better logic.. Currently not that
 # readable

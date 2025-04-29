@@ -209,7 +209,8 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
     else
         _pipe._thread_stage2.reset(new std::thread(&PopSift::matchPrepareLoop, this));
 
-#if USE_JOINT_MATRIX
+// #if USE_JOINT_MATRIX && !CPU_ONLY // I
+#if USE_JOINT_MATRIX // AMX (currently only on 4th, 5th and 6th generation xeon CPU's) does supoprt the matrix extension
     // Should be done before first call to match if not it will use normal version until it's true
     // This could be done at compile time if you pass the arcitecture from cmake check and use the compile time query
     // But I think in this case it does not matter much. As this way is more flexible (and easier to implement :D)

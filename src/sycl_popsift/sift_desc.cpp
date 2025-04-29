@@ -38,7 +38,7 @@ static inline void ext_desc_loop_sub(const float ang,
 #ifndef BLOCK_3_DIMS
     const int ix = it.get_local_id(1);
     const int iy = it.get_local_id(0);
-    const int tile = (((iy << 2) + ix) << 3); // base of the 8 floats written by this group of 16 threads
+    const int tile = (((iy << 2) + ix) << 3); // base of the 8 floats written by this group (there are 16 per desc)
 #else
     const int ix = (it.get_local_id(0) & 0x3);
     const int iy = (it.get_local_id(0) >> 2);
@@ -162,6 +162,20 @@ static inline void ext_desc_loop_sub(const float ang,
             // // Think this inline assembly would work as well but only for cuda backend so would need to template
             // // funtion and only use this version if cuda inside a constexpr if statements
             // // Does not work as it stand now however
+
+            // NOTE: You can use #if defined(__NVPTX__) && defined(__SYCL_DEVICE_ONLY__)
+            // This allows you to use NVPTX bultins and hence no need for template.
+            // double my_min(double x, double y) {
+            // #if defined(__NVPTX__) && defined(__SYCL_DEVICE_ONLY__)
+            //   // Only available if in device mode and
+            //   // while compiling for the NVPTX target.
+            //   return __nvvm_fmin_d(x, y);
+            // #else
+            //   return x < y ? x : y;
+            // #endif
+            // } // Example from
+            // https://intel.github.io/llvm/design/CompilerAndRuntimeDesign.html#device-code-post-link-step
+
             // float tth = 0.0f;
             // // asm volatile("fmul.ru.f32 %0, %1, %2;" : "=f"(tth) : "f"(th), "f"(M_4RPI));
 
@@ -250,6 +264,9 @@ static inline void ext_desc_loop_sub(const float ang,
         if(it.get_local_id(2) < 8)
         {
             features[tile + it.get_local_id(2)] = sum[base + it.get_local_id(2)];
+            // Could compute norms here and store that (but this would be a 16th of the norm and would not have full
+            // usage of the sub_group
+            // Oter options is after this function is done in the caller
         }
     }
 }

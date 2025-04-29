@@ -462,9 +462,10 @@ class Compute_distance_matrix
         if(x < 16)
         {
             // but this is probably just as good
-            col_leaders[x].v1 = 0;
-            col_leaders[x].v2 = 0;
-            col_leaders[x].idx = 0;
+            col_leaders[x].v1 = 30000.0; // easy to beat
+            col_leaders[x].v2 = 30000.0;
+            col_leaders[x].idx.x() = 0; // Should not really be required to initialize
+            col_leaders[x].idx.y() = 0;
         }
 
         // Should move around the async copies mby use double buffering
@@ -472,12 +473,13 @@ class Compute_distance_matrix
 
         // for(int iter = 0; iter < r_len / 16; ++iter)
         for(int outer = 0; outer + 16 <= r_len; outer += 16) // only runs for full 16's
+        // for(int outer = 0; outer + 16 <= 16; outer += 16)
         {
             joint_matrix_fill(it.get_sub_group(), C, 0); // reset
             // Do first iteration out of loop as we are writing to A_squared in loop we add to it
             // Avoids the need to fil it with zeros
 
-            syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix, 128); // first tile of main
+            syclexp::matrix::joint_matrix_load(it.get_sub_group(), B, my_matrix, 128); // first tile of our
 
             // Wait for A tile to be loaded
             // Not sure if I could only wait on the last one but don'T think that's guaranteed to work
@@ -489,7 +491,8 @@ class Compute_distance_matrix
 
             syclexp::matrix::joint_matrix_mad(it.get_sub_group(), C, A, B, C);
 
-            // NOTE: Should stsart load here into another tile for a double buffer
+            // NOTE: Should stsart load here into another tile for a double buffer?
+
             // Done with the a_tile so we compute A^2 inplace for tile
             for(int i = 0; i < 8; ++i)
             {
@@ -587,7 +590,8 @@ class Compute_distance_matrix
 
                 // We do 256 wide reduction but within the rows that are 16 to get 16 values total one per row
 
-                // take upper 8 from a row of 16 and add with lower 8 in row and store to lower 8 upper index read is 63
+                // take upper 8 from a row of 16 and add with lower 8 in row and store to lower 8 upper index read
+                // is 63
                 a_tile[x + (row << 3)] += a_tile[x + ((row + 1) << 3)];
                 a_tile[x + (row << 3) + 64] += a_tile[x + ((row + 1) << 3) + 64];
                 a_tile[x + (row << 3) + 128] += a_tile[x + ((row + 1) << 3) + 128];
@@ -639,19 +643,20 @@ class Compute_distance_matrix
 
                 // Results in bank conflict between top element due to +1 in middle causing (0, 32) (34, 66)... to
                 // conflict per iteration. This is however much better than the 16 way bank conflict we would have
-                // gotten without stride Could try to use manualy strided starts with wrap around(then we dont load this
-                // strided) and get no bank conflicts for this loop
+                // gotten without stride Could try to use manualy strided starts with wrap around(then we dont load
+                // this strided) and get no bank conflicts for this loop
 
                 // Same as shift version below it
-                // compute[x + (i * 2 + pos) * 16] = a_norm[pos + i * 2] + b_norm[pos + i * 2] - 2 * compute[x + (i * 2
+                // compute[x + (i * 2 + pos) * 16] = a_norm[pos + i * 2] + b_norm[pos + i * 2] - 2 * compute[x + (i
+                // * 2
                 // + pos) * 16];
 
                 // BUG: This was always wrong... A changes with row b changes with column
                 // compute[x + (((i << 1) + pos) << 4)] =
                 //   a_norm[pos + (i << 1)] + b_norm[pos + (i << 1)] - 2 * compute[x + (((i << 1) + pos) << 4)];
 
-                compute[x + (((i << 1) + pos) << 4)] =
-                  a_norm[pos + (i << 1)] + b_norm[pos + (i << 1)] - 2 * compute[x + (((i << 1) + pos) << 4)];
+                // compute[x + (((i << 1) + pos) << 4)] =
+                //   a_norm[pos + (i << 1)] + b_norm[pos + (i << 1)] - 2 * compute[x + (((i << 1) + pos) << 4)];
 
                 // a_norm is along the rows -- b_norm is along columns (no bank conflicts due to pad-column removal)
                 // compute[x + i * 32] = a_norm[pos + i * 2] + b_norm[x % 16] - 2 compute[x + i * 32];
@@ -659,7 +664,7 @@ class Compute_distance_matrix
             }
             // Start fetching the data for a_tile here (should be enough time as we have some steps left :D)
 
-            if(outer + 16 < r_len) // next is valid we prefetch
+            if(outer + 16 <= r_len) // next is valid we prefetch
             {
                 // prefetch next tile
                 events[0] = it.get_group().async_work_group_copy(a_tile, (r_ptr + (outer + 16) * 128), 16);
@@ -707,6 +712,7 @@ class Compute_distance_matrix
             // COLUMN SCAN Correct version (no bank conflicts witout padding)
             // also simpler code than row scan hence better
 
+            sycl::group_barrier(it.get_group());
             // NOTE: Bitinic sort might also be better than doing this scan not sure
             // but I think this is lesss operations. Also way less comunication between work-items
 
@@ -735,6 +741,9 @@ class Compute_distance_matrix
                 lead.idx.y() = x + 32;
             }
 
+            // syclexp::printf(
+            //   "PRE LOOP: lead state vec %d - (%f, %d) (%f, %d)\n", x, lead.v1, lead.idx.x(), lead.v2, lead.idx.y());
+
             // loop over remainig 6 (double rows) and compare to lead
             for(unsigned char i = 2; i < 8; ++i)
             {
@@ -760,26 +769,33 @@ class Compute_distance_matrix
             // Now we have the two best of the 8 need to combine the columns(16)
             // We need to track both value and idx
 
-            // Swap with same column so 0 - 16 1-17 2-18 (xor 16)
+            // Print all lead before merge
+            // syclexp::printf("lead state vec %d - (%f, %d) (%f, %d)\n", x, lead.v1, lead.idx.x(), lead.v2,
+            // lead.idx.y());
 
-            // const bool id_more = x % 16;
-            const bool id_more = x & 16; // same as x % 16 (0 for [0-15] and 1 for [16, 31]
+            // Swap with same column so 0-16 1-17 2-18 ... 15-31 (xor 16)
+
+            // const bool id_more = x % 16; // for row wise
+            // const bool id_more = x & 16; // same as x % 16 (0 for [0-15] and 1 for [16, 31]
+            // const bool id_more = x / 16; // for column wise 0
+            // const unsigned char id_more = x / 16; // for column wise 0
+            const bool id_more = x > 15;
 
             float other = sycl::permute_group_by_xor(group, lead.v1, 16);                  // compare firsts
             unsigned char other_idx = sycl::permute_group_by_xor(group, lead.idx.x(), 16); // compare firsts
 
             // compare smallest (store in smallest idx the smallest value)
-            bool swap = id_more ? (lead.v1 < other) : (lead.v1 > other);
+            bool swap = id_more ? (lead.v1 < other) : (lead.v1 > other); // First vs first
             if(swap)
             {
                 lead.v1 = other;
                 lead.idx.x() = other_idx;
             }
 
-            // compare second vs second
             other = sycl::permute_group_by_xor(group, lead.v2, 16);
             other_idx = sycl::permute_group_by_xor(group, lead.idx.y(), 16);
 
+            // second vs second (store best(smallest) in smallest idx)
             bool swap_second = id_more ? (lead.v2 < other) : (lead.v2 > other);
             if(swap)
             {
@@ -787,19 +803,37 @@ class Compute_distance_matrix
                 lead.idx.y() = other_idx;
             }
 
-            // Compare the middle values of the four
+            // Compare the middle values of the four -- share first for higher and second for lower
             other = sycl::permute_group_by_xor(group, id_more ? lead.v1 : lead.v2, 16);
             other_idx = sycl::permute_group_by_xor(group, id_more ? lead.idx.x() : lead.idx.y(), 16);
 
             // Don't care what happens to the ID more case here as that value is now don't care anyways
             // swap = id_more ? (lead.v2 < other) : (lead.v2 > other);
-            bool swap_middle = lead.v2 > other;
+            bool swap_middle = lead.v2 > other; // if true lower is worse(larger) and need to swap
             if(swap_middle)
             { // only care what even ID's do odd don't care as the values in it's lead is not used anymore
+                // only care what x < 16 do as they store the smallest 16-31 don't matter they store the larger values
                 lead.v2 = other;
                 lead.idx.y() = other_idx;
             }
-            if(!id_more) // x < 16
+
+            // if(x < 16)
+            // {
+            //     syclexp::printf("After column compare -- vec %d - (%f, %d) (%f, %d)\n",
+            //                     x,
+            //                     lead.v1,
+            //                     lead.idx.x(),
+            //                     lead.v2,
+            //                     lead.idx.y());
+            // }
+
+            // if(x == 0)
+            // {
+            //     syclexp::printf("\n");
+            // }
+
+            // if(!id_more) // x < 16
+            if(x < 16) // x < 16
             {
                 // compare to global state for it's column
 
@@ -814,15 +848,20 @@ class Compute_distance_matrix
                 // should be element wise increment
                 lead.idx += outer; // if outer is 16 increments
 
-                // Compare seconds store smallest in v2 as that is register and we don't need shared mem consistency for
-                // that (so opposite direction of what we want for register usage)
+                // Compare seconds store smallest in v2 as that is register and we don't need shared mem consistency
+                // for that (so opposite direction of what we want for register usage)
                 if(col_leaders[x].v2 < lead.v2)
                 {
                     // lead.v2 can't be top 2 (hence written over)
                     lead.v2 = col_leaders[x].v2;
-                    lead.idx.y() = col_leaders[x].v2; // need int...
+                    lead.idx.y() = col_leaders[x].idx.y();
+
+                    // Storing the best in the lead which is register so we don't need to do a barrier after a write to
+                    // local memory
+
+                    // Could do it the natural way of storing to the final location (local memory)
                     // col_leaders[x].v2 = lead.v2;
-                    // col_leaders[x].idx.y() = lead.idx.y() + outer; // if outer is 16 increments
+                    // col_leaders[x].idx.y() = lead.idx.y();
                 }
 
                 // Winner of seconds stored in lead.v2
@@ -838,10 +877,13 @@ class Compute_distance_matrix
                     lead.v1 = tmp_v1;
                     lead.idx.x() = tmp_idx;
                 }
+                // Winner of the firsts/best are stored directly to shared memory as it's position is safe and won't be
+                // read before next loop iterations
 
                 // Compare middle
-                // seconds winner in v2 and first loser in v1 of lead
+                // seconds winner in v2 and first loser in v1 of lead (registers so no need for shared memory sync)
 
+                // could also be done as turnary operator
                 if(lead.v1 < lead.v2)
                 {
                     col_leaders[x].v2 = lead.v1;
@@ -873,54 +915,60 @@ class Compute_distance_matrix
         //     sycl::half val{30000.0}; // Large so it will not be chosen
         // };
         // lead res[16]; // might be too much register usage this
-        for(int i = 0; i < r_len % 16; ++i)
-        {
-            // Basically same as sthe simpler matching kernel
 
-            // Could reinterpret cast but don't think it's different could be wrong...
-            // might be able to load two in one go for sycl::half?
-            // const sycl::vec<float, 4>* lptr = reinterpret_cast<const sycl::vec<float, 4>*>(&l[idx]);
+        //
 
-            sycl::vec<sycl::half, 4> remainder{r_ptr[(remainder_base + i) * 128],
-                                               r_ptr[(remainder_base + i) * 128 + 32],
-                                               r_ptr[(remainder_base + i) * 128 + 64],
-                                               r_ptr[(remainder_base + i) * 128 + 96]};
+        //
 
-            // Might need this barrier due to share memeory but only one work_item reads and writes to one location
-            // No inbetween so should be fine without?
-            sycl::group_barrier(it.get_group());
-            sycl::half res[16];
-            for(int j = 0; j < 16; ++j) // need to loop over all 16 of my_matrix
-            {
-                // 16 of my matrix -- NOTE: If my_matix is stored transposed this need's to be changed
-                sycl::vec<sycl::half, 4> my_vals{my_matrix[x], my_matrix[x + 32], my_matrix[x + 64], my_matrix[x + 96]};
-
-                const sycl::vec<sycl::half, 4> mval = remainder - my_vals;
-                res[j] = sycl::dot(mval, mval);
-
-                // Sum of squared differences of complete 128 descriptors
-                res[j] = sycl::reduce_over_group(group, res[j], sycl::plus<sycl::half>());
-            }
-            // compare to the result to their global leader
-            if(x < 16)
-            {
-                if(col_leaders[x].v1 > res[x])
-                {
-                    // move leader to second
-                    col_leaders[x].v2 = col_leaders[x].v1;
-                    col_leaders[x].idx.y() = col_leaders[x].idx.x();
-                    // Take first
-                    col_leaders[x].v1 = res[x];
-                    col_leaders[x].idx.x() = remainder_base + i;
-                }
-                else if(col_leaders[x].v2 > res[x])
-                {
-                    // take first second
-                    col_leaders[x].v2 = res[x];
-                    col_leaders[x].idx.y() = remainder_base + i;
-                }
-            }
-        }
+        // for(int i = 0; i < r_len % 16; ++i)
+        // {
+        //     // Basically same as sthe simpler matching kernel
+        //
+        //     // Could reinterpret cast but don't think it's different could be wrong...
+        //     // might be able to load two in one go for sycl::half?
+        //     // const sycl::vec<float, 4>* lptr = reinterpret_cast<const sycl::vec<float, 4>*>(&l[idx]);
+        //
+        //     sycl::vec<sycl::half, 4> remainder{r_ptr[(remainder_base + i) * 128],
+        //                                        r_ptr[(remainder_base + i) * 128 + 32],
+        //                                        r_ptr[(remainder_base + i) * 128 + 64],
+        //                                        r_ptr[(remainder_base + i) * 128 + 96]};
+        //
+        //     // Might need this barrier due to share memeory but only one work_item reads and writes to one location
+        //     // No inbetween so should be fine without?
+        //     sycl::group_barrier(it.get_group());
+        //     sycl::half res[16];
+        //     for(int j = 0; j < 16; ++j) // need to loop over all 16 of my_matrix
+        //     {
+        //         // 16 of my matrix -- NOTE: If my_matix is stored transposed this need's to be changed
+        //         sycl::vec<sycl::half, 4> my_vals{my_matrix[x], my_matrix[x + 32], my_matrix[x + 64], my_matrix[x +
+        //         96]};
+        //
+        //         const sycl::vec<sycl::half, 4> mval = remainder - my_vals;
+        //         res[j] = sycl::dot(mval, mval);
+        //
+        //         // Sum of squared differences of complete 128 descriptors
+        //         res[j] = sycl::reduce_over_group(group, res[j], sycl::plus<sycl::half>());
+        //     }
+        //     // compare to the result to their global leader
+        //     if(x < 16)
+        //     {
+        //         if(col_leaders[x].v1 > res[x])
+        //         {
+        //             // move leader to second
+        //             col_leaders[x].v2 = col_leaders[x].v1;
+        //             col_leaders[x].idx.y() = col_leaders[x].idx.x();
+        //             // Take first
+        //             col_leaders[x].v1 = res[x];
+        //             col_leaders[x].idx.x() = remainder_base + i;
+        //         }
+        //         else if(col_leaders[x].v2 > res[x])
+        //         {
+        //             // take first second
+        //             col_leaders[x].v2 = res[x];
+        //             col_leaders[x].idx.y() = remainder_base + i;
+        //         }
+        //     }
+        // }
 
         // Write back the results to their respective locations 16 results in total
 
@@ -931,6 +979,7 @@ class Compute_distance_matrix
         {
             bool accept = ((col_leaders[x].v1 / col_leaders[x].v2) < 0.8f);
             match_matrix[desc_start + x] = sycl::vec<int, 3>(col_leaders[x].idx.x(), col_leaders[x].idx.y(), accept);
+            syclexp::printf("\n(%d, %d, %d) ", col_leaders[x].idx.x(), col_leaders[x].idx.y(), accept);
         }
 
         syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, backy, 16, syclexp::matrix::layout::row_major);
@@ -1038,7 +1087,8 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
         {
             fprintf(stderr, "Trying to do matrix stuff yayayayayay\n");
             // sycl::range global{static_cast<size_t>(l_len * 32)}; // one 32 wide group per descriptor
-            sycl::range global{static_cast<size_t>((l_len - (l_len % 16)) * 32)}; // only full 16's
+            // sycl::range global{static_cast<size_t>((l_len - (l_len % 16)) * 32)}; // only full 16's
+            sycl::range global{32}; // just one for test
             sycl::range local{32};
             // SWAP
 
@@ -1083,7 +1133,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
                 fprintf(stderr, "\n ");
             }
 
-            fprintf(stderr, "\n DONE PRINT ");
+            fprintf(stderr, "\n DONE PRINT \n\n");
 
             // auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
             // matchEvent =
