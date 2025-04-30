@@ -361,7 +361,7 @@ class Compute_distance_matrix
         auto col_leaders = global_leader.get_multi_ptr<sycl::access::decorated::no>();
 
         const int x = it.get_local_id(0);
-        const int desc_start = it.get_group(0); // only for global reads of B
+        const int desc_start = it.get_group(0); // only for global reads of B (our descriptors (constant for sub_group))
 
         sycl::sub_group group = it.get_sub_group();
 
@@ -464,15 +464,16 @@ class Compute_distance_matrix
             // but this is probably just as good
             col_leaders[x].v1 = 30000.0; // easy to beat
             col_leaders[x].v2 = 30000.0;
-            col_leaders[x].idx.x() = 0; // Should not really be required to initialize
-            col_leaders[x].idx.y() = 0;
+            // col_leaders[x].idx.x() = 0; // Should not really be required to initialize
+            // col_leaders[x].idx.y() = 0;
         }
 
         // Should move around the async copies mby use double buffering
         // for(int outer = 0; outer < r_len; outer += 16)
 
         // for(int iter = 0; iter < r_len / 16; ++iter)
-        for(int outer = 0; outer + 16 <= r_len; outer += 16) // only runs for full 16's
+        // for(int outer = 0; outer + 16 <= r_len; outer += 16) // only runs for full 16's
+        for(int outer = 0; outer < (r_len - 15); outer += 16) // should be same as above (only for full 16's)
         // for(int outer = 0; outer + 16 <= 16; outer += 16)
         {
             joint_matrix_fill(it.get_sub_group(), C, 0); // reset
@@ -633,31 +634,9 @@ class Compute_distance_matrix
 
             sycl::group_barrier(it.get_group()); // not sure if required
 
-            // compute[x] = a_norm[pos] + b_nor[pos] - 2 * compute[x];
-
             int pos = x / 16; // split first 16 -> 0 final 16 -> 1
             for(int i = 0; i < 8; ++i)
             {
-                // Added padding so this will no longer work
-                // compute[x + i * 32] = a_norm[pos + i * 2] + b_norm[pos + i * 2] - 2 * compute[x + i * 32];
-
-                // Results in bank conflict between top element due to +1 in middle causing (0, 32) (34, 66)... to
-                // conflict per iteration. This is however much better than the 16 way bank conflict we would have
-                // gotten without stride Could try to use manualy strided starts with wrap around(then we dont load
-                // this strided) and get no bank conflicts for this loop
-
-                // Same as shift version below it
-                // compute[x + (i * 2 + pos) * 16] = a_norm[pos + i * 2] + b_norm[pos + i * 2] - 2 * compute[x + (i
-                // * 2
-                // + pos) * 16];
-
-                // BUG: This was always wrong... A changes with row b changes with column
-                // compute[x + (((i << 1) + pos) << 4)] =
-                //   a_norm[pos + (i << 1)] + b_norm[pos + (i << 1)] - 2 * compute[x + (((i << 1) + pos) << 4)];
-
-                // compute[x + (((i << 1) + pos) << 4)] =
-                //   a_norm[pos + (i << 1)] + b_norm[pos + (i << 1)] - 2 * compute[x + (((i << 1) + pos) << 4)];
-
                 // a_norm is along the rows -- b_norm is along columns (no bank conflicts due to pad-column removal)
                 // compute[x + i * 32] = a_norm[pos + i * 2] + b_norm[x % 16] - 2 compute[x + i * 32];
                 compute[x + (i << 5)] = a_norm[pos + (i << 1)] + b_norm[x % 16] - 2 * compute[x + (i << 5)];
@@ -721,7 +700,7 @@ class Compute_distance_matrix
             lead.v2 = compute[x + 32]; // Next rows
 
             // Might be bette to compare to global lead and only store if better?
-            // Keep default value to -1 or something ?
+            // Keep default value to very large val.
             // That would alow for not comparing with global later if values are -1
             // But logic would be more complext needing more checks so might be slower
             if(lead.v2 < lead.v1)
@@ -731,24 +710,34 @@ class Compute_distance_matrix
                 lead.v1 = lead.v2;
                 lead.v2 = tmp;
 
-                lead.idx.x() = x + 32;
-                lead.idx.y() = x;
+                // Need to store row_idx and not linear idx
+                lead.idx.x() = 1;
+                lead.idx.y() = 0;
             }
             else
             {
-                // store idx
-                lead.idx.x() = x;
-                lead.idx.y() = x + 32;
+                // store row_idx
+                lead.idx.x() = 0;
+                lead.idx.y() = 1;
             }
 
             // syclexp::printf(
             //   "PRE LOOP: lead state vec %d - (%f, %d) (%f, %d)\n", x, lead.v1, lead.idx.x(), lead.v2, lead.idx.y());
 
             // loop over remainig 6 (double rows) and compare to lead
-            for(unsigned char i = 2; i < 8; ++i)
+
+            int upper_split = x / 16; // 1 for x >= 16 and 0 for x < 16
+            // for(unsigned char i = 2; i < 8; ++i)
+            for(unsigned char i = 2; i < 15; i += 2) // two rows per iteration is done
             {
-                unsigned char cur_idx = x + (i << 5); // x + i * 32 (max idx is 255 perfect byte :D)
-                float cur = compute[cur_idx];
+                // unsigned char cur_idx = x + (i << 5); // x + i * 32 (max idx is 255 perfect byte :D)
+                float cur = compute[x + (i << 5)];
+                int cur_row_idx = (upper_split) ? i + 1 : i;
+
+                // if(outer < 16)
+                // {
+                //     syclexp::printf("i = %d - cur_row_idx = %d ---- x = %d\n", i, cur_row_idx, x);
+                // }
 
                 if(cur < lead.v1)
                 {
@@ -757,15 +746,16 @@ class Compute_distance_matrix
                     lead.idx.y() = lead.idx.x();
                     // place cur as new leader
                     lead.v1 = cur;
-                    lead.idx.x() = cur_idx;
+                    lead.idx.x() = cur_row_idx;
                 }
                 else if(cur < lead.v2)
                 {
                     // place as second
                     lead.v2 = cur;
-                    lead.idx.y() = cur_idx;
+                    lead.idx.y() = cur_row_idx;
                 }
             }
+
             // Now we have the two best of the 8 need to combine the columns(16)
             // We need to track both value and idx
 
@@ -775,10 +765,6 @@ class Compute_distance_matrix
 
             // Swap with same column so 0-16 1-17 2-18 ... 15-31 (xor 16)
 
-            // const bool id_more = x % 16; // for row wise
-            // const bool id_more = x & 16; // same as x % 16 (0 for [0-15] and 1 for [16, 31]
-            // const bool id_more = x / 16; // for column wise 0
-            // const unsigned char id_more = x / 16; // for column wise 0
             const bool id_more = x > 15;
 
             float other = sycl::permute_group_by_xor(group, lead.v1, 16);                  // compare firsts
@@ -817,36 +803,15 @@ class Compute_distance_matrix
                 lead.idx.y() = other_idx;
             }
 
-            // if(x < 16)
-            // {
-            //     syclexp::printf("After column compare -- vec %d - (%f, %d) (%f, %d)\n",
-            //                     x,
-            //                     lead.v1,
-            //                     lead.idx.x(),
-            //                     lead.v2,
-            //                     lead.idx.y());
-            // }
-
-            // if(x == 0)
-            // {
-            //     syclexp::printf("\n");
-            // }
+            // #####################################
+            // COMPARE TO GLOBAL STATE
+            // #####################################
 
             // if(!id_more) // x < 16
             if(x < 16) // x < 16
             {
-                // compare to global state for it's column
-
-                // compare seconds
-                // if(col_leaders[x].v2 > lead.v2)
-                // {
-                //     // col_leader.v2 can't be top 2 (hence written over)
-                //     col_leaders[x].v2 = lead.v2;
-                //     col_leaders[x].idx.y() = lead.idx.y() + outer; // if outer is 16 increments
-                // }
-
                 // should be element wise increment
-                lead.idx += outer; // if outer is 16 increments
+                lead.idx += outer;
 
                 // Compare seconds store smallest in v2 as that is register and we don't need shared mem consistency
                 // for that (so opposite direction of what we want for register usage)
@@ -857,11 +822,8 @@ class Compute_distance_matrix
                     lead.idx.y() = col_leaders[x].idx.y();
 
                     // Storing the best in the lead which is register so we don't need to do a barrier after a write to
-                    // local memory
-
-                    // Could do it the natural way of storing to the final location (local memory)
-                    // col_leaders[x].v2 = lead.v2;
-                    // col_leaders[x].idx.y() = lead.idx.y();
+                    // local memory (which should not really be required anyways (due to only one work_item modifiying
+                    // and reading a value, but register more speed I guess)
                 }
 
                 // Winner of seconds stored in lead.v2
@@ -881,7 +843,7 @@ class Compute_distance_matrix
                 // read before next loop iterations
 
                 // Compare middle
-                // seconds winner in v2 and first loser in v1 of lead (registers so no need for shared memory sync)
+                // seconds winner in v2 and firsts loser in v1 of lead (registers so no need for shared memory sync)
 
                 // could also be done as turnary operator
                 if(lead.v1 < lead.v2)
@@ -909,16 +871,9 @@ class Compute_distance_matrix
 
         // might need a barrier here
 
-        // struct lead
-        // {
-        //     unsigned char pos;
-        //     sycl::half val{30000.0}; // Large so it will not be chosen
-        // };
-        // lead res[16]; // might be too much register usage this
-
-        //
-
-        //
+        // #####################################
+        // DO THE REMAINDER
+        // #####################################
 
         // for(int i = 0; i < r_len % 16; ++i)
         // {
@@ -979,7 +934,7 @@ class Compute_distance_matrix
         {
             bool accept = ((col_leaders[x].v1 / col_leaders[x].v2) < 0.8f);
             match_matrix[desc_start + x] = sycl::vec<int, 3>(col_leaders[x].idx.x(), col_leaders[x].idx.y(), accept);
-            syclexp::printf("\n(%d, %d, %d) ", col_leaders[x].idx.x(), col_leaders[x].idx.y(), accept);
+            // syclexp::printf("\n(%d, %d, %d) ", col_leaders[x].idx.x(), col_leaders[x].idx.y(), accept);
         }
 
         syclexp::matrix::joint_matrix_store(it.get_sub_group(), C, backy, 16, syclexp::matrix::layout::row_major);
@@ -1086,9 +1041,9 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
         if(true) // We want most of the descriptrs on left side
         {
             fprintf(stderr, "Trying to do matrix stuff yayayayayay\n");
-            // sycl::range global{static_cast<size_t>(l_len * 32)}; // one 32 wide group per descriptor
+            sycl::range global{static_cast<size_t>(l_len * 32)}; // one 32 wide group per descriptor
             // sycl::range global{static_cast<size_t>((l_len - (l_len % 16)) * 32)}; // only full 16's
-            sycl::range global{32}; // just one for test
+            // sycl::range global{32}; // just one for test
             sycl::range local{32};
             // SWAP
 
@@ -1101,7 +1056,8 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
                 auto a_staging_tile = sycl::local_accessor<sycl::half, 1>(16 * 16, cgh);
 
                 // Added one column for stagger avoiding bank conflits for row reduce
-                auto compute_tile = sycl::local_accessor<float, 1>(16 * 17, cgh);
+                auto compute_tile =
+                  sycl::local_accessor<float, 1>(16 * 17, cgh); // larger due to old padding (no longer used)
                 auto global_leader = sycl::local_accessor<scan_state<int>, 1>(16, cgh);
 
                 cgh.parallel_for(sycl::nd_range{global, local},
@@ -1133,7 +1089,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
                 fprintf(stderr, "\n ");
             }
 
-            fprintf(stderr, "\n DONE PRINT \n\n");
+            fprintf(stderr, "\n DONE PRINT ( l_len = %d AND r_len = %d\n\n", l_len, r_len);
 
             // auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
             // matchEvent =
