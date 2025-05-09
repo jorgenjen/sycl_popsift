@@ -6,8 +6,9 @@
 #include "sycl_popsift/s_desc_normalize.h"
 #include "sycl_popsift/s_gradient.hpp"
 #include "sycl_popsift/sift_constants.hpp"
+#include "sycl_popsift/sift_desc_config.hpp" // for FeatureType
+#include "sycl_popsift/sift_extremum.h"      // for DescType
 #include "sycl_popsift/sift_pyramid.hpp"
-
 // #include <sycl/ext/intel/math.hpp>
 
 #include <sycl/sycl.hpp>
@@ -28,7 +29,7 @@ namespace popsift {
 template<bool UseLocalAccessor = false, typename... Args>
 static inline void ext_desc_loop_sub(const float ang,
                                      const Extremum* ext,
-                                     float* __restrict__ features, // should work for codeplay
+                                     FeatureType* __restrict__ features, // should work for codeplay
                                      float** data,
                                      const int width,
                                      const int height,

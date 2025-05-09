@@ -17,6 +17,7 @@ add_library(
   sycl_popsift/gauss_filter.hpp
   sycl_popsift/s_extrema.cpp
   sycl_popsift/sift_extremum.h
+  sycl_popsift/sift_desc_config.hpp
   sycl_popsift/s_orientation.cpp
   sycl_popsift/features.cpp
   sycl_popsift/features.hpp

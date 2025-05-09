@@ -11,6 +11,7 @@
 #include "common/debug_macros.hpp"
 #include "sift_extremum.h"
 #include "sycl_popsift/popsift.hpp"
+#include "sycl_popsift/sift_desc_config.hpp" // For FeatureType
 
 // #include <math_constants.h>
 #include <sycl/sycl.hpp> // for free and alloc and queue
@@ -114,6 +115,9 @@ FeaturesDev::FeaturesDev(sycl::queue Q)
   , _ext(nullptr)
   , _ori(nullptr)
   , _rev(nullptr)
+#if USE_JOINT_MATRIX
+  , _squared_norms(nullptr)
+#endif
 {}
 
 FeaturesDev::FeaturesDev(sycl::queue Q, int num_ext, int num_ori)
@@ -121,6 +125,9 @@ FeaturesDev::FeaturesDev(sycl::queue Q, int num_ext, int num_ori)
   , _ext(nullptr)
   , _ori(nullptr)
   , _rev(nullptr)
+#if USE_JOINT_MATRIX
+  , _squared_norms(nullptr)
+#endif
 {
     reset(num_ext, num_ori);
 }
@@ -130,6 +137,10 @@ FeaturesDev::~FeaturesDev()
     sycl::free(_ext, _device_queue);
     sycl::free(_ori, _device_queue);
     sycl::free(_rev, _device_queue);
+
+#if USE_JOINT_MATRIX
+    sycl::free(_squared_norms, _device_queue);
+#endif
 }
 
 void FeaturesDev::reset(int num_ext, int num_ori)
@@ -149,6 +160,15 @@ void FeaturesDev::reset(int num_ext, int num_ori)
         sycl::free(_rev, _device_queue);
         _rev = nullptr;
     }
+#if USE_JOINT_MATRIX
+    if(_squared_norms != nullptr)
+    {
+        sycl::free(_squared_norms, _device_queue);
+        _squared_norms = nullptr;
+    }
+    _squared_norms = popsift::sycl_common::malloc_devT<float>(
+      num_ori, __FILE__, __LINE__, "Failed to allocate squared norms array", _device_queue);
+#endif
 
     // TODO: Look into using malloc_deviceT as I don't see why we need shared (managed in cuda)
     // If user want host access just get a hostPointer no?
@@ -166,13 +186,13 @@ void FeaturesDev::reset(int num_ext, int num_ori)
 // inline float l2_in_t0(const float4* lptr, const float4* rptr)
 
 template<typename GroupType>
-inline float l2_in_t0(const sycl::vec<float, 4>* lptr,
-                      const sycl::vec<float, 4>* rptr,
-                      GroupType& group,
-                      sycl::nd_item<1>& it)
+inline FeatureType l2_in_t0(const sycl::vec<FeatureType, 4>* lptr,
+                            const sycl::vec<FeatureType, 4>* rptr,
+                            GroupType& group,
+                            sycl::nd_item<1>& it)
 {
-    const sycl::vec<float, 4> lval = lptr[it.get_local_id(0)];
-    const sycl::vec<float, 4> rval = rptr[it.get_local_id(0)];
+    const sycl::vec<FeatureType, 4> lval = lptr[it.get_local_id(0)];
+    const sycl::vec<FeatureType, 4> rval = rptr[it.get_local_id(0)];
 
 #if 0
     // Verbose write out of SSD
@@ -182,12 +202,12 @@ inline float l2_in_t0(const sycl::vec<float, 4>* lptr,
     float res = mval.x() * mval.x() + mval.y() * mval.y() + mval.z() * mval.z() + mval.w() * mval.w();
 #else
     // Using sycl functions for potentially better performance
-    const sycl::vec<float, 4> mval = lval - rval;
-    float res = sycl::dot(mval, mval);
+    const sycl::vec<FeatureType, 4> mval = lval - rval;
+    FeatureType res = sycl::dot(mval, mval); // might be better to juse do mval = mval * mval and then explicitly sum
 #endif
 
     // Sum of squared differences of complete 128 descriptors
-    return sycl::reduce_over_group(group, res, sycl::plus<float>());
+    return sycl::reduce_over_group(group, res, sycl::plus<FeatureType>());
 }
 
 template<bool useSubGroup>
@@ -216,8 +236,8 @@ class Compute_distance
             return;
         const int idx = it.get_group(0);
 
-        float match_1st_val = std::numeric_limits<float>::infinity();
-        float match_2nd_val = std::numeric_limits<float>::infinity();
+        float match_1st_val = std::numeric_limits<FeatureType>::infinity();
+        float match_2nd_val = std::numeric_limits<FeatureType>::infinity();
         int match_1st_idx = 0;
         int match_2nd_idx = 0;
 
@@ -228,11 +248,11 @@ class Compute_distance
                 return it.get_group();
         }();
 
-        const sycl::vec<float, 4>* lptr = reinterpret_cast<const sycl::vec<float, 4>*>(&l[idx]);
+        const sycl::vec<FeatureType, 4>* lptr = reinterpret_cast<const sycl::vec<FeatureType, 4>*>(&l[idx]);
 
         for(int i = 0; i < r_len; i++)
         {
-            const sycl::vec<float, 4>* rptr = reinterpret_cast<const sycl::vec<float, 4>*>(&r[i]);
+            const sycl::vec<FeatureType, 4>* rptr = reinterpret_cast<const sycl::vec<FeatureType, 4>*>(&r[i]);
 
             const float res = l2_in_t0(lptr, rptr, group, it);
 
@@ -287,6 +307,44 @@ class Compute_distance
 //     // Should not be allowed according to docs but seem to work...
 //     return sycl::permute_group_by_xor(_group, my_index, lane);
 // }
+
+class Compute_squared_norm
+{
+  private:
+    Descriptor* desc;
+    float* squared_norms; // Is float as it's used with addtition to a float in matching kernel
+
+  public:
+    Compute_squared_norm(Descriptor* desc, float* squared_norms)
+      : desc(desc)
+      , squared_norms(squared_norms) {};
+
+    inline void operator()(sycl::nd_item<1> it) const
+    {
+        const int idx = it.get_group(0);
+
+        const sycl::vec<sycl::half, 4>* desc_ptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(&desc[idx]);
+
+        sycl::vec<sycl::half, 4> desc_val = desc_ptr[it.get_local_id(0)];
+
+        desc_val = desc_val * desc_val;
+        sycl::half sum = desc_val.x() + desc_val.y() + desc_val.z() + desc_val.w();
+
+        sum = sycl::reduce_over_group(it.get_sub_group(), sum, sycl::plus<sycl::half>());
+        if(it.get_local_id(0) == 0)
+        {
+            // Only leader writes
+            squared_norms[idx] = static_cast<float>(sum); // to avoid cast in matching kernel
+        }
+    }
+};
+
+// const sycl::vec<FeatureType, 4>* lptr = reinterpret_cast<const sycl::vec<FeatureType, 4>*>(&desc[it.get]);
+
+// const sycl::vec<FeatureType, 4> lval = lptr[it.get_local_id(0)];
+
+// const sycl::vec<FeatureType, 4> desc_val =
+//   *reinterpret_cast<const sycl::vec<FeatureType, 4>*>(&desc[it.get_group(0) * 128 + it.get_local_id(0) * 4]);
 
 template<typename T>
 struct scan_state
@@ -993,6 +1051,19 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     };
 
     return std::make_tuple(match_matrix, wait_for_matrix, free_matrix);
+}
+
+void FeaturesDev::compute_squared_norms()
+{
+    // const int l_len = getDescriptorCount();
+
+    sycl::range global{static_cast<size_t>(getDescriptorCount() * 32)};
+    sycl::range local{32};
+
+    _norms_computed_event = _device_queue.parallel_for(sycl::nd_range{global, local},
+                                                       Compute_squared_norm(getDescriptors(), getSquaredNorms()));
+
+    // Compute_distance(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
 }
 
 // Just for testing should make the descriptors half when in use early on in pipeline in case of using

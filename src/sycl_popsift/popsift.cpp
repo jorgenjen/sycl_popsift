@@ -491,6 +491,8 @@ void PopSift::matchPrepareLoop()
 
             p._pyramid->step2(_config, _d_consts_write);
 
+            // There are wait's in step2 descriptor hence this works TODO: Replace with events
+
             features = p._pyramid->clone_device_descriptors(_config);
             _device_queue.wait(); // Should be removed and only depend on dependencies events
         }
@@ -501,6 +503,15 @@ void PopSift::matchPrepareLoop()
             break;
         }
 
+#if USE_JOINT_MATRIX
+        // Here we compute the squared norm of the descriptors
+        // Matching functions using tensor will wait for thie do be done by event
+        // Could add function to wait for it do be done if user is using it's own matching function
+
+        // BUG: SOMETHING IS NOT CORRECT HERE CAUSES ILLEGAL MEMORY ADDRESS
+        features->compute_squared_norms();
+#endif
+        // Now squared norm is scheduled to be computed and we can fuill promise and move on to next
         job->setFeatures(features);
     }
 

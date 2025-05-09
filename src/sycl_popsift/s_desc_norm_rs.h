@@ -8,6 +8,7 @@
 #pragma once
 #include "common/assist.h"
 #include "s_desc_normalize.h"
+#include "sycl_popsift/sift_desc_config.hpp" // For FeatureType
 
 // using namespace popsift;
 // using namespace std;
@@ -16,18 +17,24 @@ class NormalizeRootSift
 {
   public:
     template<bool wg_reduce>
-    static inline void normalize(float* features, bool ignoreme, sycl::nd_item<2> it, popsift::ConstInfo* d_consts);
+    static inline void normalize(FeatureType* features,
+                                 bool ignoreme,
+                                 sycl::nd_item<2> it,
+                                 popsift::ConstInfo* d_consts);
 
     // static inline void normalize_restrict(const float* __restrict__ src_desc, float* __restrict__ dest_desc,
     // popsift::ConstInfo* d_consts);
 
     template<bool wg_reduce>
-    static inline void normalize(
-      const float* src_desc, float* dest_desc, bool ignoreme, sycl::nd_item<2> it, popsift::ConstInfo* d_consts);
+    static inline void normalize(const FeatureType* src_desc,
+                                 FeatureType* dest_desc,
+                                 bool ignoreme,
+                                 sycl::nd_item<2> it,
+                                 popsift::ConstInfo* d_consts);
 };
 
 template<bool wg_reduce>
-inline void NormalizeRootSift::normalize(float* features,
+inline void NormalizeRootSift::normalize(FeatureType* features,
                                          bool ignoreme,
                                          sycl::nd_item<2> it,
                                          popsift::ConstInfo* d_consts)
@@ -43,22 +50,22 @@ inline void NormalizeRootSift::normalize(float* features,
 
 template<bool wg_reduce>
 inline void NormalizeRootSift::normalize(
-  const float* src_desc, float* dst_desc, bool ignoreme, sycl::nd_item<2> it, popsift::ConstInfo* d_consts)
+  const FeatureType* src_desc, FeatureType* dst_desc, bool ignoreme, sycl::nd_item<2> it, popsift::ConstInfo* d_consts)
 {
-    const sycl::vec<float, 4>* ptr4 = reinterpret_cast<const sycl::vec<float, 4>*>(src_desc);
+    const sycl::vec<FeatureType, 4>* ptr4 = reinterpret_cast<const sycl::vec<FeatureType, 4>*>(src_desc);
 
-    sycl::vec<float, 4> descr = ptr4[it.get_local_id(1)];
+    sycl::vec<FeatureType, 4> descr = ptr4[it.get_local_id(1)];
 
-    float sum = descr.x() + descr.z() + descr.y() + descr.w();
+    FeatureType sum = descr.x() + descr.z() + descr.y() + descr.w();
 
     if constexpr(wg_reduce)
     {
-        sum = sycl::reduce_over_group(it.get_group(), sum, sycl::plus<float>());
+        sum = sycl::reduce_over_group(it.get_group(), sum, sycl::plus<FeatureType>());
     }
     else
     {
         // Sum of the whole descriptor with sub_group
-        sum = sycl::reduce_over_group(it.get_sub_group(), sum, sycl::plus<float>());
+        sum = sycl::reduce_over_group(it.get_sub_group(), sum, sycl::plus<FeatureType>());
     }
 
     // Not sure if I should use sycl::native or sycl::half_precision
@@ -70,14 +77,14 @@ inline void NormalizeRootSift::normalize(
     if constexpr(wg_reduce)
     {
         // Work group has jump of one hence non are ignored
-        sycl::vec<float, 4>* out4 = reinterpret_cast<sycl::vec<float, 4>*>(dst_desc);
+        sycl::vec<FeatureType, 4>* out4 = reinterpret_cast<sycl::vec<FeatureType, 4>*>(dst_desc);
         out4[it.get_local_id(1)] = descr;
     }
     else
     {
         if(!ignoreme)
         {
-            sycl::vec<float, 4>* out4 = reinterpret_cast<sycl::vec<float, 4>*>(dst_desc);
+            sycl::vec<FeatureType, 4>* out4 = reinterpret_cast<sycl::vec<FeatureType, 4>*>(dst_desc);
             out4[it.get_local_id(1)] = descr;
         }
     }

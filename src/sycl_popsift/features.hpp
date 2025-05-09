@@ -112,6 +112,11 @@ class FeaturesDev : public FeaturesBase
     Descriptor* _ori; // array of desciptors
     int* _rev;        // the reverse map from descriptors to extrema
 
+#if USE_JOINT_MATRIX
+    float* _squared_norms;
+    sycl::event _norms_computed_event;
+#endif
+
   public:
     FeaturesDev() = delete;
     FeaturesDev(sycl::queue Q);
@@ -126,6 +131,8 @@ class FeaturesDev : public FeaturesBase
      *  The resulting matches are printed.
      */
     void match(FeaturesDev* other);
+
+    void compute_squared_norms();
 
     /** This function performs one-directional brute force matching on
      *  the GPU between the Descriptors in this objects and the object
@@ -190,6 +197,9 @@ class FeaturesDev : public FeaturesBase
     inline Feature* getFeatures() { return _ext; }
     inline Descriptor* getDescriptors() { return _ori; }
     inline int* getReverseMap() { return _rev; }
+#if USE_JOINT_MATRIX
+    inline float* getSquaredNorms() { return _squared_norms; }
+#endif
 
     Descriptor* getDescriptor(int descIndex);
     const Descriptor* getDescriptor(int descIndex) const;

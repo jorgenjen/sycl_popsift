@@ -8,6 +8,7 @@
 #pragma once
 
 #include "sift_constants.hpp"
+#include "sycl_popsift/sift_desc_config.hpp" // for FeatureType
 
 #include <iostream>
 #include <vector>
@@ -66,9 +67,19 @@ struct Extremum
  * @brief This is a data structure that is returned to a calling program.
  * This is the SIFT descriptor itself.
  */
+// Works when aligned but probably better to have separate array for it to avoid unnecessary memory usage
+// And potentially better access patterns
+// struct alignas(16) Descriptor
+// {
+//     FeatureType features[128];
+// #if USE_JOINT_MATRIX
+//     float squared_norm;
+// #endif
+// };
+
 struct Descriptor
 {
-    float features[128];
+    FeatureType features[128];
 };
 
 // Temporary will template

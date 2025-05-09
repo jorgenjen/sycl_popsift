@@ -94,8 +94,11 @@ if(PopSift_EXPERIMENTAL AND ${ENABLE_CUDA})
   # Not cuda exclusive
   if(JointMatrix)
     add_compile_definitions(USE_JOINT_MATRIX=1)
+    message(STATUS "Joint matrix is ${JointMatrix} - Using fp16 for descriptor")
   else()
     add_compile_definitions(USE_JOINT_MATRIX=0)
+    message(
+      STATUS "Joint matrix is ${JointMatrix} - Using float for descriptor")
   endif()
 else()
   # Non CUDA or non Experimental
@@ -105,8 +108,12 @@ else()
 
     if(JointMatrix)
       add_compile_definitions(USE_JOINT_MATRIX=1)
+      message(
+        STATUS "Joint matrix is ${JointMatrix} - Using fp16 for descriptor")
     else()
       add_compile_definitions(USE_JOINT_MATRIX=0)
+      message(
+        STATUS "Joint matrix is ${JointMatrix} - Using float for descriptor")
     endif()
   else()
     message(STATUS "Building without experimental features")
