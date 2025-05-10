@@ -339,20 +339,153 @@ class Compute_squared_norm
     }
 };
 
+// Only int is used so could probably just make it always use int and drop the unsigned char idea
+template<typename T>
+struct scan_state
+{
+    float v1;
+    float v2;
+    sycl::vec<T, 2> idx;
+};
+
+template<bool Swap> // Wheter l is the objects descriptrs or if it was swaped due to l_len < r_len
+class Compute_distance_matrix_pre_norm
+{
+    sycl::vec<int, 3>* match_matrix;
+    // Descriptor* l;
+    sycl::half* l;
+    float* l_norm;
+    int l_len;
+    // Descriptor* r;
+    sycl::half* r; // for clear intent and one cast
+    float* r_norm;
+    int r_len;
+
+    sycl::local_accessor<float, 1> compute_tile;
+    sycl::local_accessor<float, 1> my_norm;
+
+  public:
+    // sycl::vec<int, 3>* match_matrix, Descriptor* l, float* l_norm, int l_len, Descriptor* r, float* r_norm, int
+    // r_len)
+    Compute_distance_matrix_pre_norm(sycl::vec<int, 3>* match_matrix,
+                                     sycl::half* l,
+                                     float* l_norm,
+                                     int l_len,
+                                     sycl::half* r,
+                                     float* r_norm,
+                                     int r_len,
+                                     sycl::local_accessor<float, 1> compute_tile)
+      : match_matrix(match_matrix)
+      , l(l)
+      , l_norm(l_norm)
+      , l_len(l_len)
+      , r(r)
+      , r_norm(r_norm)
+      , r_len(r_len)
+      , compute_tile(compute_tile) {};
+
+    inline void operator()(sycl::nd_item<1> it) const
+    {
+        // compute
+        // We have norms
+        // need to compute ab -> then do norm + norm - 2ab; then find best along columns if presistent is B
+
+        // Could transpose and store in shared memory but that would cause the shared memory usage for that to be
+        // 128*16*2 = 4096 per sub_group which is too much even for ada lovlace with 48 warps per SM resuling in memory
+        // usage of 4096*48 = 196608 which is more than the 128KB available L1 cache (shared memory) Hence occupancy
+        // would be lower (31 would be max) and we already need more shared memory for the column compute hence it would
+        // be too much (so would have to rely on fast transpose by the hardware by doing the load transposed)
+
+        sycl::sub_group sg = it.get_sub_group();
+
+        // Prefeth first tiles as early as possible
+        syclexp::matrix::joint_matrix_prefetch<16, 16>(sg, l, 128, syclexp::matrix::layout::col_major);
+        syclexp::matrix::joint_matrix_prefetch<16, 16>(sg, r, 128, syclexp::matrix::layout::row_major);
+
+        // Store the l_norms to shared memory as they are reused a lot
+        // NOTE: could try to store in registers but I'm afraid that would use too much registers unless we can
+        // partition work-items to only need to read one or two different norms then it could work...
+
+        auto l_ptr =
+          sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(l);
+
+        auto r_ptr =
+          sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(r);
+
+        auto l_norm_ptr =
+          sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(l_norm);
+
+        auto compute = compute_tile.get_multi_ptr<sycl::access::decorated::yes>();
+
+        auto my_norm_ptr = my_norm.get_multi_ptr<sycl::access::decorated::yes>();
+
+        // Did not work..
+        // auto compute =
+        //   compute_tile.get_multi_ptr<sycl::access::address_space::local_space, sycl::access::decorated::yes>();
+
+        sycl::device_event load_my_norms = it.get_group().async_work_group_copy(my_norm_ptr, l_norm_ptr, 16);
+
+        syclexp::matrix::joint_matrix<sycl::sub_group,
+                                      sycl::half,
+                                      syclexp::matrix::use::a,
+                                      16,
+                                      16,
+                                      syclexp::matrix::layout::row_major>
+          A; // Loaded in on the fly (colums is desc from other set(smaller one)) (this one is cheaper due to not
+             // having to transpose)
+
+        syclexp::matrix::joint_matrix<sycl::sub_group,
+                                      sycl::half,
+                                      syclexp::matrix::use::b,
+                                      16,
+                                      16,
+                                      syclexp::matrix::layout::col_major>
+          B; // Subgroup keep the 8 B for the whole kernel it is responsible for those 16 descriptors
+
+        syclexp::matrix::joint_matrix<sycl::sub_group,
+                                      float,
+                                      syclexp::matrix::use::accumulator,
+                                      16,
+                                      16>
+          C; // Accumulate the term for the vector pairs
+
+        // NEED LOOP HERE TO LOOP OVER ALL r descriptors that are not the tale (non divisible by 16 tale is done one by
+        // one below the loop)
+        // Loading from global memory
+
+        joint_matrix_fill(sg, C, 0); // reset
+#pragma unroll
+        for(int i = 0; i < 8; ++i)
+        {
+            // i * 16 == i << 4
+            syclexp::matrix::joint_matrix_load(sg, B, l_ptr + (i << 4), 128); // our tile - const in outer
+            syclexp::matrix::joint_matrix_load(sg, A, r_ptr + (i << 4), 128); // Changes in outer
+
+            // Hopefully removed the if by unroll
+            if(i < 7) // Could test with the prefetch being two ahead of the running instead of just one (more mem used)
+            {
+                // prefetches next to L1 which is the default (can be set to l2 in passed properties)
+                syclexp::matrix::joint_matrix_prefetch<16, 16>(
+                  sg, l + ((i + 1) << 4), 128, syclexp::matrix::layout::col_major);
+                syclexp::matrix::joint_matrix_prefetch<16, 16>(
+                  sg, r + ((i + 1) << 4), 128, syclexp::matrix::layout::row_major);
+            }
+
+            syclexp::matrix::joint_matrix_mad(sg, C, A, B, C);
+        }
+
+        syclexp::matrix::joint_matrix_store(sg, C, compute, 16, syclexp::matrix::layout::row_major);
+
+        // Compute l_norm + r_norm - 2C
+    }
+};
+
 // const sycl::vec<FeatureType, 4>* lptr = reinterpret_cast<const sycl::vec<FeatureType, 4>*>(&desc[it.get]);
 
 // const sycl::vec<FeatureType, 4> lval = lptr[it.get_local_id(0)];
 
 // const sycl::vec<FeatureType, 4> desc_val =
 //   *reinterpret_cast<const sycl::vec<FeatureType, 4>*>(&desc[it.get_group(0) * 128 + it.get_local_id(0) * 4]);
-
-template<typename T>
-struct scan_state
-{
-    float v1;
-    float v2;
-    sycl::vec<T, 2> idx; // For indecies 0 - 255 (enough for local search) need int for permanent storage
-};
 
 // Probs need to be quite many for this to be advantageous
 template<bool Swap> // Wheter l is the objects descriptrs or if it was swaped due to l_len < r_len
