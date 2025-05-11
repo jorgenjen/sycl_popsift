@@ -189,6 +189,9 @@ class FeaturesDev : public FeaturesBase
     std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> matrixMatchAndReturn(
       FeaturesDev* other);
 
+    std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> preNormMatrixMatchAndReturn(
+      FeaturesDev* other);
+
     /** This function takes as parameters that matches returned by
      *  matchAndReturn and releases that memory.
      */
