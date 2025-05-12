@@ -202,6 +202,7 @@ class FeaturesDev : public FeaturesBase
     inline int* getReverseMap() { return _rev; }
 #if USE_JOINT_MATRIX
     inline float* getSquaredNorms() { return _squared_norms; }
+    sycl::event getNormsEvent() { return _norms_computed_event; }
 #endif
 
     Descriptor* getDescriptor(int descIndex);

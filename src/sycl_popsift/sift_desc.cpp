@@ -7,8 +7,9 @@
 #include "sycl_popsift/s_gradient.hpp"
 #include "sycl_popsift/sift_constants.hpp"
 #include "sycl_popsift/sift_desc_config.hpp" // for FeatureType
-#include "sycl_popsift/sift_extremum.h"      // for DescType
+#include "sycl_popsift/sift_extremum.h"
 #include "sycl_popsift/sift_pyramid.hpp"
+
 // #include <sycl/ext/intel/math.hpp>
 
 #include <sycl/sycl.hpp>

@@ -313,8 +313,10 @@ int main(int argc, char** argv)
     cout << "Number of features:    " << rFeatures->getFeatureCount() << endl;
     cout << "Number of descriptors: " << rFeatures->getDescriptorCount() << endl;
 
-    auto [match_matirx, matrix_wait, matrix_free] = lFeatures->matchAndReturn(rFeatures);
+    // auto [match_matirx, matrix_wait, matrix_free] = lFeatures->matchAndReturn(rFeatures);
     // auto [match_matirx, matrix_wait, matrix_free] = lFeatures->matrixMatchAndReturn(rFeatures); // Non-working matrix
+
+    auto [match_matirx, matrix_wait, matrix_free] = lFeatures->preNormMatrixMatchAndReturn(rFeatures);
 
     matrix_wait(); // Wait for matrix compute to finish before use
 
