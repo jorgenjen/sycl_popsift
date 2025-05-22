@@ -669,8 +669,8 @@ class Compute_distance_matrix_pre_norm
             // Might not be needed as updating work-item is the one reading here so no communication between
             // wrok-items
 
-#if P_OUT
-            if(x == 0)
+#if false 
+            if(x == 0 && outer == 0 && it.get_group(0) == 0)
             {
                 syclexp::printf("\n\nCOMPUTED A + B - 2AB\n");
                 for(int i = 0; i < 16; ++i)
@@ -767,17 +767,31 @@ class Compute_distance_matrix_pre_norm
                 lead.idx.y() = 2 + second_row;
             }
 
+#if false 
+            if(it.get_group(0) == 0 && outer == 0)
+            {
+                syclexp::printf("PRE: x = %d, best(%d, %f), second(%d, %f)\n",
+                                x,
+                                lead.idx.x(),
+                                lead.value.x(),
+                                lead.idx.y(),
+                                lead.value.y());
+            }
+
+#endif
+
 #pragma unroll
             for(unsigned char i = 4; i < 16; i += 2) // 6 iterations
             {
-                const float local_val = compute[(i << 5) + x];
+                const float local_val = compute[(i << 4) + x];
                 if(local_val < lead.value.x())
                 {
                     // new leader delete second
                     lead.value.y() = lead.value.x();
-                    lead.value.x() = local_val;
-
                     lead.idx.y() = lead.idx.x();
+
+                    // Set new leader
+                    lead.value.x() = local_val;
                     lead.idx.x() = i + second_row;
                 }
                 else if(local_val < lead.value.y())
@@ -786,12 +800,41 @@ class Compute_distance_matrix_pre_norm
                     lead.value.y() = local_val;
                     lead.idx.y() = i + second_row;
                 }
+
+                // if(it.get_group(0) == 0 && outer == 0)
+                // {
+                //     syclexp::printf("i = %d: x = %d, best(%d, %f), second(%d, %f) -- compute[%d] = %f\n",
+                //                     i,
+                //                     x,
+                //                     lead.idx.x(),
+                //                     lead.value.x(),
+                //                     lead.idx.y(),
+                //                     lead.value.y(),
+                //                     (i << 4) + x,
+                //                     local_val);
+                // }
             }
 
             // Now we have the four best and we need to find the best of the 16 per column
             // as two work_items work on one column
 
             // 0-16 work on same column and so does 1-17 and so on
+
+            // Need to move IDX to the global iteration space
+            lead.idx += outer;
+
+#if 0
+            if(it.get_group(0) == 0 && outer < 16 * 1 + 1)
+            {
+                syclexp::printf("x = %d, best(%d, %f), second(%d, %f)\n",
+                                x,
+                                lead.idx.x(),
+                                lead.value.x(),
+                                lead.idx.y(),
+                                lead.value.y());
+            }
+
+#endif
 
             // Compare best
             float other_val = sycl::permute_group_by_xor(sg, lead.value.x(), 16);
@@ -830,12 +873,25 @@ class Compute_distance_matrix_pre_norm
                 lead.idx.y() = other_idx;
             }
 
+#if false
+            if(it.get_group(0) == 0 && outer < 16 * 1 + 1 && x < 16) // only these have important vals
+            {
+                syclexp::printf("AFTER SORT x = %d, best(%d, %f), second(%d, %f)\n",
+                                x,
+                                lead.idx.x(),
+                                lead.value.x(),
+                                lead.idx.y(),
+                                lead.value.y());
+            }
+
+#endif
+
             // Lower 16 has correct best two for the column
             // Compare ours to global state of the columns
 
             if(!second_row) // x < 16
             {
-                // compare seconds
+                // compare seconds -- store best in globals y
                 if(lead.value.y() < global_leader.value.y())
                 {
                     global_leader.value.y() = lead.value.y();
@@ -849,7 +905,7 @@ class Compute_distance_matrix_pre_norm
                 {
                     // uses lead .y as tmp as it's discarded (not sure if better than using a local tmp variable)
                     lead.value.y() = global_leader.value.x();
-                    lead.idx.y() = global_leader.idx.y();
+                    lead.idx.y() = global_leader.idx.x();
 
                     global_leader.value.x() = lead.value.x();
                     global_leader.idx.x() = lead.idx.x();
@@ -863,11 +919,28 @@ class Compute_distance_matrix_pre_norm
                 if(lead.value.x() < global_leader.value.y())
                 {
                     global_leader.value.y() = lead.value.x();
-                    global_leader.idx.y() = lead.value.x();
+                    global_leader.idx.y() = lead.idx.x();
                 }
             }
             // Global updated with the two smallest values and  correpsonding idx
+
+            // ####################################################################################
+            // ################################ SEEMS TO BE CORRECT UNTIL THIS POINT ##############
+            // ####################################################################################
+#if false
+            if(it.get_group(0) == 0 && outer < 16 * 1 + 1 && x < 16) // only these have important vals
+            {
+                syclexp::printf("Global: x = %d, best(%d, %f), second(%d, %f)\n",
+                                x,
+                                global_leader.idx.x(),
+                                global_leader.value.x(),
+                                global_leader.idx.y(),
+                                global_leader.value.y());
+            }
+
+#endif
         }
+
         // Need to loop over the remainder and compare those to global_leader (be carefull to use correct work_item for
         // that)
 
@@ -880,6 +953,10 @@ class Compute_distance_matrix_pre_norm
 
             if(accept)
             {
+                // ######################################################
+                // Something wrong here as we have duplicates in printout
+                // ######################################################
+
                 syclexp::printf("Matc: (%d, %d) --> (%f, %f)\n",
                                 global_leader.idx.x(),
                                 global_leader.idx.y(),
