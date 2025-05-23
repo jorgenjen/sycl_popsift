@@ -209,10 +209,21 @@ inline FeatureType l2_in_t0(const sycl::vec<FeatureType, 4>* lptr,
 #if COMPUTE_MATRIX_LIKE
     // JUST FOR VERIFICATION OF USING THE NORMS
 
+#if false
     FeatureType res = sycl::dot(lval, rval);                              // Compute AB
     res = sycl::reduce_over_group(group, res, sycl::plus<FeatureType>()); // Compute FINAL AB value
 
     return static_cast<FeatureType>(l_norm) + static_cast<FeatureType>(r_norm) - 2 * res; // A^2 + B^2 - 2 * AB
+
+#else
+    // Closer to tensor
+
+    float res = static_cast<float>(sycl::dot(lval, rval));          // Compute AB
+    res = sycl::reduce_over_group(group, res, sycl::plus<float>()); // Compute FINAL AB value
+
+    return static_cast<FeatureType>(l_norm + r_norm - 2 * res); // A^2 + B^2 - 2 * AB
+
+#endif
 
     // ####################################
     // ############## VERIFIED TO DO SAME #
@@ -1023,15 +1034,55 @@ class Compute_distance_matrix_pre_norm
         // Loop over the tail features of r to match with this set of 16 l features (not sure where the limit goes for
         // when it's better to do zero padding
 
+        const sycl::vec<sycl::half, 4>* lptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(l_start);
+        const sycl::vec<sycl::half, 4>* rptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(r);
+
         for(int outer = (r_len - 15); outer < r_len; outer++) // Remainder - done one by one
         {
             // Compute SSD and compare to global
+            float local_val = std::numeric_limits<float>::infinity(); // So it will lose to global if not replaced
 
             // Compute the (0-16) SSD's
 
-            // r_ptr // Decorated
+            const sycl::vec<sycl::half, 4> rval = rptr[(outer << 5) + it.get_local_id(0)];
+#pragma unroll
+            for(int i = 0; i < 16; ++i) // loop over the 16 "our vectors / left"
+            {
+                // Compute AB
 
-            // Compare for x < 16 if it's value is less than global for it's column and replace accordingly
+                // each index is now 4 values so desc is 32 wide
+                const sycl::vec<sycl::half, 4> lval = lptr[(i << 5) + it.get_local_id(0)]; // load a quad per work-item
+                float res = static_cast<float>(sycl::dot(lval, rval));
+                res = sycl::reduce_over_group(sg, res, sycl::plus<float>());
+                if(x == i)
+                {
+                    local_val = res; // Store for compare with coresponding global_leader
+                }
+            }
+
+            if(x < 16) // could do !second_row
+            {
+                // Compute A^2 + B^2 - 2 * AB
+                local_val = my_norm + r_norm[outer] - 2 * local_val;
+
+                // Compare the 16 values with their respective global_leader
+                if(local_val < global_leader.value.x())
+                {
+                    // New leader push first to second
+                    global_leader.value.y() = global_leader.value.x();
+                    global_leader.idx.y() = global_leader.idx.x();
+
+                    // Place new leader
+                    global_leader.value.x() = local_val;
+                    global_leader.idx.x() = outer;
+                }
+                else if(local_val < global_leader.value.y())
+                {
+                    // New second
+                    global_leader.value.y() = local_val;
+                    global_leader.idx.y() = outer;
+                }
+            }
         }
 
         // Then need to do the 80 percent of nearest neigtour and write back the match matrix
@@ -1041,7 +1092,7 @@ class Compute_distance_matrix_pre_norm
             match_matrix[(it.get_group(0) << 4) + x] =
               sycl::vec<int, 3>(global_leader.idx.x(), global_leader.idx.y(), accept);
 
-            if(accept)
+            if(accept || global_leader.idx.x() > 1045)
             {
                 // ######################################################
                 // Something wrong here as we have duplicates in printout
