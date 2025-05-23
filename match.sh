@@ -7,4 +7,8 @@ cd ./build/
 # make || exit 1
 cd ./Linux-x86_64/
 
-time ./popsift-match -l ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/0EAwg7WIIMhgnSfLf.png -r ~/Downloads/pgm_imgs/sample_1280×853.pgm
+# time ./popsift-match -l ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/0EAwg7WIIMhgnSfLf.png -r ~/Downloads/pgm_imgs/sample_1280×853.pgm
+
+# time ./popsift-match -l ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/fox-937049_1920.jpg -r ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/image12.jpeg
+
+time ./popsift-match -l ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/fox-937049_1920.jpg -r ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/images43.jpg

@@ -189,7 +189,10 @@ template<typename GroupType>
 inline FeatureType l2_in_t0(const sycl::vec<FeatureType, 4>* lptr,
                             const sycl::vec<FeatureType, 4>* rptr,
                             GroupType& group,
-                            sycl::nd_item<1>& it)
+                            sycl::nd_item<1>& it,
+                            float l_norm, // DELETE
+                            float r_norm  // DELETE
+)
 {
     const sycl::vec<FeatureType, 4> lval = lptr[it.get_local_id(0)];
     const sycl::vec<FeatureType, 4> rval = rptr[it.get_local_id(0)];
@@ -201,13 +204,33 @@ inline FeatureType l2_in_t0(const sycl::vec<FeatureType, 4>* lptr,
 
     float res = mval.x() * mval.x() + mval.y() * mval.y() + mval.z() * mval.z() + mval.w() * mval.w();
 #else
+#define COMPUTE_MATRIX_LIKE 1
+
+#if COMPUTE_MATRIX_LIKE
+    // JUST FOR VERIFICATION OF USING THE NORMS
+
+    FeatureType res = sycl::dot(lval, rval);                              // Compute AB
+    res = sycl::reduce_over_group(group, res, sycl::plus<FeatureType>()); // Compute FINAL AB value
+
+    return static_cast<FeatureType>(l_norm) + static_cast<FeatureType>(r_norm) - 2 * res; // A^2 + B^2 - 2 * AB
+
+    // ####################################
+    // ############## VERIFIED TO DO SAME #
+    // ####################################
+
+#else
+    // NORMAL FASTER METHOD
     // Using sycl functions for potentially better performance
     const sycl::vec<FeatureType, 4> mval = lval - rval;
     FeatureType res = sycl::dot(mval, mval); // might be better to juse do mval = mval * mval and then explicitly sum
-#endif
 
+    // MOVE OUT OF IFDEF AS IT's the same for both outer IF DEFS
     // Sum of squared differences of complete 128 descriptors
     return sycl::reduce_over_group(group, res, sycl::plus<FeatureType>());
+
+#endif
+
+#endif
 }
 
 template<bool useSubGroup>
@@ -219,14 +242,21 @@ class Compute_distance
     int l_len;
     Descriptor* r;
     int r_len;
+    float* l_norm;
+    float* r_norm;
 
   public:
-    Compute_distance(sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len)
+    // Compute_distance(sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len)
+    Compute_distance(
+      sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len, float* l_norm, float* r_norm)
       : match_matrix(match_matrix)
       , l(l)
       , l_len(l_len)
       , r(r)
-      , r_len(r_len) {};
+      , r_len(r_len)
+      , l_norm(l_norm) // REMOVE
+      , r_norm(r_norm) // REMOVE jUST FOR TESTING
+    {};
 
     inline void operator()(sycl::nd_item<1> it) const
     {
@@ -254,7 +284,7 @@ class Compute_distance
         {
             const sycl::vec<FeatureType, 4>* rptr = reinterpret_cast<const sycl::vec<FeatureType, 4>*>(&r[i]);
 
-            const float res = l2_in_t0(lptr, rptr, group, it);
+            const float res = l2_in_t0(lptr, rptr, group, it, l_norm[idx], r_norm[i]);
 
             if(it.get_local_id(0) == 0) // Could use group.leader() for sub_group version
             {
@@ -278,6 +308,16 @@ class Compute_distance
         {
             bool accept = ((match_1st_val / match_2nd_val) < 0.8f);
             match_matrix[it.get_group(0)] = sycl::vec<int, 3>(match_1st_idx, match_2nd_idx, accept);
+
+            if(accept)
+            {
+                syclexp::printf("match_matrix[%d] = (%d, %d) --> (%f, %f)\n",
+                                idx,
+                                match_1st_idx,
+                                match_2nd_idx,
+                                match_1st_val,
+                                match_2nd_val);
+            }
         }
     }
 };
@@ -511,7 +551,9 @@ class Compute_distance_matrix_pre_norm
         // const int desc_start = it.get_group(0);
 
         // Store start for this sub_group/work_group
-        sycl::half* l_start = l + (it.get_group(0) << 7);
+        // sycl::half* l_start = l + (it.get_group(0) << 7); // ERROR( need to offset for 16 vectors not just one)
+
+        sycl::half* l_start = l + (it.get_group(0) << 11); // * 2048 == 128 * 16 (so 16 descriptors)
 
         // Move outer loop invariant pointers to start position for this sub_group/work_group
         // l += (desc_start << 7);
@@ -900,19 +942,53 @@ class Compute_distance_matrix_pre_norm
                     // lead .y() is discarded
                 }
 
+                // // compare best
+                // if(lead.value.x() < global_leader.value.x())
+                // {
+                //     // uses lead .y as tmp as it's discarded (not sure if better than using a local tmp variable)
+                //     lead.value.y() = global_leader.value.x();
+                //     lead.idx.y() = global_leader.idx.x();
+                //
+                //     global_leader.value.x() = lead.value.x();
+                //     global_leader.idx.x() = lead.idx.x();
+                //
+                //     // Store global from tmp value to local
+                //     lead.value.x() = lead.value.y();
+                //     lead.idx.x() = lead.idx.y();
+                // }
+
                 // compare best
                 if(lead.value.x() < global_leader.value.x())
                 {
+#define USE_TMP 0
+#if USE_TMP
+                    // uses lead .y as tmp as it's discarded (not sure if better than using a local tmp variable)
+                    float tmp_value = global_leader.value.x();
+                    int tmp_idx = global_leader.idx.x();
+
+#else
                     // uses lead .y as tmp as it's discarded (not sure if better than using a local tmp variable)
                     lead.value.y() = global_leader.value.x();
                     lead.idx.y() = global_leader.idx.x();
 
+#endif
+
+                    // Set local to new global leader
                     global_leader.value.x() = lead.value.x();
                     global_leader.idx.x() = lead.idx.x();
 
-                    // Store global from tmp value to local
+#if USE_TMP
+                    // Store global (from tmp value) to local leader
+                    lead.value.x() = tmp_value;
+                    lead.idx.x() = tmp_idx;
+
+#else
+                    // Store global (from tmp value) to local leader
                     lead.value.x() = lead.value.y();
                     lead.idx.x() = lead.idx.y();
+
+#endif
+                    // swap complete
                 }
 
                 // compare middle // depends on the two above
@@ -944,12 +1020,26 @@ class Compute_distance_matrix_pre_norm
         // Need to loop over the remainder and compare those to global_leader (be carefull to use correct work_item for
         // that)
 
-        // Then need to do the 80 percent of nearest neigtour and write back the match matrix
+        // Loop over the tail features of r to match with this set of 16 l features (not sure where the limit goes for
+        // when it's better to do zero padding
 
+        for(int outer = (r_len - 15); outer < r_len; outer++) // Remainder - done one by one
+        {
+            // Compute SSD and compare to global
+
+            // Compute the (0-16) SSD's
+
+            // r_ptr // Decorated
+
+            // Compare for x < 16 if it's value is less than global for it's column and replace accordingly
+        }
+
+        // Then need to do the 80 percent of nearest neigtour and write back the match matrix
         if(!second_row) // x < 16
         {
             const bool accept = ((global_leader.value.x() / global_leader.value.y()) < 0.8f);
-            match_matrix[it.get_group(0) + x] = sycl::vec<int, 3>(global_leader.idx.x(), global_leader.idx.y(), accept);
+            match_matrix[(it.get_group(0) << 4) + x] =
+              sycl::vec<int, 3>(global_leader.idx.x(), global_leader.idx.y(), accept);
 
             if(accept)
             {
@@ -957,7 +1047,10 @@ class Compute_distance_matrix_pre_norm
                 // Something wrong here as we have duplicates in printout
                 // ######################################################
 
-                syclexp::printf("Matc: (%d, %d) --> (%f, %f)\n",
+                syclexp::printf("idx = %d + %d --> match_matrix[%d] = (%d, %d) --> (%f, %f) -- MATRIX\n",
+                                static_cast<int>(it.get_group(0)) << 4,
+                                x,
+                                static_cast<int>(it.get_group(0) << 4) + x,
                                 global_leader.idx.x(),
                                 global_leader.idx.y(),
                                 global_leader.value.x(),
@@ -1645,15 +1738,26 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     sycl::event matchEvent;
     if(useSubGroup)
     {
-        matchEvent = _device_queue.parallel_for<compute_distance_sub_group>(
-          sycl::nd_range{global, local},
-          Compute_distance<true>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
+        matchEvent =
+          _device_queue.parallel_for<compute_distance_sub_group>(sycl::nd_range{global, local},
+                                                                 Compute_distance<true>(match_matrix,
+                                                                                        getDescriptors(),
+                                                                                        l_len,
+                                                                                        other->getDescriptors(),
+                                                                                        r_len,
+                                                                                        getSquaredNorms(),
+                                                                                        other->getSquaredNorms()));
     }
     else
     {
-        matchEvent = _device_queue.parallel_for(
-          sycl::nd_range{global, local},
-          Compute_distance<false>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
+        matchEvent = _device_queue.parallel_for(sycl::nd_range{global, local},
+                                                Compute_distance<false>(match_matrix,
+                                                                        getDescriptors(),
+                                                                        l_len,
+                                                                        other->getDescriptors(),
+                                                                        r_len,
+                                                                        getSquaredNorms(),
+                                                                        other->getSquaredNorms()));
     }
 
     auto wait_for_matrix = [event = std::make_shared<sycl::event>(matchEvent), &Q = _device_queue]() {
@@ -1702,7 +1806,10 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
 
     sycl::event matchEvent;
 
-    sycl::range global{static_cast<size_t>((l_len - (l_len % 16)) * 32)};
+    // sycl::range global{static_cast<size_t>(((l_len) - (l_len % 16)) * 32)}; // WRONG
+    sycl::range global{static_cast<size_t>((l_len >> 4) * 32)}; // floor division by 16 then multiply by 32
+    // Need to deal with remainder in normal loop (different kernel)
+
     // sycl::range global{32}; // just one for testing
     sycl::range local{32};
 
@@ -1713,7 +1820,6 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
         cgh.parallel_for(sycl::nd_range{global, local},
                          Compute_distance_matrix_pre_norm(match_matrix,
                                                           reinterpret_cast<sycl::half*>(getDescriptors()),
-
                                                           getSquaredNorms(),
                                                           reinterpret_cast<sycl::half*>(other->getDescriptors()),
                                                           other->getSquaredNorms(),
@@ -1870,16 +1976,27 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
         if(size >= 32)
         {
             // Fallback subgroup
-            matchEvent = _device_queue.parallel_for<compute_distance_fallback>(
-              sycl::nd_range{global, local},
-              Compute_distance<true>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
+            matchEvent =
+              _device_queue.parallel_for<compute_distance_fallback>(sycl::nd_range{global, local},
+                                                                    Compute_distance<true>(match_matrix,
+                                                                                           getDescriptors(),
+                                                                                           l_len,
+                                                                                           other->getDescriptors(),
+                                                                                           r_len,
+                                                                                           getSquaredNorms(),
+                                                                                           other->getSquaredNorms()));
         }
         else
         {
             //  Fallback work group
-            matchEvent = _device_queue.parallel_for(
-              sycl::nd_range{global, local},
-              Compute_distance<false>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
+            matchEvent = _device_queue.parallel_for(sycl::nd_range{global, local},
+                                                    Compute_distance<false>(match_matrix,
+                                                                            getDescriptors(),
+                                                                            l_len,
+                                                                            other->getDescriptors(),
+                                                                            r_len,
+                                                                            getSquaredNorms(),
+                                                                            other->getSquaredNorms()));
         }
     }
 

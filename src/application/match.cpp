@@ -313,23 +313,24 @@ int main(int argc, char** argv)
     cout << "Number of features:    " << rFeatures->getFeatureCount() << endl;
     cout << "Number of descriptors: " << rFeatures->getDescriptorCount() << endl;
 
-    // auto [match_matirx, matrix_wait, matrix_free] = lFeatures->matchAndReturn(rFeatures);
+    auto [match_matrix, matrix_wait, matrix_free] = lFeatures->matchAndReturn(rFeatures); // Default simple matching
     // auto [match_matirx, matrix_wait, matrix_free] = lFeatures->matrixMatchAndReturn(rFeatures); // Non-working matrix
 
-    auto [match_matirx, matrix_wait, matrix_free] = lFeatures->preNormMatrixMatchAndReturn(rFeatures);
+    auto [match_matrix_2, matrix_wait_2, matrix_free_2] = lFeatures->preNormMatrixMatchAndReturn(rFeatures);
 
     matrix_wait(); // Wait for matrix compute to finish before use
 
     int count = 0;
     for(int i = 0; i < lFeatures->getDescriptorCount(); i++)
     {
-        sycl::vec<int, 3>& match = match_matirx[i];
+        sycl::vec<int, 3>& match = match_matrix[i];
         if(match.z())
         {
             const popsift::Feature* l_f = lFeatures->getFeatureForDescriptor(i);
             const popsift::Feature* r_f = rFeatures->getFeatureForDescriptor(match.x());
             cout << setprecision(5) << showpoint << "point (" << l_f->xpos << "," << l_f->ypos << ") in l matches "
-                 << "point (" << r_f->xpos << "," << r_f->ypos << ") in r" << endl;
+                 << "point (" << r_f->xpos << "," << r_f->ypos << ") in r -- " << "i = " << i
+                 << " matc.x() = " << match.x() << endl;
             count++;
         }
 
@@ -338,7 +339,38 @@ int main(int argc, char** argv)
         //     fprintf(stderr, "Match matrix %d, %d, %d \n", match.x(), match.y(), match.z());
         // }
     }
-    cout << "Match count: " << count << endl;
+    // cout << "Match count: " << count << endl << endl;
+    cout << "Match count : " << count << "Final vals: " << match_matrix[lFeatures->getDescriptorCount() - 16].x() << " "
+         << match_matrix[lFeatures->getDescriptorCount() - 16].y() << endl;
+
+#if true
+    matrix_wait_2();
+
+    count = 0;
+    for(int i = 0; i < lFeatures->getDescriptorCount(); i++)
+    {
+        sycl::vec<int, 3>& match = match_matrix_2[i];
+        if(match.z())
+        {
+            const popsift::Feature* l_f = lFeatures->getFeatureForDescriptor(i);
+            const popsift::Feature* r_f = rFeatures->getFeatureForDescriptor(match.x());
+            cout << setprecision(5) << showpoint << "point (" << l_f->xpos << "," << l_f->ypos << ") in l matches "
+                 << "point (" << r_f->xpos << "," << r_f->ypos << ") in r -- " << "i = " << i
+                 << " matc.x() = " << match.x() << endl;
+            count++;
+        }
+
+        // if(match.x() != 0)
+        // {
+        //     fprintf(stderr, "Match matrix %d, %d, %d \n", match.x(), match.y(), match.z());
+        // }
+    }
+    cout << "Match count MATRIX: " << count
+         << "Final vals: " << match_matrix_2[lFeatures->getDescriptorCount() - 16].x() << " "
+         << match_matrix_2[lFeatures->getDescriptorCount() - 16].y() << endl;
+
+    matrix_free_2();
+#endif
 
     matrix_free(); // Free the match_matrix
 
