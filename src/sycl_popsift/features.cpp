@@ -1037,7 +1037,7 @@ class Compute_distance_matrix_pre_norm
         const sycl::vec<sycl::half, 4>* lptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(l_start);
         const sycl::vec<sycl::half, 4>* rptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(r);
 
-        for(int outer = (r_len - 15); outer < r_len; outer++) // Remainder - done one by one
+        for(int outer = r_len - (r_len % 16); outer < r_len; outer++) // Remainder - done one by one
         {
             // Compute SSD and compare to global
             float local_val = std::numeric_limits<float>::infinity(); // So it will lose to global if not replaced
@@ -1068,6 +1068,13 @@ class Compute_distance_matrix_pre_norm
                 // Compare the 16 values with their respective global_leader
                 if(local_val < global_leader.value.x())
                 {
+                    syclexp::printf("idx=%d  x = %d -- local_val = %f -- outer = %d -- MATRIX -- start %d end < %d\n",
+                                    static_cast<int>(it.get_group(0)),
+                                    x,
+                                    local_val,
+                                    outer,
+                                    r_len - (r_len % 16),
+                                    r_len);
                     // New leader push first to second
                     global_leader.value.y() = global_leader.value.x();
                     global_leader.idx.y() = global_leader.idx.x();

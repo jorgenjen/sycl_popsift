@@ -340,8 +340,8 @@ int main(int argc, char** argv)
         // }
     }
     // cout << "Match count: " << count << endl << endl;
-    cout << "Match count : " << count << "Final vals: " << match_matrix[lFeatures->getDescriptorCount() - 16].x() << " "
-         << match_matrix[lFeatures->getDescriptorCount() - 16].y() << endl;
+    cout << "Match count : " << count << " --> Final vals: " << match_matrix[lFeatures->getDescriptorCount() - 16].x()
+         << " " << match_matrix[lFeatures->getDescriptorCount() - 16].y() << endl;
 
 #if true
     matrix_wait_2();
@@ -366,7 +366,7 @@ int main(int argc, char** argv)
         // }
     }
     cout << "Match count MATRIX: " << count
-         << "Final vals: " << match_matrix_2[lFeatures->getDescriptorCount() - 16].x() << " "
+         << " --> Final vals: " << match_matrix_2[lFeatures->getDescriptorCount() - 16].x() << " "
          << match_matrix_2[lFeatures->getDescriptorCount() - 16].y() << endl;
 
     matrix_free_2();
