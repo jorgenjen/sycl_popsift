@@ -11,4 +11,5 @@ cd ./Linux-x86_64/
 
 # time ./popsift-match -l ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/fox-937049_1920.jpg -r ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/image12.jpeg
 
-time ./popsift-match -l ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/fox-937049_1920.jpg -r ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/images43.jpg
+# time ./popsift-match -l ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/fox-937049_1920.jpg -r ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/images43.jpg
+time ./popsift-match -r ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/fox-937049_1920.jpg -l ~/Downloads/AI_GENERATED_VS_REAL_DATASET_SAFE/images43.jpg
