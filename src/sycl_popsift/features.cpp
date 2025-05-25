@@ -22,6 +22,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <sstream>
 
 using namespace std;
@@ -1862,7 +1863,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     sycl::vec<int, 3>* match_matrix =
       popsift::sycl_common::malloc_sharedT<sycl::vec<int, 3>>(l_len, __FILE__, __LINE__, "", _device_queue);
 
-    sycl::event matchEvent;
+    // sycl::event matchEvent;
 
     // sycl::range global{static_cast<size_t>(((l_len) - (l_len % 16)) * 32)}; // WRONG
     sycl::range global{static_cast<size_t>((l_len >> 4) * 32)}; // floor division by 16 then multiply by 32
@@ -1871,7 +1872,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     // sycl::range global{32}; // just one for testing
     sycl::range local{32};
 
-    matchEvent = _device_queue.submit([&](sycl::handler& cgh) {
+    sycl::event matchEvent = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on({getNormsEvent(), other->getNormsEvent()});
 
         auto compute_tile = sycl::local_accessor<float, 1>(16 * 16, cgh);
@@ -1885,8 +1886,82 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
                                                           compute_tile));
     });
 
-    auto wait_for_matrix = [event = std::make_shared<sycl::event>(matchEvent), &Q = _device_queue]() {
+    sycl::range remainderGlobal{static_cast<size_t>((l_len % 16) * 32)};
+
+// DATA COLLECTION TO PERFORM:
+// SHOULD HAVE AN EXPERIMENT WHERE WE COMPARE USING PRECOMPUTED NORMS VS NOT FOR PERFORMANCE BOTH INCLUDING THE NORM
+// COMPUTE COST AND WITHOUT Could have all three in a plot and from that justify design decision
+#define USE_NORMS 1
+#if USE_NORMS
+    sycl::event remainderMatchEvent = _device_queue.parallel_for(
+      sycl::nd_range{remainderGlobal, local},
+      [=,
+       // l = reinterpret_cast<sycl::half*>(getDescriptors()),
+
+       // Before cast pointer is whole descriptors hence pointer arithmetic is one per
+       l = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(getDescriptors() + (l_len - (l_len % 16))),
+       l_norm = getSquaredNorms(),
+       // r = reinterpret_cast<sycl::half*>(other->getDescriptors()),
+       r = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(other->getDescriptors()),
+       r_norm = other->getSquaredNorms(),
+       l_base = (l_len - (l_len % 16))](sycl::nd_item<1> it) {
+          scan_state leader;
+          leader.value = std::numeric_limits<float>::infinity(); // set to max so the are replaced. Could do same
+                                                                 //  as in matrix version having it out of the loop
+          float my_norm = l_norm[l_base + it.get_group(0)];
+          const sycl::vec<sycl::half, 4> lval = l[(it.get_group(0) << 5) + it.get_local_id(0)];
+          for(int i = 0; i < r_len; ++i) // looping over r
+          {
+              // compute SSD using norms
+              // const sycl::vec<sycl::half, 4>* lptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(l + l_base);
+              // const sycl::vec<sycl::half, 4>* rptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(r);
+
+              // Compute AB
+              // const sycl::vec<sycl::half, 4> lval = lptr[(i << 5) + it.get_local_id(0)]; // load a quad per work-item
+
+              const sycl::vec<sycl::half, 4> rval = r[(i << 5) + it.get_local_id(0)];
+              // each index is now 4 values so desc is 32 wide
+              float res = static_cast<float>(sycl::dot(lval, rval)); // similar in precision to tensor (not fully)
+              res = sycl::reduce_over_group(it.get_sub_group(), res, sycl::plus<float>());
+              res = my_norm + r_norm[i] - 2 * res; // A^2 + B^2 - 2 * AB
+
+              // Compare res to global leader
+
+              if(res < leader.value.x())
+              {
+                  // New leader
+                  leader.value.y() = leader.value.x();
+                  leader.idx.y() = leader.idx.x();
+
+                  leader.value.x() = res;
+                  leader.idx.x() = i;
+              }
+              else if(res < leader.value.y())
+              {
+                  // New second
+                  leader.value.y() = res;
+                  leader.idx.y() = i;
+              }
+          }
+
+          const bool accept = ((leader.value.x() / leader.value.y()) < 0.8f);
+          match_matrix[l_base + it.get_group(0)] = sycl::vec<int, 3>(leader.idx.x(), leader.idx.y(), accept);
+      });
+
+#else
+
+    sycl::event remainderMatchEvent =
+      _device_queue.parallel_for(sycl::nd_range{remainderGlobal, local}, [=](sycl::nd_item<1> it) {
+          //  match_matrix
+          //
+      });
+#endif
+
+    auto wait_for_matrix = [event = std::make_shared<sycl::event>(matchEvent),
+                            remainderEvent = std::make_shared<sycl::event>(remainderMatchEvent),
+                            &Q = _device_queue]() {
         event->wait();
+        remainderEvent->wait();
         Q.wait();
     };
 
