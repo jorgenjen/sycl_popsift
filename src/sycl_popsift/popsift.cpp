@@ -7,7 +7,9 @@
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
+#include "sycl_popsift/sift_pyramid.hpp"
 
+// #include <sycl/ext/oneapi/device_info.hpp> // For Num compute units extension
 #include <sycl/sycl.hpp>
 
 #include <cmath> // ceilf
@@ -63,6 +65,12 @@ std::string matrix_type_to_string(syclexp::matrix::matrix_type type)
 
 inline void PopSift::initQueue()
 {
+#if QUEUE_PROFILING
+    sycl::property_list queue_proplist = sycl::property_list{sycl::property::queue::enable_profiling{}};
+#else
+    sycl::property_list queue_proplist = {};
+#endif
+
 #ifndef CPU_ONLY
     // should probably also have a compile time flag --experimental to enable this feature
     if constexpr(USE_BINDLESS_INPUT && USE_BINDLESS_ARRAY &&
@@ -83,7 +91,9 @@ inline void PopSift::initQueue()
                           << "\t--> supports ext_oneapi_bindless_images: YES" << std::endl
                           << "\t--> supports ext_oneapi_image_array: YES" << std::endl;
 
-                _device_queue = sycl::queue(sycl::context{dev}, dev);
+                // _device_queue = sycl::queue(sycl::context{dev}, dev);
+                _device_queue = sycl::queue(sycl::context{dev}, dev, queue_proplist);
+
                 return; // We always select first gpu that had the aspect (might be a way to select the best one)
                         // but most systems will be single gpu anyways
             }
@@ -112,7 +122,7 @@ inline void PopSift::initQueue()
                           << std::endl
                           << std::endl;
 
-                _device_queue = sycl::queue(sycl::context{dev}, dev);
+                _device_queue = sycl::queue(sycl::context{dev}, dev, queue_proplist);
                 break; // We always select first gpu that had the aspect (might be a way to select the best one)
                        // but most systems will be single gpu anyways
             }
@@ -130,7 +140,7 @@ inline void PopSift::initQueue()
             // If there is no GPU it will throw exception and use CPU in catch
 
             sycl::device dev = sycl::device{sycl::gpu_selector_v};
-            _device_queue = sycl::queue(sycl::context{dev}, dev);
+            _device_queue = sycl::queue(sycl::context{dev}, dev, queue_proplist);
         }
         catch(sycl::exception const& ex)
         {
@@ -158,7 +168,7 @@ inline void PopSift::initQueue()
         //   sycl::property::queue::enable_profiling{}});
 
         sycl::device dev = sycl::device{sycl::cpu_selector_v};
-        _device_queue = sycl::queue(sycl::context{dev}, dev);
+        _device_queue = sycl::queue(sycl::context{dev}, dev, queue_proplist);
     }
     catch(const sycl::exception& e)
     {
@@ -209,6 +219,12 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
     else
         _pipe._thread_stage2.reset(new std::thread(&PopSift::matchPrepareLoop, this));
 
+    sycl::device dev = _device_queue.get_device();
+    if(dev.has(sycl::aspect::queue_profiling))
+    {
+        std::cout << "Queue profiling is supported.\n";
+    }
+
 // #if USE_JOINT_MATRIX && !CPU_ONLY // I
 #if USE_JOINT_MATRIX // AMX (currently only on 4th, 5th and 6th generation xeon CPU's) does supoprt the matrix extension
     // Should be done before first call to match if not it will use normal version until it's true
@@ -216,6 +232,17 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
     // But I think in this case it does not matter much. As this way is more flexible (and easier to implement :D)
     sycl::device dev = _device_queue.get_device();
     auto combinations = dev.get_info<sycl::ext::oneapi::experimental::info::device::matrix_combinations>();
+
+    auto max_cu = dev.get_info<sycl::info::device::max_compute_units>();
+    auto max_wg = dev.get_info<sycl::info::device::max_work_group_size>();
+    auto max_wi_dimensions = dev.get_info<sycl::info::device::max_work_item_dimensions>();
+
+    // There is an extension that is supposed to be more consistent and less ambigous, but I could not make it work
+    // auto num_cu_ext = dev.get_info<sycl::ext::oneapi::info::device::num_compute_units>();
+    // auto num_cu_ext = dev.get_info<sycl::info::device::num_compute_units>();
+    // auto num_cu_ext = sycl::ext::oneapi::info::device::num_compute_units()
+
+    printf("\n\nMax CU = %d -- Max WG = %zu -- WI dims = %d\n\n", max_cu, max_wg, max_wi_dimensions);
     for(const auto& combo : combinations)
     {
         if(combo.atype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp16 &&
@@ -440,6 +467,11 @@ void PopSift::extractDownloadLoop()
 
         _device_queue.wait(); // SHould not be needed
 
+#if QUEUE_PROFILING
+        double frame_start =
+          p._pyramid->_input_horiz_event.template get_profiling_info<sycl::info::event_profiling::command_start>();
+#endif
+
         // uploaded Image object is no longer needed, release for reuse
         p._unused.push(img);
 
@@ -457,6 +489,21 @@ void PopSift::extractDownloadLoop()
 
         // Fufill the promise
         _device_queue.wait_and_throw(); // SHoud use event to wait for last part
+
+#if QUEUE_PROFILING
+        double frame_end =
+          p._pyramid->_final_desc_event.template get_profiling_info<sycl::info::event_profiling::command_end>();
+
+        printf("\n\nFrame time = %lf nanoseconds == %lf ms\n\n",
+               frame_end - frame_start,
+               (frame_end - frame_start) / 1000000);
+
+        // TODO: Store to file in csv of json format, STORE multiple timings per frame time from start to Gaussian is
+        // done, Then to DoG is done, Then to extrema is done and then orientation ans so on. (Due to not using in-order
+        // queue I don't know which will finish last so would probably need to track multiple and use the largest value
+        // as end time)
+#endif
+
         job->setFeatures(features);
     }
 
@@ -508,7 +555,6 @@ void PopSift::matchPrepareLoop()
         // Matching functions using tensor will wait for thie do be done by event
         // Could add function to wait for it do be done if user is using it's own matching function
 
-        // BUG: SOMETHING IS NOT CORRECT HERE CAUSES ILLEGAL MEMORY ADDRESS
         features->compute_squared_norms();
 #endif
         // Now squared norm is scheduled to be computed and we can fuill promise and move on to next

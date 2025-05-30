@@ -162,6 +162,10 @@ void Pyramid::build_pyramid(const Config& conf,
                 if(octave == 0)
                 {
                     sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                    // Storing event to class only for profiling not needed for normal use
+#if QUEUE_PROFILING
+                    _input_horiz_event = horiz; // copy it for use later
+#endif
                     oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
                 }
                 else

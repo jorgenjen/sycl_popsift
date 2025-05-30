@@ -132,7 +132,9 @@ class FeaturesDev : public FeaturesBase
      */
     void match(FeaturesDev* other);
 
+#if USE_JOINT_MATRIX
     void compute_squared_norms();
+#endif
 
     /** This function performs one-directional brute force matching on
      *  the GPU between the Descriptors in this objects and the object

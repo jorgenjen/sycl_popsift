@@ -102,6 +102,12 @@ class Pyramid
     // cudaStream_t _download_stream;
 
   public:
+#if QUEUE_PROFILING
+    // For ease of use it's in Public (only for data collection)
+    sycl::event _input_horiz_event; // For timing each frame compute
+    sycl::event _final_desc_event;
+#endif
+
     enum GaussTableChoice
     {
         Interpolated_FromPrevious,

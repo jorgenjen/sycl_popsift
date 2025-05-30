@@ -35,7 +35,7 @@ inline size_t getPreferredAlignment(sycl::queue& q)
 // kernel_lauch is tied to a launch of a kernel not a kernel name (sub_groups)
 // could vary from launch of same kernel (especially when templated)
 
-// Computes the actual sub_group size that will be used for the ori_par kernel
+// Fetches the actual sub_group size that will be used for the ori_par kernel
 template<class kernel_launch>
 inline auto get_kernel_subgroup_size(sycl::queue& Q) // not sure if we want to inline
 {

@@ -190,10 +190,7 @@ template<typename GroupType>
 inline FeatureType l2_in_t0(const sycl::vec<FeatureType, 4>* lptr,
                             const sycl::vec<FeatureType, 4>* rptr,
                             GroupType& group,
-                            sycl::nd_item<1>& it,
-                            float l_norm, // DELETE
-                            float r_norm  // DELETE
-)
+                            sycl::nd_item<1>& it)
 {
     const sycl::vec<FeatureType, 4> lval = lptr[it.get_local_id(0)];
     const sycl::vec<FeatureType, 4> rval = rptr[it.get_local_id(0)];
@@ -205,7 +202,7 @@ inline FeatureType l2_in_t0(const sycl::vec<FeatureType, 4>* lptr,
 
     float res = mval.x() * mval.x() + mval.y() * mval.y() + mval.z() * mval.z() + mval.w() * mval.w();
 #else
-#define COMPUTE_MATRIX_LIKE 1
+#define COMPUTE_MATRIX_LIKE 0
 
 #if COMPUTE_MATRIX_LIKE
     // JUST FOR VERIFICATION OF USING THE NORMS
@@ -254,21 +251,17 @@ class Compute_distance
     int l_len;
     Descriptor* r;
     int r_len;
-    float* l_norm;
-    float* r_norm;
 
   public:
-    // Compute_distance(sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len)
-    Compute_distance(
-      sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len, float* l_norm, float* r_norm)
+    Compute_distance(sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len)
+      // Compute_distance(
+      //   sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len, float* l_norm, float*
+      //   r_norm)
       : match_matrix(match_matrix)
       , l(l)
       , l_len(l_len)
       , r(r)
-      , r_len(r_len)
-      , l_norm(l_norm) // REMOVE
-      , r_norm(r_norm) // REMOVE jUST FOR TESTING
-    {};
+      , r_len(r_len) {};
 
     inline void operator()(sycl::nd_item<1> it) const
     {
@@ -296,7 +289,7 @@ class Compute_distance
         {
             const sycl::vec<FeatureType, 4>* rptr = reinterpret_cast<const sycl::vec<FeatureType, 4>*>(&r[i]);
 
-            const float res = l2_in_t0(lptr, rptr, group, it, l_norm[idx], r_norm[i]);
+            const float res = l2_in_t0(lptr, rptr, group, it);
 
             if(it.get_local_id(0) == 0) // Could use group.leader() for sub_group version
             {
@@ -804,26 +797,15 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     sycl::event matchEvent;
     if(useSubGroup)
     {
-        matchEvent =
-          _device_queue.parallel_for<compute_distance_sub_group>(sycl::nd_range{global, local},
-                                                                 Compute_distance<true>(match_matrix,
-                                                                                        getDescriptors(),
-                                                                                        l_len,
-                                                                                        other->getDescriptors(),
-                                                                                        r_len,
-                                                                                        getSquaredNorms(),
-                                                                                        other->getSquaredNorms()));
+        matchEvent = _device_queue.parallel_for<compute_distance_sub_group>(
+          sycl::nd_range{global, local},
+          Compute_distance<true>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
     }
     else
     {
-        matchEvent = _device_queue.parallel_for(sycl::nd_range{global, local},
-                                                Compute_distance<false>(match_matrix,
-                                                                        getDescriptors(),
-                                                                        l_len,
-                                                                        other->getDescriptors(),
-                                                                        r_len,
-                                                                        getSquaredNorms(),
-                                                                        other->getSquaredNorms()));
+        matchEvent = _device_queue.parallel_for(
+          sycl::nd_range{global, local},
+          Compute_distance<false>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
     }
 
     auto wait_for_matrix = [event = std::make_shared<sycl::event>(matchEvent), &Q = _device_queue]() {
@@ -846,6 +828,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     return std::make_tuple(match_matrix, wait_for_matrix, free_matrix);
 }
 
+#if USE_JOINT_MATRIX
 void FeaturesDev::compute_squared_norms()
 {
     // const int l_len = getDescriptorCount();
@@ -858,6 +841,7 @@ void FeaturesDev::compute_squared_norms()
 
     // Compute_distance(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
 }
+#endif
 
 std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> FeaturesDev::preNormMatrixMatchAndReturn(
   FeaturesDev* other)

@@ -20,7 +20,15 @@ option(BindlessInput "Use bindless input image for upscaling" ON)
 option(BindlessArray "Use bindless image array for pyramid" ON)
 
 # Set to off as default and should stay off until it has a working version
-option(JointMatrix "Use Joint Matrix for matching (specific funtion)" ON)
+option(JointMatrix "Use Joint Matrix for matching (specific funtion)" OFF)
+
+# For some performance analysis of multiple kernels as I've not been able to
+# make nsight systems record kernel's, But for singular kernel lauches I've been
+# able to use nsight compute so this flags does not do kernel by kernel
+# timerecording as nsight compute deals with that (but could be added) --
+# IMPORANT to remember that the profiling itself adds a small overhead (accurate
+# due to using sycl queue profiler)
+option(Profiling "Time certain parts of application" OFF)
 
 # option(Profiling "For profiling mode (used for nsight)" ON)
 
@@ -70,7 +78,17 @@ else()
   list(APPEND SYCL_FLAGS -O3)
 endif()
 
-# if(${Profiling}) message(STATUS "Running with lineinfo flag fro profiling")
+if(${Profiling})
+  # message(STATUS "Running with lineinfo flag fro profiling")
+  message(
+    STATUS
+      "Profiling -- Compiling with --lineinfo and -q with -O3, Also using sycl queue profiling for overall metrics"
+  )
+  list(APPEND SYCL_FLAGS -gline-tables-only -g -O3)
+
+  # For sycl queue profiling (for overall frame performance and such)
+  add_compile_definitions(QUEUE_PROFILING=1)
+endif()
 #
 # list(APPEND SYCL_FLAGS -lineinfo) endif()
 
