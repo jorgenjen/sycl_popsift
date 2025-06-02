@@ -26,43 +26,6 @@ using std::min;
 
 namespace syclexp = sycl::ext::oneapi::experimental;
 
-// bool matrixSuported()
-// {
-//     using myparams =
-//       syclexp::matrix::matrix_params<syclexp::architecture::nvidia_gpu_sm_86, int8_t, int8_t, int, int, 16, 16, 32>;
-//     size_t NDRangeM = M / myparams::M; // Assertion would happen at this line
-//     size_t NDRangeN = N / myparams::N;
-//
-//     return true;
-// }
-
-// Primary template: assumes unsupported
-
-// template<typename Group,
-//          typename T,
-//          size_t Rows,
-//          size_t Cols,
-//          syclexp::matrix::matrix_layout Layout,
-//          syclexp::matrix::access::mode Mode>
-// struct joint_matrix_supported;
-
-std::string matrix_type_to_string(syclexp::matrix::matrix_type type)
-{
-    switch(type)
-    {
-        case syclexp::matrix::matrix_type::fp16: return "fp16";
-        case syclexp::matrix::matrix_type::bf16: return "bf16";
-        case syclexp::matrix::matrix_type::tf32: return "tf32";
-        case syclexp::matrix::matrix_type::fp32: return "fp32";
-        case syclexp::matrix::matrix_type::fp64: return "fp64";
-        case syclexp::matrix::matrix_type::sint8: return "sint8";
-        case syclexp::matrix::matrix_type::uint8: return "uint8";
-        case syclexp::matrix::matrix_type::sint32: return "sint32";
-        case syclexp::matrix::matrix_type::uint32: return "uint32";
-        default: return "unknown";
-    }
-}
-
 inline void PopSift::initQueue()
 {
 #if QUEUE_PROFILING

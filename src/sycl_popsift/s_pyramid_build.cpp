@@ -22,6 +22,8 @@ namespace popsift {
 //
 // }
 
+struct Downscale; // For Profiing tools
+
 // not sure if we want the se to be inline they were in CUDA popsift
 inline sycl::event Pyramid::downscale_from_prev_octave(int octave)
 {
@@ -43,9 +45,12 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave)
 
     sycl::event dependency = prev_oct_obj.getLevelCompleteEvent(_levels - PREV_LEVEL);
 
+    // This kernel is almost 3 times slower than the texture kernel of cuda version...
+    // And they are almost identical so it does not make sense. Don't get how a texture could make that much of a
+    // differences so need to compare the ptx
     return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(dependency);
-        cgh.parallel_for(sycl::nd_range(global, local), [=](sycl::nd_item<2> it) {
+        cgh.parallel_for<Downscale>(sycl::nd_range(global, local), [=](sycl::nd_item<2> it) {
             int x = it.get_global_id(1);
             int y = it.get_global_id(0);
 
