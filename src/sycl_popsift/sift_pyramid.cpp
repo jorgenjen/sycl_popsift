@@ -139,6 +139,7 @@ void Pyramid::reallocExtrema(int numExtrema)
     // dependency
     if(numExtrema > _hbuf.ext_allocated)
     {
+        printf("We are reallocing... well fukc\n");
         // Makes adds 1024 to size and removes all set bits that is below 1024 position in binary resulting in the
         // segment being a multiple of 1024 (Probs yields better performance)
         numExtrema = ((numExtrema + 1024) & (~(1024 - 1)));
@@ -367,5 +368,14 @@ void Pyramid::resetDimensions(const Config& conf, int width, int height)
 int* Pyramid::getNumberOfBlocks(int octave) { return &_d_extrema_num_blocks[octave]; }
 
 sycl::event Pyramid::readDescCountersFromDevice() { return _device_queue.memcpy(&_hct, _dct, sizeof(ExtremaCounters)); }
+
+sycl::event Pyramid::readExtremaCount(int octave, sycl::event dependency)
+{
+    return _device_queue.memcpy(&(_hct.ext_ct[octave]), &(_dct->ext_ct[octave]), sizeof(int), dependency);
+    // return _device_queue.memcpy(&(_hct.ext_ct[octave]), &(_dct->ext_ct[octave]), sizeof(int));
+    // {
+    // return _device_queue.memcpy(&_hct, _dct, sizeof(ExtremaCounters));
+    // }
+}
 
 } // namespace popsift

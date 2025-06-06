@@ -177,6 +177,7 @@ class Pyramid
     void build_pyramid(const Config& conf, ImageBase* base, sycl::event d_gauss_write, sycl::event img_transfer);
     void find_extrema(const Config& conf, sycl::event d_consts_write);
     void reallocExtrema(int numExtrema);
+    void full_sync_pre_ori();
 
     int extrema_filter_grid(const Config& conf,
                             int ext_total); // called at head of orientation
@@ -194,6 +195,8 @@ class Pyramid
     // void writeDescriptor(const Config &conf, std::ostream &ostr,
     //                      FeaturesHost *features, bool really,
     //                      bool with_orientation);
+
+    sycl::event readExtremaCount(int octave, sycl::event dependency);
 
     void clone_device_descriptors_sub(const Config& conf, FeaturesDev* features);
 };

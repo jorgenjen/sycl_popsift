@@ -660,19 +660,11 @@ class ori_prefix_sum
     }
 };
 
-// must be set in namespace scope
-struct ori_par_subgroup;
-struct ori_prefix_sum_subgroup;
-void Pyramid::orientation(const Config& conf)
+void Pyramid::full_sync_pre_ori()
 {
-    auto max_subgroup_ori_par = get_kernel_subgroup_size<ori_par_subgroup>(_device_queue);
-    bool use_subgroup_ori_par = max_subgroup_ori_par >= 32;
-    auto max_subgroup_prefix = get_kernel_subgroup_size<ori_prefix_sum_subgroup>(_device_queue);
-    bool use_subgroup_prefix = max_subgroup_prefix >= 32;
-
     // Wait so that the computation is done before the memcpy
     // Look for ways to make this part faster (less waits the better)
-    _device_queue.wait();
+    _device_queue.wait(); // Could be sub ideal if using matching at same time
 
     // Need to think about if this is really necessary?
     // As now we neet to wait for all octaes to do extrema before we can do orientation
@@ -708,17 +700,77 @@ void Pyramid::orientation(const Config& conf)
         ext_ct_prefix_sum += _hct.ext_ct[octave];
     }
     _hct.ext_total = ext_ct_prefix_sum;
+}
 
-    // for( int octave=0; octave<_num_octaves; octave++ )
-    for(int octave = _num_octaves - 1; octave >= 0; octave--)
+// must be set in namespace scope
+struct ori_par_subgroup;
+struct ori_prefix_sum_subgroup;
+void Pyramid::orientation(const Config& conf)
+{
+    auto max_subgroup_ori_par = get_kernel_subgroup_size<ori_par_subgroup>(_device_queue);
+    bool use_subgroup_ori_par = max_subgroup_ori_par >= 32;
+    auto max_subgroup_prefix = get_kernel_subgroup_size<ori_prefix_sum_subgroup>(_device_queue);
+    bool use_subgroup_prefix = max_subgroup_prefix >= 32;
+
+#ifndef USE_OPTIMISTIC_ORI_SHEDULING
+    full_sync_pre_ori();
+#endif
+
+#ifdef USE_OPTIMISTIC_ORI_SHEDULING
+
+    bool redo = false;
+    int ext_ct_prefix_sum = 0;
+
+    for(int octave = 0; octave < _num_octaves; octave++) // Need to start this way then
+#else
+    // for(int octave = _num_octaves - 1; octave >= 0; octave--) // For non optimistic (better cache and smaller first)
+    for(int octave = 0; octave < _num_octaves; octave++)
+#endif
     {
         Octave& oct_obj = _octaves[octave];
 
+#ifdef USE_OPTIMISTIC_ORI_SHEDULING
+        if(!redo)
+        {
+            // Must be in order from 0 to n'th octave
+            readExtremaCount(octave, oct_obj._extrema_done_event).wait(); // Need to wait as we need the information
+            _hct.ext_ps[octave] = ext_ct_prefix_sum;
+            ext_ct_prefix_sum += _hct.ext_ct[octave];
+
+            fprintf(stderr, "Octave %d: statement if(%d > %d)\n", octave, ext_ct_prefix_sum, _hbuf.ext_allocated);
+
+            if(ext_ct_prefix_sum > _hbuf.ext_allocated)
+            {
+                // We don't want this to happen when as we need to recompute all ori_par that has run and we need to
+                // wait for the scheduled ones to finish in addition to wait for all find_extrema to finish to get total
+                // and then re-run
+                redo = true; // To avoid refetching all data again
+                // _device_queue.wait();
+                full_sync_pre_ori();
+                // Start again at octave 0
+                // ext_ct_prefix_sum = 0;
+                octave = 0;
+                oct_obj = _octaves[0];
+                printf("REDO..., _hct.ext_ct[0] = %d \n", _hct.ext_ct[0]);
+
+                readExtremaCount(octave, oct_obj._extrema_done_event).wait(); // Need to wait as we need the information
+                printf("REFETCHING THAT SINGULAR VALUE FROM DEVICE, _hct.ext_ct[0] = %d\n", _hct.ext_ct[0]);
+            }
+
+            // printf("Octave %d -- %d, -- ext_allocated = %d\n", octave, ext_ct_prefix_sum, _hbuf.ext_allocated);
+        }
+#endif
+        // How does num and ext_ct[0] become the max_extrema value for the next frame after full_sync_pre_ori call and
+        // realloc
         size_t num = _hct.ext_ct[octave];
+        printf("Current num = %zu -- _hct.ext_ct[%d] = %d \n", num, octave, _hct.ext_ct[octave]);
+
+        // _device_queue.wait();
+        // printf("AFTER SYNC "
 
         if(num > 0)
         {
-            // "local needs to divide global perfectly
+            // local needs to divide global perfectly
             sycl::range local{1, 32};
             sycl::range global{1, num * 32};
 
@@ -727,7 +779,8 @@ void Pyramid::orientation(const Config& conf)
             {
                 // Uses sub-group(warp) for synchronization and communication
                 _device_queue.submit([&](sycl::handler& cgh) {
-                    cgh.depends_on({_dobuf_write, oct_obj._extrema_done_event});
+                    // cgh.depends_on({_dobuf_write, oct_obj._extrema_done_event});
+                    cgh.depends_on({_dobuf_write}); // Don't need to wait here for extrema done as it's already done
                     // sycl::local_accessor<float, 1> -- is the type (using auto as it's so long)
                     auto hist = sycl::local_accessor<float, 1>(64, cgh);
                     auto sm_hist = sycl::local_accessor<float, 1>(64, cgh);
@@ -777,6 +830,11 @@ void Pyramid::orientation(const Config& conf)
         }
     }
 
+#ifdef USE_OPTIMISTIC_ORI_SHEDULING
+    if(!redo)
+        _hct.ext_total = ext_ct_prefix_sum;
+#endif
+
     // Should remove this and addd ependencies if htare are any
     _device_queue.wait();
     // Could just for sor range for this (unless I need work_grop/sub_group)
@@ -791,27 +849,31 @@ void Pyramid::orientation(const Config& conf)
     // if(!use_subgroup_prefix)    // to debugg work_group on GPU
     if(use_subgroup_prefix) // Normal
     {
-        _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
-            // sycl::local_accessor<int, 1> -- is the type
-            auto sum = sycl::local_accessor<int, 1>(32, cgh);
-            auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
+        _device_queue.submit(
+          [&, prefix_sum = _hct.ext_total, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](
+            sycl::handler& cgh) {
+              // sycl::local_accessor<int, 1> -- is the type
+              auto sum = sycl::local_accessor<int, 1>(32, cgh);
+              auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
 
-            cgh.parallel_for<ori_prefix_sum_subgroup>(
-              sycl::nd_range{global_prefix, local_prefix},
-              ori_prefix_sum<true>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
-        });
+              cgh.parallel_for<ori_prefix_sum_subgroup>(
+                sycl::nd_range{global_prefix, local_prefix},
+                ori_prefix_sum<true>(prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
+          });
     }
     else
     {
-        _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
-            // sycl::local_accessor<int, 1> -- is the type
-            auto sum = sycl::local_accessor<int, 1>(32, cgh);
-            auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
+        _device_queue.submit(
+          [&, prefix_sum = _hct.ext_total, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](
+            sycl::handler& cgh) {
+              // sycl::local_accessor<int, 1> -- is the type
+              auto sum = sycl::local_accessor<int, 1>(32, cgh);
+              auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
 
-            cgh.parallel_for(
-              sycl::nd_range{global_prefix, local_prefix},
-              ori_prefix_sum<false>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
-        });
+              cgh.parallel_for(
+                sycl::nd_range{global_prefix, local_prefix},
+                ori_prefix_sum<false>(prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
+          });
     }
     _device_queue.wait(); // Required for now first should replace with events
 }

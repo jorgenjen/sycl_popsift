@@ -29,7 +29,11 @@ Config::Config()
   , _grid_filter_mode(Config::RandomScale)
   , verbose(false)
   // , _max_extrema( 20000 ) // Uncommented in popsift aswell not done by Jørgen Jensovld :D
-  , _max_extrema(100000)
+  // , _max_extrema(100000) // Normal -- uncommented by me
+
+  , _max_extrema(6124) // BUG: Goging lower than 5000 changes the final result in my test case
+                       // So reallocating does not work like it should in that case but at 5k it works fine
+                       // This is the same behaviour in the cuda code
   , _filter_max_extrema(-1)
   , _filter_grid_size(2)
   , _assume_initial_blur(true)

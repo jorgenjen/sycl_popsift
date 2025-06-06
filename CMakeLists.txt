@@ -30,6 +30,17 @@ option(JointMatrix "Use Joint Matrix for matching (specific funtion)" OFF)
 # due to using sycl queue profiler)
 option(Profiling "Time certain parts of application" OFF)
 
+# Currently grid filter is not supported
+option(
+  PopSift_USE_GRID_FILTER
+  "Switch off grid filtering to massively reduce compile time while debugging other things."
+  OFF)
+
+option(
+  Optimistic_ori_scheduling
+  "Only when grid filtering is off, shedules with hope of avoiding re allocation (if needed will be much slower)"
+  ON)
+
 # option(Profiling "For profiling mode (used for nsight)" ON)
 
 # To generate compile_commands.json -- useful for clangd LSP
@@ -61,6 +72,9 @@ include(cmake/ConfigureSYCL.cmake)
 # # Enable AddressSanitizer set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}
 # -fsanitize=address")
 
+# TODO: Clean up in these if statements as they are kind of messy and hard to
+# read
+
 # TODO: Make it like this for amd and intel gpu's too so you can toggle on and
 # off cpu only
 if(${ENABLE_CUDA})
@@ -89,6 +103,18 @@ if(${Profiling})
   # For sycl queue profiling (for overall frame performance and such)
   add_compile_definitions(QUEUE_PROFILING=1)
 endif()
+
+if(NOT PopSift_USE_GRID_FILTER AND Optimistic_ori_scheduling)
+  add_compile_definitions(USE_OPTIMISTIC_ORI_SHEDULING=1)
+  message(
+    STATUS
+      "Using optimistic scheduling for orientation, use max_extrema that is unlikely to be too small"
+  )
+else()
+
+  message(STATUS "Using normal scheduling for orientation")
+endif()
+
 #
 # list(APPEND SYCL_FLAGS -lineinfo) endif()
 
