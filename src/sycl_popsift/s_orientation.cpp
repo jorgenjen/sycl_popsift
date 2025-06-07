@@ -747,6 +747,18 @@ void Pyramid::orientation(const Config& conf)
                 redo = true; // To avoid refetching all data again
                 // _device_queue.wait();
                 full_sync_pre_ori();
+
+                for(int i = 0; i < _num_octaves; i++)
+                {
+                    fprintf(stderr,
+                            "ext_ct = %d -- ori_ct = %d -- ext_ps = %d -- ori_ps = %d\n",
+                            _hct.ext_ct[i],
+                            _hct.ori_ct[i],
+                            _hct.ext_ps[i],
+                            _hct.ori_ps[i]);
+                }
+                fprintf(stderr, "Ext_total = %d -- ori_total = %d", _hct.ext_total, _hct.ori_total);
+
                 // Start again at octave 0
                 // ext_ct_prefix_sum = 0;
                 octave = 0;
