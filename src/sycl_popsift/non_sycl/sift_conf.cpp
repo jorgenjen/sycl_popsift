@@ -29,7 +29,8 @@ Config::Config()
   , _grid_filter_mode(Config::RandomScale)
   , verbose(false)
   // , _max_extrema( 20000 ) // Uncommented in popsift aswell not done by Jørgen Jensovld :D
-  , _max_extrema(100000)
+  // , _max_extrema(100000)
+  , _max_extrema(6000)
   , _filter_max_extrema(-1)
   , _filter_grid_size(2)
   , _assume_initial_blur(true)
@@ -37,7 +38,8 @@ Config::Config()
   , _normalization_mode(getNormModeDefault())
   , _normalization_multiplier(0)
   , _print_gauss_tables(false)
-  , _cpu_only(false) // To turn of gpu can be handy for debugging
+  , _cpu_only(false)      // To turn of gpu can be handy for debugging
+  , _sub_group_per_cu(-1) // Uninitialized --> Will try to select based on architecture automaticaly
 {
     // int currentDev;
     // cudaDeviceProp currentProp;
@@ -237,10 +239,11 @@ bool Config::ifPrintGaussTables() const { return _print_gauss_tables; }
 bool Config::equal(const Config& other) const
 {
 #define COMPARE(a) (this->a != other.a)
+
     if(COMPARE(octaves) || COMPARE(levels) || COMPARE(sigma) || COMPARE(_edge_limit) || COMPARE(_threshold) ||
        COMPARE(_upscale_factor) || COMPARE(_max_extrema) || COMPARE(_gauss_mode) || COMPARE(_sift_mode) ||
        COMPARE(_assume_initial_blur) || COMPARE(_initial_blur) || COMPARE(_normalization_mode) ||
-       COMPARE(_normalization_multiplier))
+       COMPARE(_normalization_multiplier) || COMPARE(_sub_group_per_cu))
         return false;
     return true;
 }

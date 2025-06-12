@@ -24,7 +24,89 @@ using std::endl;
 using std::max;
 using std::min;
 
+// #include <cuda_runtime_api.h>
+//
+// int get_max_warps_per_sm()
+// {
+//     cudaDeviceProp prop;
+//     cudaGetDeviceProperties(&prop, 0);
+//     return prop.maxThreadsPerMultiProcessor / prop.warpSize;
+// }
+
+#define PRINT_MATRIX_OPTIONS 0
+
 namespace syclexp = sycl::ext::oneapi::experimental;
+
+#if PRINT_MATRIX_OPTIONS
+std::string matrix_type_to_string(syclexp::matrix::matrix_type type)
+{
+    switch(type)
+    {
+        case syclexp::matrix::matrix_type::fp16: return "fp16";
+        case syclexp::matrix::matrix_type::bf16: return "bf16";
+        case syclexp::matrix::matrix_type::tf32: return "tf32";
+        case syclexp::matrix::matrix_type::fp32: return "fp32";
+        case syclexp::matrix::matrix_type::fp64: return "fp64";
+        case syclexp::matrix::matrix_type::sint8: return "sint8";
+        case syclexp::matrix::matrix_type::uint8: return "uint8";
+        case syclexp::matrix::matrix_type::sint32: return "sint32";
+        case syclexp::matrix::matrix_type::uint32: return "uint32";
+        default: return "unknown";
+    }
+}
+#endif
+
+inline void PopSift::set_sg_per_cu()
+{
+// Decide Number of sub_groups per Compute Unit
+// Not the best way of doing it and need's to be maintained. Can also be supplied in config as argument which then is
+// used instead of this selection
+// Should be replaced if possible to make this selection accurately at runtime
+#ifdef CUDA_CC
+    if constexpr(CUDA_CC == 86 || CUDA_CC == 89 || CUDA_CC == 30 || CUDA_CC == 35)
+    {
+        sg_per_cu = 48;
+    }
+    else if constexpr(CUDA_CC < 20)
+    {
+        sg_per_cu = 24;
+    }
+    else if constexpr(CUDA_CC < 35)
+    {
+        sg_per_cu = 32;
+    }
+    else
+    {
+        // Most common case
+        sg_per_cu = 64;
+    }
+#endif
+
+#ifdef HIP_ARCH
+
+#define STRINGIFY(x) #x                  // Adds quotes around x
+#define STRINGIFY_EXPAND(x) STRINGIFY(x) // Forces expansion of x first
+
+    const char* gfx_arch_str = STRINGIFY_EXPAND(HIP_ARCH);
+    const int gfx_version = std::atoi(gfx_arch_str + 3); // Remove gfx part of name (untested no access to amd card)
+
+    if(gfx_version > 1000 && gfx_version < 1030)
+    {
+        sg_per_cu = 40; // RDNA1 has 40 wavefronts per CU the rest of modern has 32
+    }
+    else
+    {
+        sg_per_cu = 32;
+    }
+
+#endif
+
+    // If it's intel GPU I've not found a good way and thye are split in to slices and seem to be more dynamic so not so
+    // easy to figure out in that case would be better to use the config to set the value for the card you are using
+
+    // Testing different values for cards can always be beneficial. If not set and it stays at -1 then persistent
+    // threads will not be used
+}
 
 inline void PopSift::initQueue()
 {
@@ -188,26 +270,41 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
         std::cout << "Queue profiling is supported.\n";
     }
 
+    num_cu = dev.get_info<sycl::info::device::max_compute_units>(); // static public
+    set_sg_per_cu();
+
 // #if USE_JOINT_MATRIX && !CPU_ONLY // I
 #if USE_JOINT_MATRIX // AMX (currently only on 4th, 5th and 6th generation xeon CPU's) does supoprt the matrix extension
     // Should be done before first call to match if not it will use normal version until it's true
     // This could be done at compile time if you pass the arcitecture from cmake check and use the compile time query
     // But I think in this case it does not matter much. As this way is more flexible (and easier to implement :D)
-    sycl::device dev = _device_queue.get_device();
+    // sycl::device dev = _device_queue.get_device();
     auto combinations = dev.get_info<sycl::ext::oneapi::experimental::info::device::matrix_combinations>();
 
     auto max_cu = dev.get_info<sycl::info::device::max_compute_units>();
     auto max_wg = dev.get_info<sycl::info::device::max_work_group_size>();
     auto max_wi_dimensions = dev.get_info<sycl::info::device::max_work_item_dimensions>();
 
-    // There is an extension that is supposed to be more consistent and less ambigous, but I could not make it work
-    // auto num_cu_ext = dev.get_info<sycl::ext::oneapi::info::device::num_compute_units>();
-    // auto num_cu_ext = dev.get_info<sycl::info::device::num_compute_units>();
-    // auto num_cu_ext = sycl::ext::oneapi::info::device::num_compute_units()
+// There is an extension that is supposed to be more consistent and less ambigous, but I could not make it work
+// auto num_cu_ext = dev.get_info<sycl::ext::oneapi::info::device::num_compute_units>();
+// auto num_cu_ext = dev.get_info<sycl::info::device::num_compute_units>();
+// auto num_cu_ext = sycl::ext::oneapi::info::device::num_compute_units()
+#ifdef SYCL_EXT_ONEAPI_DEVICE_ARCHITECTURE
+    printf("Device arhitectures are defined and can be used\n");
+
+#endif
 
     printf("\n\nMax CU = %d -- Max WG = %zu -- WI dims = %d\n\n", max_cu, max_wg, max_wi_dimensions);
     for(const auto& combo : combinations)
     {
+#if PRINT_MATRIX_OPTIONS
+        std::cout << "M: " << combo.msize << ", N: " << combo.nsize << ", K: " << combo.ksize
+                  << ", A type: " << matrix_type_to_string(combo.atype)
+                  << ", B type: " << matrix_type_to_string(combo.btype)
+                  << ", C type: " << matrix_type_to_string(combo.ctype)
+                  << ", D type: " << matrix_type_to_string(combo.dtype) << "\n";
+#endif
+
         if(combo.atype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp16 &&
            combo.btype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp16 &&
            combo.ctype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp32 &&
@@ -315,6 +412,12 @@ bool PopSift::applyConfiguration(bool force)
         _d_gauss_write = this->init_gauss_filter();
 
         _d_consts_write = this->init_constants();
+
+        if(_config.getSgPerCu() != -1)
+        {
+            printf("Setting sub_group per Compute Unit value\n");
+            this->sg_per_cu = _config.getSgPerCu();
+        }
     }
     _shadow_config = _config;
     return true;

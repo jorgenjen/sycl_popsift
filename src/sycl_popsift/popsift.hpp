@@ -136,6 +136,8 @@ class PopSift
     SiftJob* enqueue(int w, int h, const unsigned char* imageData);
 
     inline static bool matrixSupported = false;
+    inline static int sg_per_cu = -1; // sub-group per execution-unit -- Start as not defined(-1)
+    inline static int num_cu;
 
   private:
     void modifyImage();
@@ -181,6 +183,8 @@ class PopSift
     ImageMode _image_mode;
 
     Pipe _pipe;
+
+    void set_sg_per_cu();
 
     /// whether the object is initialized
     bool _isInit{true};

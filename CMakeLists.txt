@@ -22,6 +22,16 @@ option(BindlessArray "Use bindless image array for pyramid" ON)
 # Set to off as default and should stay off until it has a working version
 option(JointMatrix "Use Joint Matrix for matching (specific funtion)" OFF)
 
+# option(JointMatrixBlur "Use Joint Matrix for building the image pyramid" OFF)
+
+# This option is only to attempt to get better performance for the most time
+# using part throught one long lasting wave instead of many kernel launches Only
+# used for sufficiently large octaves
+option(
+  PersistentThreads
+  "Use threads that last for the whole octave building, only used for sufficiently large octaves"
+  OFF)
+
 # For some performance analysis of multiple kernels as I've not been able to
 # make nsight systems record kernel's, But for singular kernel lauches I've been
 # able to use nsight compute so this flags does not do kernel by kernel
@@ -118,6 +128,15 @@ if(PopSift_EXPERIMENTAL AND ${ENABLE_CUDA})
     message(
       STATUS "Joint matrix is ${JointMatrix} - Using float for descriptor")
   endif()
+
+  # Not using Joint matrix for blurint due to using fp16 and fp32 mix so not
+  # well for repeated convolutions
+
+  # if(JointMatrixBlur) add_compile_definitions(BLUR_JOINT_MATRIX=1) message(
+  # STATUS "JointMatrixBlur ${JointMatrixBlur} -- Using Joint matrix to build
+  # pyramid" ) else() add_compile_definitions(BLUR_JOINT_MATRIX=1) message(
+  # STATUS "JointMatrixBlur ${JointMatrixBlur} -- Normal split convolution for
+  # pyramid building" ) endif()
 else()
   # Non CUDA or non Experimental
   if(PopSift_EXPERIMENTAL)
@@ -146,6 +165,18 @@ else()
   # Not cuda exclusive
   add_compile_definitions(USE_JOINT_MATRIX=0)
 
+endif()
+
+# Need to figure out number of sub-groups per Compute Unit for GPU (this can be
+# overriden in config class passed to PopSift)
+
+if(${ENABLE_CUDA})
+  message(STATUS "CUDA_COMPUTE_CAPABILITY = ${CUDA_COMPUTE_CAPABILITY}")
+  add_compile_definitions(CUDA_CC=${CUDA_COMPUTE_CAPABILITY})
+endif()
+
+if(${ENABLE_HIP})
+  add_compile_definitions(HIP_ARCH=${HIP_GFX_ARCH})
 endif()
 
 # ==============================================================================
