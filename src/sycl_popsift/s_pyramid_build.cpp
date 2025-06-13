@@ -196,13 +196,17 @@ persistent_pyramid_config compute_persistent_sg_region_block(int width, int heig
         return sg_region;
     }
     sg_region.sg_block.width = sg_width;
-    sg_region.sg_block.height = 13;
+    sg_region.sg_block.height = 13; // This could start out as smaller but not sure how far down it is worth it to use
+                                    // it (Could test and graph that and include in results)
 
     // We can cover a whole wave for this octave
     // Find max block size that covers a wave
 
     int remaining_blocks = 0;
     int remainder_blocks = 0;
+    int num_row_sg = x_blocks;
+    int num_col_sg;
+    int right_col_pixels;
     // Grow along y first as reuse is more valuable along that direction
     // while(total_blocks > max_total_sg)
     while(true) // Terminated in if
@@ -214,14 +218,20 @@ persistent_pyramid_config compute_persistent_sg_region_block(int width, int heig
         block_pixels = sg_region.sg_block.width * sg_region.sg_block.height;
         y_remainder = height % sg_region.sg_block.height;
 
-        // This compute is wrong somehow... FIX: This problem line giving wrong remainder pixels
-        remainder_pixels = x_remainder * (y_blocks * sg_region.sg_block.height) + y_remainder * width; // y takes corner
+        remainder_pixels = x_remainder * (y_blocks * sg_region.sg_block.height) + y_remainder * width; // col do corner
 
         int divisor_remainder = block_pixels * remainder_percentage;
+
         remainder_blocks = (remainder_pixels + divisor_remainder - 1) / divisor_remainder; // Positive integer ceil
+
+        right_col_pixels = x_remainder * height;
+        num_col_sg = (right_col_pixels + divisor_remainder - 1) / divisor_remainder;
+
         // Should probably do this ^ more exact and consider the division of work that is natural and that I will use
 
-        total_blocks = x_blocks * y_blocks + remainder_blocks;
+        total_blocks = x_blocks * y_blocks + x_blocks + remainder_blocks; // +x_blocks is for bottom row
+
+        // Corner is parrt of column as we want 32 along x for row part
 
         // if(total_blocks > max_total_sg)
         if(total_blocks <= max_total_sg) //
@@ -256,7 +266,7 @@ persistent_pyramid_config compute_persistent_sg_region_block(int width, int heig
 
     int free_blocks = max_total_sg - total_blocks;
     int bottom_row_pixels = y_remainder * width; // Whole widht remainder row
-    int right_col_pixels =
+    right_col_pixels =
       x_remainder * (y_blocks * sg_region.sg_block.height); // non-remainder y-region of remainder col to avoid overlap
 
     float col_percent = right_col_pixels == 0 ? 0.0 : (float)right_col_pixels / remainder_pixels;
@@ -270,9 +280,9 @@ persistent_pyramid_config compute_persistent_sg_region_block(int width, int heig
     int corner_sg = corner_pixels != 0 ? 1 : 0; // If we need a sub_group for corner or not
     // Need to template based on this I think for the different modes
     // int num_row_sg = sycl::floor(total_remainder * row_percent);
-    int num_row_sg = x_blocks; //
+    // int num_row_sg = x_blocks; //
 
-    int num_col_sg = total_remainder - num_row_sg - corner_sg;
+    // int num_col_sg = total_remainder - num_row_sg - corner_sg;
 
     printf("\nWI - total = %d -- col_percent = %f -- row_percent = %f ---- num_col = %d -- num_row = %d ----- "
            "row_pixels=%d col_pixels=%d -- Remainder_pixels = %d\n",
