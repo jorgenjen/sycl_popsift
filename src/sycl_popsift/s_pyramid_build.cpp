@@ -156,6 +156,8 @@ struct persistent_pyramid_config
 {
     bool use_persistent_block;
     sg_region_block sg_block;
+    sg_region_block bottom_row_block;
+    sg_region_block right_col_block;
     sycl::range<2> global;
     sycl::range<2> local;
 };
@@ -175,126 +177,81 @@ persistent_pyramid_config compute_persistent_sg_region_block(int width, int heig
     // TODO: Figure out how many registers the kernel uses per thread and how many registers each thread can use to then
     // figure out the how many sub_groups that can reside on a compute_unit based on register usage Currently it assumes
     // that registers is not a bottleneck which might not always be the case
-    int sg_width = 32; // set to 32 for now
+    // int sg_width = 32; // set to 32 for now
     int max_total_sg = PopSift::sg_per_cu * PopSift::num_cu;
 
-    int x_blocks = width / sg_width;
-    int y_blocks = height / 13;
-    int block_pixels = sg_width * 13; // how many pixels each sg is responsible for in non edge case
-    int total_blocks = x_blocks * y_blocks;
-
-    int x_remainder = width % sg_width;
-    int y_remainder = height % 13;
-    int remainder_pixels =
-      x_remainder * (x_blocks * sg_width) + y_remainder * (y_blocks * 13) + x_remainder * y_remainder;
     persistent_pyramid_config sg_region;
-    // if((x_blocks * y_blocks) < max_total_sg * 0.95)
-    if(total_blocks < max_total_sg * 0.95)
-    {
-        // Can't be a proper full wave hence we don't use block for persistent threads pyramid building
-        sg_region.use_persistent_block = false;
-        return sg_region;
-    }
-    sg_region.sg_block.width = sg_width;
-    sg_region.sg_block.height = 13; // This could start out as smaller but not sure how far down it is worth it to use
-                                    // it (Could test and graph that and include in results)
+
+    constexpr int start_height = 13; // This could start out as smaller but not sure how far down it is worth it to use
+                                     // it (Could test and graph that and include in results)
+    sg_region.sg_block.width = 32;   // Replace 32 with sg widht of device
+    sg_region.sg_block.height = start_height;
+
+    int x_blocks = width / sg_region.sg_block.width;
+    int y_blocks;
+
+    int x_remainder = width % sg_region.sg_block.width;
+    int y_remainder;
+
+    int total_blocks;
+    int num_col_sg;
+    int right_col_pixels;
 
     // We can cover a whole wave for this octave
     // Find max block size that covers a wave
-
-    int remaining_blocks = 0;
-    int remainder_blocks = 0;
-    int num_row_sg = x_blocks;
-    int num_col_sg;
-    int right_col_pixels;
-    // Grow along y first as reuse is more valuable along that direction
-    // while(total_blocks > max_total_sg)
     while(true) // Terminated in if
     {
         // int new_height = sg_region.sg_block.height + 1; // Test size increase
-        sg_region.sg_block.height++;
         y_blocks = height / sg_region.sg_block.height;
 
-        block_pixels = sg_region.sg_block.width * sg_region.sg_block.height;
+        int block_pixels = sg_region.sg_block.width * sg_region.sg_block.height;
         y_remainder = height % sg_region.sg_block.height;
-
-        remainder_pixels = x_remainder * (y_blocks * sg_region.sg_block.height) + y_remainder * width; // col do corner
 
         int divisor_remainder = block_pixels * remainder_percentage;
 
-        remainder_blocks = (remainder_pixels + divisor_remainder - 1) / divisor_remainder; // Positive integer ceil
-
         right_col_pixels = x_remainder * height;
-        num_col_sg = (right_col_pixels + divisor_remainder - 1) / divisor_remainder;
+        num_col_sg = (right_col_pixels + divisor_remainder - 1) / divisor_remainder; // Positive integer ceil
 
-        // Should probably do this ^ more exact and consider the division of work that is natural and that I will use
-
-        total_blocks = x_blocks * y_blocks + x_blocks + remainder_blocks; // +x_blocks is for bottom row
+        total_blocks = x_blocks * y_blocks + num_col_sg + x_blocks; // +x_blocks is for bottom row
 
         // Corner is parrt of column as we want 32 along x for row part
 
-        // if(total_blocks > max_total_sg)
-        if(total_blocks <= max_total_sg) //
+        if(total_blocks <= max_total_sg)
         {
-            // We are finaly using less than or equal to the number of sub_groups available
-            printf("EXIT -- main_blocks(%d, %d) -- block(%d, %d) -- total_blocks=%d -- Remainder blocks = %d -- "
-                   "max_sg=%d -- remainder_pixels = %d block_pixls = %d w=%d h=%d\n ",
-                   x_blocks,
-                   y_blocks,
-                   sg_region.sg_block.width,
-                   sg_region.sg_block.height,
+            if(sg_region.sg_block.height == start_height)
+            {
+                // Did not cover a full wave with initial block size hence not usnig
+                sg_region.use_persistent_block = false;
+                break;
+            }
+            // We have reached a block size that is large enough to cover no more than one wave
+            printf("WE DONE --> total_blocks = %d - Max_total_sg = %d -- num_col_sg = %d -- x_blocks = %d -- "
+                   "main_region = %d -- "
+                   "x_remainder = %d -- y_remainder = %d\n",
                    total_blocks,
-                   remainder_blocks,
                    max_total_sg,
-                   remainder_pixels,
-                   block_pixels,
-                   width,
-                   height);
-            printf("DEBUGG: remainder(%d, %d) -- blocks(%d, %d) -- sg_block(%d, %d) --> Remainder_pixels = %d\n",
-                   x_remainder,
-                   y_remainder,
+                   num_col_sg,
                    x_blocks,
-                   y_blocks,
-                   sg_region.sg_block.width,
-                   sg_region.sg_block.height,
-                   remainder_pixels);
+                   x_blocks * y_blocks,
+                   x_remainder,
+                   y_remainder);
+
             break;
         }
 
-        //
+        // printf("total_blocks = %d - Max_total_sg = %d -- num_col_sg = %d -- x_blocks = %d -- main_region = %d -- "
+        //        "x_remainder = %d -- y_remainder = %d\n",
+        //        total_blocks,
+        //        max_total_sg,
+        //        num_col_sg,
+        //        x_blocks,
+        //        x_blocks * y_blocks,
+        //        x_remainder,
+        //        y_remainder);
+        sg_region.sg_block.height++;
     }
 
-    int free_blocks = max_total_sg - total_blocks;
-    int bottom_row_pixels = y_remainder * width; // Whole widht remainder row
-    right_col_pixels =
-      x_remainder * (y_blocks * sg_region.sg_block.height); // non-remainder y-region of remainder col to avoid overlap
-
-    float col_percent = right_col_pixels == 0 ? 0.0 : (float)right_col_pixels / remainder_pixels;
-    float row_percent = bottom_row_pixels == 0 ? 0.0 : (float)bottom_row_pixels / remainder_pixels;
-    // Find work division of the remainder region
-
-    int total_remainder = free_blocks + remainder_blocks;
-
-    int corner_pixels = x_remainder * y_remainder;
-
-    int corner_sg = corner_pixels != 0 ? 1 : 0; // If we need a sub_group for corner or not
-    // Need to template based on this I think for the different modes
-    // int num_row_sg = sycl::floor(total_remainder * row_percent);
-    // int num_row_sg = x_blocks; //
-
-    // int num_col_sg = total_remainder - num_row_sg - corner_sg;
-
-    printf("\nWI - total = %d -- col_percent = %f -- row_percent = %f ---- num_col = %d -- num_row = %d ----- "
-           "row_pixels=%d col_pixels=%d -- Remainder_pixels = %d\n",
-           total_remainder,
-           col_percent,
-           row_percent,
-           num_col_sg,
-           num_row_sg,
-           bottom_row_pixels,
-           right_col_pixels,
-           remainder_pixels);
-    // Split remainder along based on the number assigned to col and row
+    // TODO: Figure out col block size
 
     return sg_region;
 }
