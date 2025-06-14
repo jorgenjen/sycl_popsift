@@ -7,6 +7,7 @@
 #include "sycl_popsift/sift_pyramid.hpp"
 
 #include <cstdio>
+#include <ios>
 #include <vector>
 
 /* It makes no sense whatsoever to change this value */
@@ -146,18 +147,28 @@ sycl::event Pyramid::vert_from_interm(int octave,
 }
 
 // Region that a sub-group takes responsibility for
-struct sg_region_block
+struct sg_region_blocks
 {
+    // Full block dimensions
     int width;
     int height;
+
+    // Information about remainder
+    int bottom_row_height; // Uses width
+
+    // Not sure if it would be faster to compute this based on with and height in the kernel
+    int x_remainder;
+    int y_remainder;
+
+    // Uses remainder to determine which pixel each work item is responsible for
+    int col_pixel_length;    // How many pixels per SG (multiple of sg_widht)
+    int corner_pixel_length; // starts at end of col_pixel for final SG
 };
 
-struct persistent_pyramid_config
+struct persistent_pyramid_octave_config
 {
     bool use_persistent_block;
-    sg_region_block sg_block;
-    sg_region_block bottom_row_block;
-    sg_region_block right_col_block;
+    sg_region_blocks sg_block;
     sycl::range<2> global;
     sycl::range<2> local;
 };
@@ -166,7 +177,7 @@ struct persistent_pyramid_config
 
 // Computes regions that allows the compute to be done in one wave. Computes the largest regions per sub-group that
 // results in one wave. computes a 2d block that is used for both horiz and vert
-persistent_pyramid_config compute_persistent_sg_region_block(int width, int height, float remainder_percentage)
+persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, int height, float remainder_percentage)
 {
     // Compute based on num_cu and sg_per_cu
 
@@ -238,20 +249,48 @@ persistent_pyramid_config compute_persistent_sg_region_block(int width, int heig
 
             break;
         }
-
-        // printf("total_blocks = %d - Max_total_sg = %d -- num_col_sg = %d -- x_blocks = %d -- main_region = %d -- "
-        //        "x_remainder = %d -- y_remainder = %d\n",
-        //        total_blocks,
-        //        max_total_sg,
-        //        num_col_sg,
-        //        x_blocks,
-        //        x_blocks * y_blocks,
-        //        x_remainder,
-        //        y_remainder);
         sg_region.sg_block.height++;
     }
 
-    // TODO: Figure out col block size
+    if(sg_region.use_persistent_block)
+    {
+        // TODO: Figure out col block size
+
+        // Now we know the number of blocks we have to divide to column into should strive to make it a multiple of 32
+        // but that will not be possible so should make all a multiple of 32/sg_widht besides the last one in the corner
+        // that is not -- It will not be a row multiple but it will be wrap around just to have full usage of the
+        // threads
+
+        // Four types of shecduling. Main region, Bottom row, Rightmost col and corner.
+        // Row blocks are all sg_widht wide and each row block has a pixel multiple of sg_widht for full usage. Corner
+        // takes the remaining pixels of Need to pass x_remainder for col start postion and wraping to be computed what
+        // is passed as col block is just the lenght and each work_item need to compute the positions that they are
+        // responsible for
+
+        if(right_col_pixels != 0)
+        {
+            int sg_for_col = max_total_sg - total_blocks - x_blocks; // Free sg that can use for col
+            // Might not be need for corner
+            if(right_col_pixels % sg_region.sg_block.width == 0 &&
+               (right_col_pixels / sg_region.sg_block.width) % sg_for_col == 0)
+            {
+                // No need for corner
+            }
+            else
+            {
+                // Save one for corner
+                int rows_per_col_sg = (right_col_pixels / sg_region.sg_block.width) / (sg_for_col - 1);
+
+                int rows_for_corner = (right_col_pixels / sg_region.sg_block.width) % (sg_for_col - 1);
+                int reminder_col_pixels = right_col_pixels % sg_region.sg_block.width;
+                // BUG: I'm here!!!!!!!!!
+            }
+        }
+    }
+    // else we don't need col so should launch a different version throught templte and local and global does not
+    // need it
+    printf("Free blocks for col =  %d", sg_for_col);
+    // }
 
     return sg_region;
 }
