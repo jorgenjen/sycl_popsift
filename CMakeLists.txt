@@ -99,6 +99,11 @@ if(${Profiling})
   # For sycl queue profiling (for overall frame performance and such)
   add_compile_definitions(QUEUE_PROFILING=1)
 endif()
+
+if(${PersistentThreads})
+  add_compile_definitions(USE_PERSISTENT=1)
+endif()
+
 #
 # list(APPEND SYCL_FLAGS -lineinfo) endif()
 

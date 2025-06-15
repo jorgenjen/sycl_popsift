@@ -161,14 +161,19 @@ struct sg_region_blocks
     int y_remainder;
 
     // Uses remainder to determine which pixel each work item is responsible for
-    int col_pixel_length;    // How many pixels per SG (multiple of sg_widht)
-    int corner_pixel_length; // starts at end of col_pixel for final SG
+    int col_pixel_length;     // How many pixels per SG (multiple of sg_widht)
+    int corner_pixel_length;  // starts at end of col_pixel for final SG
+    int second_corner_length; // Does full rows but not same as rest to not overload corner
 };
 
 struct persistent_pyramid_octave_config
 {
     bool use_persistent_block;
     sg_region_blocks sg_block;
+    // int num_corner_blocks; // From corner walking up column (per column in case of two)
+
+    // Might add this but I don't think it's needed
+    // int num_col_for_col;   // How many columns are used for dealing with remainder_column
     sycl::range<2> global;
     sycl::range<2> local;
 };
@@ -177,7 +182,7 @@ struct persistent_pyramid_octave_config
 
 // Computes regions that allows the compute to be done in one wave. Computes the largest regions per sub-group that
 // results in one wave. computes a 2d block that is used for both horiz and vert
-persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, int height, float remainder_percentage)
+persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, int height)
 {
     // Compute based on num_cu and sg_per_cu
 
@@ -190,8 +195,9 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
     // that registers is not a bottleneck which might not always be the case
     // int sg_width = 32; // set to 32 for now
     int max_total_sg = PopSift::sg_per_cu * PopSift::num_cu;
+    int max_sg_per_cu = PopSift::sg_per_cu; // Generic would like to figoure out for kernel specificaly if possible
 
-    persistent_pyramid_config sg_region;
+    persistent_pyramid_octave_config sg_region;
 
     constexpr int start_height = 13; // This could start out as smaller but not sure how far down it is worth it to use
                                      // it (Could test and graph that and include in results)
@@ -212,20 +218,9 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
     // Find max block size that covers a wave
     while(true) // Terminated in if
     {
-        // int new_height = sg_region.sg_block.height + 1; // Test size increase
         y_blocks = height / sg_region.sg_block.height;
 
-        int block_pixels = sg_region.sg_block.width * sg_region.sg_block.height;
-        y_remainder = height % sg_region.sg_block.height;
-
-        int divisor_remainder = block_pixels * remainder_percentage;
-
-        right_col_pixels = x_remainder * height;
-        num_col_sg = (right_col_pixels + divisor_remainder - 1) / divisor_remainder; // Positive integer ceil
-
-        total_blocks = x_blocks * y_blocks + num_col_sg + x_blocks; // +x_blocks is for bottom row
-
-        // Corner is parrt of column as we want 32 along x for row part
+        total_blocks = x_blocks * y_blocks + x_blocks + y_blocks + 1; // Minimum needed
 
         if(total_blocks <= max_total_sg)
         {
@@ -235,6 +230,7 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
                 sg_region.use_persistent_block = false;
                 break;
             }
+            sg_region.use_persistent_block = true;
             // We have reached a block size that is large enough to cover no more than one wave
             printf("WE DONE --> total_blocks = %d - Max_total_sg = %d -- num_col_sg = %d -- x_blocks = %d -- "
                    "main_region = %d -- "
@@ -254,6 +250,222 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
 
     if(sg_region.use_persistent_block)
     {
+        // Use simple wraping for remainder column poor coaleced reads but each work-item is used at all times besides
+        // for corner with this division
+        // Look at bottom for file for initial outline of a more coaleced way of spliting the column work
+
+        // Could use second column to do remainder column if we have enough free sub_groups
+
+        int total_col_pixels = x_remainder * height;
+
+        int total_full_width = total_col_pixels / sg_region.sg_block.width;
+        int corner_pixels = total_col_pixels % sg_region.sg_block.width;
+
+        int col_sg_full_width = total_full_width / y_blocks;
+        int corner_full_width = total_full_width % y_blocks;
+
+        sg_region.sg_block.col_pixel_length = col_sg_full_width * sg_region.sg_block.width;
+        sg_region.sg_block.corner_pixel_length = corner_full_width * sg_region.sg_block.width + corner_pixels;
+
+        // sg_region.sg_block.bottom_row_height = y_remainder;
+        sg_region.sg_block.bottom_row_height = height % sg_region.sg_block.height;
+
+        printf("\n col_pixels = %d -- col_pixel_length = %d -- corner_pixel = %d -- total_col_pixels = %d -- Normal "
+               "block pixel count = %d\n\t Corner_pixels = %d -- corner_full_widht = %d -- col_sg_full_width = %d\n",
+               total_col_pixels,
+               sg_region.sg_block.col_pixel_length,
+               sg_region.sg_block.corner_pixel_length,
+               total_col_pixels,
+               sg_region.sg_block.width * sg_region.sg_block.height,
+               corner_pixels,
+               corner_full_width,
+               col_sg_full_width);
+
+        if(sg_region.sg_block.corner_pixel_length > sg_region.sg_block.col_pixel_length)
+        {
+            // Try again but this time using two sub_groups for corner
+            col_sg_full_width = total_full_width / (y_blocks - 1); // One less static_cast<size_t>(given to corn)er
+            corner_full_width = total_full_width % (y_blocks - 1);
+
+            sg_region.sg_block.col_pixel_length = col_sg_full_width * sg_region.sg_block.width;
+            sg_region.sg_block.second_corner_length =
+              ((corner_full_width + 1) / 2) * sg_region.sg_block.width; // Posetive integer ceil;
+            sg_region.sg_block.corner_pixel_length =
+              ((corner_full_width / 2) * sg_region.sg_block.width) + corner_pixels; // Floor division
+        }
+        else
+        {
+            // Only need one corner
+            sg_region.sg_block.second_corner_length = 0; // Meaning it's not in use
+        }
+
+        printf("\n col_pixels = %d -- col_pixel_length = %d -- corner_pixel = %d -- total_col_pixels = %d -- Normal "
+               "block pixel count = %d\n\t Corner_pixels = %d -- corner_full_widht = %d -- col_sg_full_width = %d -- "
+               "second_corner_length = %d \n",
+               total_col_pixels,
+               sg_region.sg_block.col_pixel_length,
+               sg_region.sg_block.corner_pixel_length,
+               total_col_pixels,
+               sg_region.sg_block.width * sg_region.sg_block.height,
+               corner_pixels,
+               corner_full_width,
+               col_sg_full_width,
+               sg_region.sg_block.second_corner_length);
+
+        printf("x_blocks = %d -- y_blocks = %d\n", x_blocks, y_blocks);
+
+        // Figure out global and local
+        // Want to use work_groups to ensure SG located in neigbourhood are on same CU allowing for better L1
+        // utilization
+
+        // Find biggest functioning work_group that allows for full occupancy in our configuration
+
+        int free_sg_per_cu = (max_total_sg - (x_blocks + 1) * (y_blocks + 1)) / PopSift::num_cu;
+
+        int total_x = x_blocks + 1;
+        int total_y = x_blocks + 1;
+
+        int lead_sg_count = 0;
+        int lead_x = 0;
+        int lead_y = 0;
+        for(int x = 1; x < 8; x++)
+        {
+            if(total_x % x != 0)
+                continue;
+
+            for(int y = 1; y < 8; y++)
+            {
+                int sg_count = x * y;
+                if(total_y % y != 0)
+                    continue;
+
+                if(max_sg_per_cu % sg_count <= free_sg_per_cu)
+                {
+                    // Accepted
+                    if(lead_sg_count < sg_count)
+                    {
+                        lead_sg_count = sg_count;
+                        lead_x = x;
+                        lead_y = y;
+                    }
+                }
+            }
+        }
+        printf("lead_sg_count = %d -- lead_x = %d -- lead_y = %d -- free_sg_per_cu = %d -- max_total_sg = %d\n",
+               lead_sg_count,
+               lead_x,
+               lead_y,
+               free_sg_per_cu,
+               max_total_sg);
+
+        sg_region.local = {static_cast<size_t>(lead_y), static_cast<size_t>(lead_x * sg_region.sg_block.width)};
+        sg_region.global = {static_cast<size_t>(total_y), static_cast<size_t>(total_x * sg_region.sg_block.width)};
+
+        printf("\n\nWidth = %d height= %d --> normal_block (%d, %d), final_row_height = %d -- col_pixel_length = %d -- "
+               "corner_pixel = %d -- corner_2_pixel = %d\n",
+               width,
+               height,
+               sg_region.sg_block.width,
+               sg_region.sg_block.height,
+               sg_region.sg_block.bottom_row_height,
+               sg_region.sg_block.col_pixel_length,
+               sg_region.sg_block.corner_pixel_length,
+               sg_region.sg_block.second_corner_length);
+
+        printf("\tLocal (%zu, %zu) -- Global (%zu, %zu)\n",
+               sg_region.local[0],
+               sg_region.local[1],
+               sg_region.global[0],
+               sg_region.global[1]);
+        printf("\ty_remainder = %d == %d\n\n\n", y_remainder, sg_region.sg_block.bottom_row_height);
+    }
+
+    return sg_region;
+}
+// }
+
+// Kernel that does persistent way:
+
+void Pyramid::build_pyramid(const Config& conf,
+                            ImageBase* base_img,
+                            sycl::event d_gauss_write,
+                            sycl::event img_transfer)
+{
+    GaussTableChoice gaussTableChoice;
+
+#if USE_PERSISTENT
+    persistent_pyramid_octave_config sg_region;
+#endif
+
+    if(conf.getGaussMode() == Config::VLFeat_Relative)
+        gaussTableChoice = Interpolated_FromPrevious;
+    else
+        gaussTableChoice = NotInterpolated_FromPrevious;
+
+    for(int octave = 0; octave < _num_octaves; octave++)
+    {
+        Octave& oct_obj = _octaves[octave];
+#if USE_PERSISTENT
+        sg_region = compute_persistent_sg_region_block(oct_obj.getWidth(), oct_obj.getHeight());
+
+        if(sg_region.use_persistent_block == true)
+        {
+            // Launch using persistent block
+        }
+        else
+#endif
+        {
+            for(int level = 0; level < _levels; level++)
+            {
+                if(level == 0)
+                {
+                    if(octave == 0)
+                    {
+                        sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                        // Storing event to class only for profiling not needed for normal use
+#if QUEUE_PROFILING
+                        _input_horiz_event = horiz; // copy it for use later
+#endif
+                        oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                    }
+                    else
+                    {
+                        oct_obj._level_complete_events[0] = downscale_from_prev_octave(octave);
+                    }
+                }
+                else
+                {
+                    // Depends on set level event from prev level
+                    sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
+
+                    oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
+                }
+            }
+        }
+    }
+
+#if USE_PERSISTENT
+    if(!sg_region.use_persistent_block) // Don't need DoG kernel if using persistent block as it's embedded
+#endif
+    {
+        for(int octave = 0; octave < _num_octaves; octave++)
+        {
+            Octave& oct_obj = _octaves[octave];
+
+            oct_obj._dog_done_event = dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]);
+        }
+    }
+}
+
+} // namespace popsift
+
+#if false
+
+// Too complex would require multiple different versions  with template so takes too much time to develop hence using simple 
+// chain that would result in less ideal memory coaleced reads which was the goal and plan with this segmentation that is not complete 
+
+    if(sg_region.use_persistent_block)
+    {
         // TODO: Figure out col block size
 
         // Now we know the number of blocks we have to divide to column into should strive to make it a multiple of 32
@@ -267,87 +479,84 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
         // is passed as col block is just the lenght and each work_item need to compute the positions that they are
         // responsible for
 
-        if(right_col_pixels != 0)
+        y_remainder = height % sg_region.sg_block.height;
+
+        if(x_remainder != 0)
         {
-            int sg_for_col = max_total_sg - total_blocks - x_blocks; // Free sg that can use for col
-            // Might not be need for corner
-            if(right_col_pixels % sg_region.sg_block.width == 0 &&
-               (right_col_pixels / sg_region.sg_block.width) % sg_for_col == 0)
+            // Need to deal with column and possibly corner
+
+            int num_rows_per_sg = sg_region.sg_block.width / x_remainder; // 1
+            int sg_remainder = sg_region.sg_block.width % x_remainder;    // 5
+
+            if(sg_remainder > x_remainder)
             {
-                // No need for corner
+                // Need to think differently
             }
             else
             {
-                // Save one for corner
-                int rows_per_col_sg = (right_col_pixels / sg_region.sg_block.width) / (sg_for_col - 1);
+                // num_rows_per_sg is always one here
 
-                int rows_for_corner = (right_col_pixels / sg_region.sg_block.width) % (sg_for_col - 1);
-                int reminder_col_pixels = right_col_pixels % sg_region.sg_block.width;
-                // BUG: I'm here!!!!!!!!!
-            }
-        }
-    }
-    // else we don't need col so should launch a different version throught templte and local and global does not
-    // need it
-    printf("Free blocks for col =  %d", sg_for_col);
-    // }
+                // Need a set of main rows and a set of rows that will fill full rows for remainder
 
-    return sg_region;
-}
+                // Need full remainder rows
+                int full_rows_sg_remainder = 1;
 
-// Kernel that does persistent way:
-
-void Pyramid::build_pyramid(const Config& conf,
-                            ImageBase* base_img,
-                            sycl::event d_gauss_write,
-                            sycl::event img_transfer)
-{
-    GaussTableChoice gaussTableChoice;
-
-    if(conf.getGaussMode() == Config::VLFeat_Relative)
-        gaussTableChoice = Interpolated_FromPrevious;
-    else
-        gaussTableChoice = NotInterpolated_FromPrevious;
-
-    for(int octave = 0; octave < _num_octaves; octave++)
-    {
-        Octave& oct_obj = _octaves[octave];
-        compute_persistent_sg_region_block(oct_obj.getWidth(), oct_obj.getHeight(), 0.95);
-
-        for(int level = 0; level < _levels; level++)
-        {
-            if(level == 0)
-            {
-                if(octave == 0)
+                while((full_rows_sg_remainder * x_remainder) % sg_remainder != 0)
                 {
-                    sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
-                    // Storing event to class only for profiling not needed for normal use
-#if QUEUE_PROFILING
-                    _input_horiz_event = horiz; // copy it for use later
-#endif
-                    oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                    full_rows_sg_remainder++;
                 }
+
+                int num_coalesced_rows = (full_rows_sg_remainder * x_remainder) / sg_remainder;
+
+                int total_rows = num_coalesced_rows + full_rows_sg_remainder;
+
+                if(total_rows < sg_region.sg_block.height)
+                {
+                    // It's small enough now we need to figure out if it's usable or if it leaves to large a remainder
+                    int max_rows =
+                      ((sg_region.sg_block.width * sg_region.sg_block.height) * remainder_percentage) / x_remainder;
+
+                    int inner_block_count = total_rows
+                }
+
+                if(total_blocks + y_blocks + 1 <= max_total_sg)
+                {
+                    // Can use two columns for remainder col;
+                    // Not sure if we want to do that
+                }
+
+                if(y_remainder %) {}
                 else
                 {
-                    oct_obj._level_complete_events[0] = downscale_from_prev_octave(octave);
+                    // Do encoding that is chaing of pixels less coaleced memory reads so less optimal
                 }
             }
             else
             {
-                // Depends on set level event from prev level
-                sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
-
-                oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
+                // No need for corner and column
             }
+
+            // if(right_col_pixels != 0)
+            // {
+            //     int sg_for_col = max_total_sg - total_blocks - x_blocks; // Free sg that can use for col
+            //     // Might not be need for corner
+            //     if(right_col_pixels % sg_region.sg_block.width == 0 &&
+            //        (right_col_pixels / sg_region.sg_block.width) % sg_for_col == 0)
+            //     {
+            //         // No need for corner
+            //     }
+            //     else
+            //     {
+            //         // Save one for corner
+            //         int rows_per_col_sg = (right_col_pixels / sg_region.sg_block.width) / (sg_for_col - 1);
+            //
+            //         int rows_for_corner = (right_col_pixels / sg_region.sg_block.width) % (sg_for_col - 1);
+            //         int reminder_col_pixels = right_col_pixels % sg_region.sg_block.width;
+            //     }
+            // }
         }
+        // else we don't need col so should launch a different version throught templte and local and global does not
+        // need it
+        // printf("Free blocks for col =  %d", sg_for_col);
     }
-
-    for(int octave = 0; octave < _num_octaves; octave++) //
-    {
-        Octave& oct_obj = _octaves[octave];
-
-        oct_obj._dog_done_event = dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]);
-    }
-}
-
-} // namespace popsift
+#endif
