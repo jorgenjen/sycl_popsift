@@ -54,6 +54,8 @@ struct DevBuffers
     Feature* features;
 };
 
+// persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, int height);
+
 // extern thread_local ExtremaCounters hct;
 // extern __device__ ExtremaCounters dct;
 // extern thread_local ExtremaBuffers hbuf;
@@ -154,6 +156,13 @@ class Pyramid
 
   private:
     // sycl::event horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
+
+#ifdef USE_PERSISTENT
+    bool build_octave_one_wave_input(const Config& conf,
+                                     ImageBase* base,
+                                     sycl::event d_gauss_write,
+                                     sycl::event img_write);
+#endif
 
     sycl::event horiz_from_input_image(const Config& conf,
                                        ImageBase* base,
