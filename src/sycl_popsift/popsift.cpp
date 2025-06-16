@@ -376,6 +376,13 @@ sycl::event PopSift::init_gauss_filter()
           1, __FILE__, __LINE__, "Failed to allocate gauss filter on device", _device_queue);
     }
 
+#ifdef USE_PERSISTENT
+    popsift::Pyramid::span = _h_gauss.dd.span[0];
+
+    // const int span = d_gauss->dd.span[0];
+
+#endif
+
     // Look into partial updates for this one (currently any change to config would be expensive...) but again who
     // updates config while it's running...
     return _device_queue.memcpy(_d_gauss, &_h_gauss, sizeof(popsift::GaussInfo));

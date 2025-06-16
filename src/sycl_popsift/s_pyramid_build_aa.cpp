@@ -198,7 +198,7 @@ class Horiz
 class Vert
 {
   private:
-    float* intermediate; // or is it intermediate :D IDK
+    float* intermediate;
     float* dst_data;
     popsift::GaussInfo* d_gauss;
     const int width;

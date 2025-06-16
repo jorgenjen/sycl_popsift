@@ -110,6 +110,10 @@ class Pyramid
     sycl::event _final_desc_event;
 #endif
 
+#ifdef USE_PERSISTENT
+    inline static int span;
+#endif
+
     enum GaussTableChoice
     {
         Interpolated_FromPrevious,

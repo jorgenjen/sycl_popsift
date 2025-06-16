@@ -1,6 +1,8 @@
 #include "sycl_popsift/popsift.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 
+namespace syclexp = sycl::ext::oneapi::experimental;
+
 namespace popsift {
 
 // Region that a sub-group takes responsibility for
@@ -37,7 +39,7 @@ struct persistent_pyramid_octave_config
 
 // This should be part of experimental as it is relying on root group
 
-// Computes regions that allows the compute to be done in one wave. Computes the largest regions per sub-group that
+// Computes regions that allows the compute to be done in one wave. Computes the smallest regions per sub-group that
 // results in one wave. computes a 2d block that is used for both horiz and vert
 persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, int height)
 {
@@ -64,8 +66,11 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
     int x_blocks = width / sg_region.sg_block.width;
     int y_blocks;
 
-    int x_remainder = width % sg_region.sg_block.width;
-    int y_remainder;
+    sg_region.sg_block.x_remainder = width % sg_region.sg_block.width;
+    // int y_remainder;
+
+    int total_x = sg_region.sg_block.x_remainder == 0 ? x_blocks : x_blocks + 1;
+    int total_y;
 
     int total_blocks;
     int num_col_sg;
@@ -77,7 +82,20 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
     {
         y_blocks = height / sg_region.sg_block.height;
 
-        total_blocks = x_blocks * y_blocks + x_blocks + y_blocks + 1; // Minimum needed
+        sg_region.sg_block.y_remainder = height % sg_region.sg_block.height;
+
+        total_y = sg_region.sg_block.y_remainder == 0 ? y_blocks : y_blocks + 1;
+
+        // if(sg_region.sg_block.x_remainder == 0 && sg_region.sg_block.y_remainder == 0)
+        //     total_blocks = x_blocks * y_blocks;
+        // else if(sg_region.sg_block.x_remainder == 0)
+        //     total_blocks = x_blocks * (y_blocks + 1);
+        // else if(sg_region.sg_block.x_remainder == 0)
+        //     total_blocks = (x_blocks + 1) * y_blocks;
+        // else
+        //     total_blocks = (x_blocks + 1) * (y_blocks + 1);
+
+        total_blocks = total_x * total_y;
 
         if(total_blocks <= max_total_sg)
         {
@@ -97,8 +115,8 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
                    num_col_sg,
                    x_blocks,
                    x_blocks * y_blocks,
-                   x_remainder,
-                   y_remainder);
+                   sg_region.sg_block.x_remainder,
+                   sg_region.sg_block.y_remainder);
 
             break;
         }
@@ -113,61 +131,73 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
 
         // Could use second column to do remainder column if we have enough free sub_groups
 
-        int total_col_pixels = x_remainder * height;
+        // int total_col_pixels = x_remainder * height;
 
-        int total_full_width = total_col_pixels / sg_region.sg_block.width;
-        int corner_pixels = total_col_pixels % sg_region.sg_block.width;
-
-        int col_sg_full_width = total_full_width / y_blocks;
-        int corner_full_width = total_full_width % y_blocks;
-
-        sg_region.sg_block.col_pixel_length = col_sg_full_width * sg_region.sg_block.width;
-        sg_region.sg_block.corner_pixel_length = corner_full_width * sg_region.sg_block.width + corner_pixels;
-
-        // sg_region.sg_block.bottom_row_height = y_remainder;
         sg_region.sg_block.bottom_row_height = height % sg_region.sg_block.height;
 
-        printf("\n col_pixels = %d -- col_pixel_length = %d -- corner_pixel = %d -- total_col_pixels = %d -- Normal "
-               "block pixel count = %d\n\t Corner_pixels = %d -- corner_full_widht = %d -- col_sg_full_width = %d\n",
-               total_col_pixels,
-               sg_region.sg_block.col_pixel_length,
-               sg_region.sg_block.corner_pixel_length,
-               total_col_pixels,
-               sg_region.sg_block.width * sg_region.sg_block.height,
-               corner_pixels,
-               corner_full_width,
-               col_sg_full_width);
-
-        if(sg_region.sg_block.corner_pixel_length > sg_region.sg_block.col_pixel_length)
+        if(sg_region.sg_block.x_remainder != 0)
         {
-            // Try again but this time using two sub_groups for corner
-            col_sg_full_width = total_full_width / (y_blocks - 1); // One less static_cast<size_t>(given to corn)er
-            corner_full_width = total_full_width % (y_blocks - 1);
+            int total_col_pixels = sg_region.sg_block.x_remainder * height;
+
+            int total_full_width = total_col_pixels / sg_region.sg_block.width;
+            int corner_pixels = total_col_pixels % sg_region.sg_block.width;
+
+            int col_sg_full_width = total_full_width / y_blocks;
+            int corner_full_width = total_full_width % y_blocks;
 
             sg_region.sg_block.col_pixel_length = col_sg_full_width * sg_region.sg_block.width;
-            sg_region.sg_block.second_corner_length =
-              ((corner_full_width + 1) / 2) * sg_region.sg_block.width; // Posetive integer ceil;
-            sg_region.sg_block.corner_pixel_length =
-              ((corner_full_width / 2) * sg_region.sg_block.width) + corner_pixels; // Floor division
+            sg_region.sg_block.corner_pixel_length = corner_full_width * sg_region.sg_block.width + corner_pixels;
+
+            printf(
+              "\n col_pixels = %d -- col_pixel_length = %d -- corner_pixel = %d -- total_col_pixels = %d -- Normal "
+              "block pixel count = %d\n\t Corner_pixels = %d -- corner_full_widht = %d -- col_sg_full_width = %d\n",
+              total_col_pixels,
+              sg_region.sg_block.col_pixel_length,
+              sg_region.sg_block.corner_pixel_length,
+              total_col_pixels,
+              sg_region.sg_block.width * sg_region.sg_block.height,
+              corner_pixels,
+              corner_full_width,
+              col_sg_full_width);
+
+            if(sg_region.sg_block.corner_pixel_length > sg_region.sg_block.col_pixel_length)
+            {
+                // Try again but this time using two sub_groups for corner
+                col_sg_full_width = total_full_width / (y_blocks - 1); // One less static_cast<size_t>(given to corn)er
+                corner_full_width = total_full_width % (y_blocks - 1);
+
+                sg_region.sg_block.col_pixel_length = col_sg_full_width * sg_region.sg_block.width;
+                sg_region.sg_block.second_corner_length =
+                  ((corner_full_width + 1) / 2) * sg_region.sg_block.width; // Posetive integer ceil;
+                sg_region.sg_block.corner_pixel_length =
+                  ((corner_full_width / 2) * sg_region.sg_block.width) + corner_pixels; // Floor division
+            }
+            else
+            {
+                // Only need one corner
+                sg_region.sg_block.second_corner_length = 0; // Meaning it's not in use
+            }
+
+            printf(
+              "\n col_pixels = %d -- col_pixel_length = %d -- corner_pixel = %d -- total_col_pixels = %d -- Normal "
+              "block pixel count = %d\n\t Corner_pixels = %d -- corner_full_widht = %d -- col_sg_full_width = %d -- "
+              "second_corner_length = %d \n",
+              total_col_pixels,
+              sg_region.sg_block.col_pixel_length,
+              sg_region.sg_block.corner_pixel_length,
+              total_col_pixels,
+              sg_region.sg_block.width * sg_region.sg_block.height,
+              corner_pixels,
+              corner_full_width,
+              col_sg_full_width,
+              sg_region.sg_block.second_corner_length);
         }
         else
         {
-            // Only need one corner
-            sg_region.sg_block.second_corner_length = 0; // Meaning it's not in use
+            sg_region.sg_block.col_pixel_length = 0;
+            sg_region.sg_block.corner_pixel_length = 0;
+            sg_region.sg_block.second_corner_length = 0;
         }
-
-        printf("\n col_pixels = %d -- col_pixel_length = %d -- corner_pixel = %d -- total_col_pixels = %d -- Normal "
-               "block pixel count = %d\n\t Corner_pixels = %d -- corner_full_widht = %d -- col_sg_full_width = %d -- "
-               "second_corner_length = %d \n",
-               total_col_pixels,
-               sg_region.sg_block.col_pixel_length,
-               sg_region.sg_block.corner_pixel_length,
-               total_col_pixels,
-               sg_region.sg_block.width * sg_region.sg_block.height,
-               corner_pixels,
-               corner_full_width,
-               col_sg_full_width,
-               sg_region.sg_block.second_corner_length);
 
         printf("x_blocks = %d -- y_blocks = %d\n", x_blocks, y_blocks);
 
@@ -178,9 +208,6 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
         // Find biggest functioning work_group that allows for full occupancy in our configuration
 
         int free_sg_per_cu = (max_total_sg - (x_blocks + 1) * (y_blocks + 1)) / PopSift::num_cu;
-
-        int total_x = x_blocks + 1;
-        int total_y = y_blocks + 1;
 
         int lead_sg_count = 0;
         int lead_x = 0;
@@ -234,11 +261,89 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
                sg_region.local[1],
                sg_region.global[0],
                sg_region.global[1]);
-        printf("\ty_remainder = %d == %d\n\n\n", y_remainder, sg_region.sg_block.bottom_row_height);
+        printf("\ty_remainder = %d == %d\n\n\n", sg_region.sg_block.y_remainder, sg_region.sg_block.bottom_row_height);
     }
 
     return sg_region;
 }
+
+namespace normalizedSource {
+
+// Used for ImageBindless
+// Only used on input image (initial)
+// And only works for it due to  filter and span selection
+
+// aspect::ext_oneapi_bindless_sampled_image_fetch_2d
+// This aspect is required to use sampled image need to add a check for that earlier in selection
+// template<bool if_required>
+template<bool REMAINDER_COL, bool REMAINDER_ROW, bool USE_LOCAL_MEM>
+class BuildOctave
+{
+  private:
+    syclexp::sampled_image_handle src;
+    float** data_array; // Need to be array of all dst data
+    float** dog_array;
+    float* intermediate;
+    popsift::GaussInfo* d_gauss;
+    sycl::local_accessor<float, 1> buffer;
+    const sg_region_blocks sg_region;
+    const int dst_w;
+    const int dst_h;
+    const float shift;
+    const int levels;
+
+  public:
+    BuildOctave(syclexp::sampled_image_handle src,
+                float** data_array,
+                float** dog_array,
+                float* intermediate,
+                popsift::GaussInfo* d_gauss,
+                sycl::local_accessor<float, 1> buffer,
+                const sg_region_blocks sg_region,
+                const int dst_w,
+                const int dst_h,
+                const float shift,
+                const int levels)
+
+      : src(src)
+      , data_array(data_array)
+      , dog_array(dog_array)
+      , intermediate(intermediate)
+      , d_gauss(d_gauss)
+      , buffer(buffer)
+      , sg_region(sg_region)
+      , dst_w(dst_w)
+      , dst_h(dst_h)
+      , shift(shift)
+      , levels(levels) {};
+
+    inline void operator()(sycl::nd_item<2> it) const
+    {
+        // Decide if we are edge as code differs
+
+        const auto sg_width = it.get_sub_group().get_max_local_range()[0]; // 32 in cuda
+        const bool edge_col =
+          sg_region.x_remainder != 0 && (it.get_global_range(1) - it.get_global_id(1) <= sg_width); // right most column
+
+        const bool edge_row =
+          sg_region.y_remainder != 0 && (it.get_global_range(0) - it.get_global_id(0)) == 1; // Bottom row
+
+        const bool edge_corner = edge_col && sg_region.corner_pixel_length != 0; // Corner
+        const bool edge_corner_2 = edge_col && sg_region.second_corner_length != 0 &&
+                                   (it.get_global_range(0) - it.get_global_id(0)) == 2; // sg above corner
+
+        // Start doing horiz from input image
+
+        // Load in the row and then async load in the next row to shared memory
+
+        const float* filter = &d_gauss->dd.filter[0];
+        const int span = d_gauss->dd.span[0];
+
+        // Currently just supporting buffered version
+    }
+};
+
+} // namespace normalizedSource
 
 bool Pyramid::build_octave_one_wave_input(const Config& conf,
                                           ImageBase* base,
@@ -264,7 +369,120 @@ bool Pyramid::build_octave_one_wave_input(const Config& conf,
     // for from prev version this would also need to be our dependency (not sure if that is good enough not sure this
     // would work in case of other kernels being in flight...)
 
+    if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
+                 sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
+    {
+        // auto kernel_id = sycl::get_kernel_id<horiz_if>();
+        // auto kernel_bundle = sycl::get_kernel_bundle<sycl::bundle_state::executable>(_device_queue.get_context());
+        // auto kernel = kernel_bundle.get_kernel(kernel_id);
+        //
+        // auto compiled_num_sg = kernel.template get_info<sycl::info::kernel_device_specific::compile_num_sub_groups>(
+        //   _device_queue.get_device());
+        // auto max_num_sg =
+        //   kernel.template
+        //   get_info<sycl::info::kernel_device_specific::max_num_sub_groups>(_device_queue.get_device());
+        // auto prefered_wg_multiple =
+        //   kernel.template get_info<sycl::info::kernel_device_specific::preferred_work_group_size_multiple>(
+        //     _device_queue.get_device());
+
+        // Bindless version
+        const float shift = 0.5f * sycl::pow(2.0f, conf.getUpscaleFactor());
+
+        const bool col = sg_region.sg_block.x_remainder != 0;
+        const bool row = sg_region.sg_block.y_remainder != 0;
+
+        bool use_local_mem = false;
+
+#define LOCAL_MEM false
+#ifdef SYCL_EXT_ONEAPI_LOCAL_MEMORY
+#undef LOCAL_MEM
+#define LOCAL_MEM true
+#endif
+
+        sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
+            cgh.depends_on({d_gauss_write, img_write});
+
+            const int buffer_w = sg_region.local[1] + (Pyramid::span << 2);
+            const int buffer_h = sg_region.local[0];
+
+            // Need to figure out what type of buffer I need for vert and assign the largest one to use
+
+            auto buffer = sycl::local_accessor<float, 1>(buffer_w * buffer_h, cgh);
+
+            cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
+                             normalizedSource::BuildOctave<true, true, LOCAL_MEM>(base->getInputImage(),
+                                                                                  oct_obj.getDataArray(),
+                                                                                  oct_obj.getDogArray(),
+                                                                                  oct_obj.getIntermediate(),
+                                                                                  _d_gauss,
+                                                                                  buffer,
+                                                                                  sg_region.sg_block,
+                                                                                  width,
+                                                                                  height,
+                                                                                  shift,
+                                                                                  _levels));
+        });
+    }
+    else
+    {
+        // Normal inpute image not bindless
+
+        // sycl::event e = _device_queue.parallel_for(
+        //   sycl::nd_range{global, local},
+        //   {d_gauss_write, img_write},
+        //   absoluteSource::Horiz<0, true>(base->getInputFloat(), oct_obj.getIntermediate(), _d_gauss, width, height,
+        //   0));
+    }
+
     return true;
 }
 
 } // namespace popsift
+
+#if false
+        // Position to write to (image that has the size of scale up)
+        const int write_x = it.get_global_id(1);
+        // const int write_y = it.get_global_id(0) * dst_w;
+        const int write_y = it.get_group(0);
+        // Cant use it.get_global_range(1) inplace of dst_w due to if if_required width !=
+        it.get_global_range(1) and
+          // hence positions would be off could be used in else case but not sure if it matters much (probs not)
+
+          if constexpr(if_required)
+        {
+            // Destination width was not perfectly divisible with it.get_local_range(1)
+            if(write_x >= dst_w)
+                return;
+        }
+
+        const float* filter = &d_gauss->dd.filter[0];
+        const int span = d_gauss->dd.span[0];
+        const float read_x = (write_x + shift) / dst_w;
+        const float read_y = (write_y + shift) / dst_h;
+
+        // Could pass dimensions as a int2 and do vector wise
+        // const sycl::float2 read_pos = sycl::float2{(write_x + shift) / dst_w, (write_y + shift) /
+        dst_h
+    };
+
+    float out = 0.0f;
+
+    // Look into sycl mad or fma (multiply-and-add instruction done in one clock cycle)
+    // is probably done by the compiler anyways though
+
+#pragma unroll
+    for(int offset = span; offset > 1; offset--)
+    {
+        const float g = filter[offset];
+        const float offrel = float(offset) / dst_w; // relative offset
+        const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
+        const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
+        out += ((v1 + v2) * g);
+    }
+
+    const float& g = filter[0];
+    const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
+    out += (v3 * g);
+
+    dst_data[write_x + write_y * dst_w] = out * 255.0f;
+#endif
