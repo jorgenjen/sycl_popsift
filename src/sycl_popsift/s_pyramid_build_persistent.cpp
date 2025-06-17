@@ -267,6 +267,39 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
     return sg_region;
 }
 
+static inline void horiz_local_mem(float* intermediate,
+                                   sycl::local_accessor<float, 1> buffer,
+                                   const float* filter,
+                                   const int span,
+                                   const int dst_w,
+                                   const int write_x,
+                                   int write_y,
+                                   int base_pos)
+{
+    float out = 0.0f;
+
+#pragma unroll
+    for(int offset = span; offset > 1; offset--)
+    {
+        const float g = filter[offset];
+        // const float offrel = float(offset) / dst_w; // relative offset
+        // const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
+        // const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
+        // out += ((v1 + v2) * g);
+
+        const float v1 = buffer[base_pos - offset];
+        const float v2 = buffer[base_pos + offset];
+        out += ((v1 + v2) * g);
+    }
+
+    // const float& g = filter[0];
+    // const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
+    // out += (v3 * g);
+    out += (buffer[base_pos] * filter[0]);
+
+    intermediate[write_x + write_y * dst_w] = out * 255.0f;
+}
+
 namespace normalizedSource {
 
 // Used for ImageBindless
@@ -276,7 +309,7 @@ namespace normalizedSource {
 // aspect::ext_oneapi_bindless_sampled_image_fetch_2d
 // This aspect is required to use sampled image need to add a check for that earlier in selection
 // template<bool if_required>
-template<bool REMAINDER_COL, bool REMAINDER_ROW, bool USE_LOCAL_MEM>
+template<bool REMAINDER_COL, bool REMAINDER_ROW>
 class BuildOctave
 {
   private:
@@ -322,22 +355,74 @@ class BuildOctave
         // Decide if we are edge as code differs
 
         const auto sg_width = it.get_sub_group().get_max_local_range()[0]; // 32 in cuda
+
         const bool edge_col =
-          sg_region.x_remainder != 0 && (it.get_global_range(1) - it.get_global_id(1) <= sg_width); // right most column
+          REMAINDER_COL ? sg_region.x_remainder != 0 && (it.get_global_range(1) - it.get_global_id(1) <= sg_width)
+                        : false; // right most column -- Always false if we dono't have col
 
         const bool edge_row =
           sg_region.y_remainder != 0 && (it.get_global_range(0) - it.get_global_id(0)) == 1; // Bottom row
 
-        const bool edge_corner = edge_col && sg_region.corner_pixel_length != 0; // Corner
-        const bool edge_corner_2 = edge_col && sg_region.second_corner_length != 0 &&
-                                   (it.get_global_range(0) - it.get_global_id(0)) == 2; // sg above corner
+        const bool edge_corner = REMAINDER_COL ? edge_col && sg_region.corner_pixel_length != 0 : false; // Corner
+        const bool edge_corner_2 = REMAINDER_COL ? edge_col && sg_region.second_corner_length != 0 &&
+                                                     (it.get_global_range(0) - it.get_global_id(0)) == 2
+                                                 : false; // sg above corner
+
+        const bool normal = !(edge_col || edge_row || edge_corner || edge_corner_2);
 
         // Start doing horiz from input image
 
         // Load in the row and then async load in the next row to shared memory
 
+        // Used for input only
         const float* filter = &d_gauss->dd.filter[0];
         const int span = d_gauss->dd.span[0];
+
+        const int write_x = it.get_global_id(1);          // Constant in normal block
+        int write_y = it.get_group(0) * sg_region.height; // Changes in normal block aswell
+
+        float read_x = (write_x + shift) / dst_w;
+        float read_y = (write_y + shift) / dst_h;
+
+        // Not sure if there is a point of using this for input level -- As we can't async load
+        int base_pos = (it.get_local_range(1) + (span << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1) + span;
+
+        buffer[base_pos] = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y}); // every one does this
+
+        const int rel_span = ((1 / dst_w) * span); // Relative span value used for offset
+
+        if(it.get_local_id(1) < span)
+        {
+            // load left side (lenght of span)
+            buffer[base_pos - span] = syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
+
+            // buffer[(it.get_local_range(1) + (span << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1)] =
+            //   syclexp::sample_image<float>(src, sycl::float2{read_x - span, read_y});
+        }
+        else if(it.get_local_id(1) >= (it.get_local_range(1) - span))
+        {
+            if(!(edge_col || edge_corner || edge_corner_2))
+            {
+                // Load right side
+                buffer[base_pos + span] = syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
+
+                // buffer[(it.get_local_range(1) + (span << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1) +
+                //        (span << 1)] = syclexp::sample_image<float>(src, sycl::float2{read_x + span, read_y});
+            }
+        }
+
+        // Here would be good to do async load of next row but does not seem to be possible to do with bindless  images
+        // But for remaining parts it will be not sure if we should use local mem for this part however
+        sycl::group_barrier(it.get_group()); // Ensure all is loaded before we do horiz
+
+        horiz_local_mem(intermediate, buffer, filter, span, dst_w, write_x, write_y, base_pos);
+
+        if constexpr(REMAINDER_COL)
+        {
+            // Need to deal with column
+        }
+
+        // Now we have loaded the whole row into shared memory and we can start doing horiz
 
         // Currently just supporting buffered version
     }
@@ -391,37 +476,29 @@ bool Pyramid::build_octave_one_wave_input(const Config& conf,
         const bool col = sg_region.sg_block.x_remainder != 0;
         const bool row = sg_region.sg_block.y_remainder != 0;
 
-        bool use_local_mem = false;
-
-#define LOCAL_MEM false
-#ifdef SYCL_EXT_ONEAPI_LOCAL_MEMORY
-#undef LOCAL_MEM
-#define LOCAL_MEM true
-#endif
+        const int buffer_size = (sg_region.local[1] + (Pyramid::span << 2)) * sg_region.local[0];
 
         sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
             cgh.depends_on({d_gauss_write, img_write});
 
-            const int buffer_w = sg_region.local[1] + (Pyramid::span << 2);
-            const int buffer_h = sg_region.local[0];
+            // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
 
-            // Need to figure out what type of buffer I need for vert and assign the largest one to use
-
-            auto buffer = sycl::local_accessor<float, 1>(buffer_w * buffer_h, cgh);
+            auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
 
             cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
-                             normalizedSource::BuildOctave<true, true, LOCAL_MEM>(base->getInputImage(),
-                                                                                  oct_obj.getDataArray(),
-                                                                                  oct_obj.getDogArray(),
-                                                                                  oct_obj.getIntermediate(),
-                                                                                  _d_gauss,
-                                                                                  buffer,
-                                                                                  sg_region.sg_block,
-                                                                                  width,
-                                                                                  height,
-                                                                                  shift,
-                                                                                  _levels));
+                             normalizedSource::BuildOctave<true, true>(base->getInputImage(),
+                                                                       oct_obj.getDataArray(),
+                                                                       oct_obj.getDogArray(),
+                                                                       oct_obj.getIntermediate(),
+                                                                       _d_gauss,
+                                                                       buffer,
+                                                                       sg_region.sg_block,
+                                                                       width,
+                                                                       height,
+                                                                       shift,
+                                                                       _levels));
         });
+        _device_queue.wait(); // For testing
     }
     else
     {
