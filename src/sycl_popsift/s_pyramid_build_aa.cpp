@@ -100,6 +100,13 @@ class Horiz
         const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
         out += (v3 * g);
 
+        // if(write_x < 120 && write_x > 110 && write_y < 120 && write_y > 110)
+        // if(write_x < 900 && write_x > 890 && write_y < 500 && write_y > 490)
+        // {
+        //     syclexp::printf(
+        //       "write(%d, %d) --> out = %f -- read_x = %f - read_y = %f\n", write_x, write_y, out, read_x, read_y);
+        // }
+
         dst_data[write_x + write_y * dst_w] = out * 255.0f;
     };
 };

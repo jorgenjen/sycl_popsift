@@ -162,10 +162,11 @@ class Pyramid
     // sycl::event horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
 
 #ifdef USE_PERSISTENT
-    bool build_octave_one_wave_input(const Config& conf,
-                                     ImageBase* base,
-                                     sycl::event d_gauss_write,
-                                     sycl::event img_write);
+    // bool build_octave_one_wave_input(const Config& conf,
+    sycl::event build_octave_one_wave_input(const Config& conf,
+                                            ImageBase* base,
+                                            sycl::event d_gauss_write,
+                                            sycl::event img_write);
 #endif
 
     sycl::event horiz_from_input_image(const Config& conf,

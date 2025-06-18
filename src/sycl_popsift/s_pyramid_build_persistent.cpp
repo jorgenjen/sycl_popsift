@@ -267,6 +267,122 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
     return sg_region;
 }
 
+template<bool REMAINDER_COL>
+static inline void horiz_bindless_input(float* intermediate,
+                                        syclexp::sampled_image_handle src,
+                                        const float* filter,
+                                        const int span,
+                                        const int dst_w,
+                                        const int write_x,
+                                        int write_y,
+                                        float read_x,
+                                        float read_y,
+                                        int base_pos)
+{
+    if constexpr(REMAINDER_COL)
+    {
+        if(write_x >= dst_w)
+            return;
+    }
+
+    float out = 0.0f;
+
+    // #pragma unroll
+    //     for(int offset = span; offset > 0; offset--)
+    //     {
+    //         const float g = filter[offset];
+    //         const float offrel = float(offset) / dst_w; // relative offset
+    //         const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
+    //         const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
+    //         out += ((v1 + v2) * g);
+    //     }
+    //
+    //     const float& g = filter[0];
+    //     const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
+    //     out += (v3 * g);
+    //
+    //     // if(write_x < 120 && write_x > 110 && write_y < 120 && write_y > 110)
+    //     if(write_x < 900 && write_x > 890 && write_y < 500 && write_y > 490)
+    //     {
+    //         syclexp::printf("write(%d, %d) --> out = %f -- read_x = %f - read_y = %f -- wave bindless\n",
+    //                         write_x,
+    //                         write_y,
+    //                         out,
+    //                         read_x,
+    //                         read_y);
+    //     }
+    //
+    //     intermediate[write_x + write_y * dst_w] = out * 255.0f;
+
+#if true
+
+#pragma unroll
+    for(int offset = span; offset > 0; offset--)
+    {
+        const float g = filter[offset];
+        const float offrel = float(offset) / dst_w; // relative offset
+        const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
+        const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
+        out += ((v1 + v2) * g);
+
+        // const float v1 = buffer[base_pos - offset];
+        // const float v2 = buffer[base_pos + offset];
+        // out += ((v1 + v2) * g);
+    }
+
+    const float& g = filter[0];
+    const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
+    out += (v3 * g);
+    // out += (buffer[base_pos] * filter[0]);
+
+    // if(write_x < 120 && write_x > 110 && write_y < 120 && write_y > 110)
+    // if(write_x < 900 && write_x > 890 && write_y < 500 && write_y > 490)
+    // {
+    //     syclexp::printf("write(%d, %d) --> out = %f -- read_x = %f - read_y = %f wave bindless\n",
+    //                     write_x,
+    //                     write_y,
+    //                     out,
+    //                     read_x,
+    //                     read_y);
+    // }
+
+    intermediate[write_x + write_y * dst_w] = out * 255.0f;
+#endif
+
+    // #pragma unroll
+    //     for(int offset = span; offset > 1; offset--)
+    //     {
+    //         const float g = filter[offset];
+    //         const float offrel = float(offset) / dst_w; // relative offset
+    //         const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
+    //         const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
+    //         out += ((v1 + v2) * g);
+    //
+    //         // const float v1 = buffer[base_pos - offset];
+    //         // const float v2 = buffer[base_pos + offset];
+    //         // out += ((v1 + v2) * g);
+    //     }
+    //
+    //     const float& g = filter[0];
+    //     const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
+    //     out += (v3 * g);
+    //     // out += (buffer[base_pos] * filter[0]);
+    //
+    //     // if(write_x < 120 && write_x > 110 && write_y < 120 && write_y > 110)
+    //     if(write_x < 900 && write_x > 890 && write_y < 500 && write_y > 490)
+    //     {
+    //         syclexp::printf("write(%d, %d) --> out = %f -- read_x = %f - read_y = %f wave bindless\n",
+    //                         write_x,
+    //                         write_y,
+    //                         out,
+    //                         read_x,
+    //                         read_y);
+    //     }
+    //
+    //     intermediate[write_x + write_y * dst_w] = out * 255.0f;
+}
+
+template<bool REMAINDER_COL>
 static inline void horiz_local_mem(float* intermediate,
                                    sycl::local_accessor<float, 1> buffer,
                                    const float* filter,
@@ -276,10 +392,16 @@ static inline void horiz_local_mem(float* intermediate,
                                    int write_y,
                                    int base_pos)
 {
+    if constexpr(REMAINDER_COL)
+    {
+        if(write_x >= dst_w)
+            return;
+    }
+
     float out = 0.0f;
 
 #pragma unroll
-    for(int offset = span; offset > 1; offset--)
+    for(int offset = span; offset > 0; offset--)
     {
         const float g = filter[offset];
         // const float offrel = float(offset) / dst_w; // relative offset
@@ -297,6 +419,12 @@ static inline void horiz_local_mem(float* intermediate,
     // out += (v3 * g);
     out += (buffer[base_pos] * filter[0]);
 
+    // if(write_x < 120 && write_x > 110 && write_y < 120 && write_y > 110)
+    // if(write_x < 900 && write_x > 890 && write_y < 500 && write_y > 490)
+    // {
+    //     syclexp::printf("write(%d, %d) --> out = %f -- wave local mem\n", write_x, write_y, out);
+    // }
+
     intermediate[write_x + write_y * dst_w] = out * 255.0f;
 }
 
@@ -309,6 +437,8 @@ namespace normalizedSource {
 // aspect::ext_oneapi_bindless_sampled_image_fetch_2d
 // This aspect is required to use sampled image need to add a check for that earlier in selection
 // template<bool if_required>
+
+#define USE_SHARED_MEM_FOR_INPUT 0
 template<bool REMAINDER_COL, bool REMAINDER_ROW>
 class BuildOctave
 {
@@ -352,88 +482,161 @@ class BuildOctave
 
     inline void operator()(sycl::nd_item<2> it) const
     {
-        // Decide if we are edge as code differs
-
         const auto sg_width = it.get_sub_group().get_max_local_range()[0]; // 32 in cuda
 
-        const bool edge_col =
-          REMAINDER_COL ? sg_region.x_remainder != 0 && (it.get_global_range(1) - it.get_global_id(1) <= sg_width)
-                        : false; // right most column -- Always false if we dono't have col
+        // Attempt to set to false at compiletime if template argumnts are false (not sure if lambda funtion with if
+        // consexpr would do that better (or some other method))
 
-        const bool edge_row =
-          sg_region.y_remainder != 0 && (it.get_global_range(0) - it.get_global_id(0)) == 1; // Bottom row
-
-        const bool edge_corner = REMAINDER_COL ? edge_col && sg_region.corner_pixel_length != 0 : false; // Corner
-        const bool edge_corner_2 = REMAINDER_COL ? edge_col && sg_region.second_corner_length != 0 &&
-                                                     (it.get_global_range(0) - it.get_global_id(0)) == 2
-                                                 : false; // sg above corner
-
-        const bool normal = !(edge_col || edge_row || edge_corner || edge_corner_2);
-
-        // Start doing horiz from input image
-
-        // Load in the row and then async load in the next row to shared memory
+        // const bool edge_col =
+        //   REMAINDER_COL ? sg_region.x_remainder != 0 && (it.get_global_range(1) - it.get_global_id(1) <= sg_width)
+        //                 : false; // right most column -- Always false if we dono't have col
+        //
+        // const bool edge_row = REMAINDER_ROW
+        //                         ? sg_region.y_remainder != 0 && (it.get_global_range(0) - it.get_global_id(0)) == 1
+        //                         : false; // Bottom row
+        //
+        // const bool normal = REMAINDER_COL || REMAINDER_ROW ? !(edge_col || edge_row) : true;
 
         // Used for input only
         const float* filter = &d_gauss->dd.filter[0];
         const int span = d_gauss->dd.span[0];
 
-        const int write_x = it.get_global_id(1);          // Constant in normal block
-        int write_y = it.get_group(0) * sg_region.height; // Changes in normal block aswell
+        const int write_x = it.get_global_id(1); // Constant in normal block
+        // int write_y = it.get_group(0) * sg_region.height; // Changes in normal block aswell
+        int write_y = it.get_global_id(0) * sg_region.height; // Changes in normal block aswell
 
-        float read_x = (write_x + shift) / dst_w;
+        const float read_x = (write_x + shift) / dst_w;
         float read_y = (write_y + shift) / dst_h;
 
         // Not sure if there is a point of using this for input level -- As we can't async load
-        int base_pos = (it.get_local_range(1) + (span << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1) + span;
+        const int base_pos =
+          (it.get_local_range(1) + (span << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1) + span;
 
-        buffer[base_pos] = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y}); // every one does this
+        // Second buffer row (there are two per row in the work-group)
+        const int base_pos_2 =
+          (it.get_local_range(1) + (span << 1)) * ((it.get_local_id(0) << 1) + 1) + it.get_local_id(1) + span;
 
-        const int rel_span = ((1 / dst_w) * span); // Relative span value used for offset
+        // const int rel_span = ((1 / dst_w) * span); // Relative span value used for offset
+        const int rel_span = float(span) / dst_w; // Relative span value used for offset
 
-        if(it.get_local_id(1) < span)
+        // for(int i = 0; i < sg_region.height; i++)
+
+        // const float read_y_increment = 1.0f / dst_h; // Does not result in the same as recompute due to accumulation
+        // of floating point error
+
+        int loop_end = write_y + sg_region.height;
+
+        // if(it.get_sub_group().leader())
+        // {
+        //     syclexp::printf("write_x = %4d -- write_y = %4d -- glob_x = %4d -- glob_y = %4d -- group_y = %4d --> "
+        //                     "read_x = %6f -- read_y = %6f \n",
+        //                     write_x,
+        //                     write_y,
+        //                     static_cast<int>(it.get_global_id(1)),
+        //                     static_cast<int>(it.get_global_id(0)),
+        //                     static_cast<int>(it.get_group(0)),
+        //                     read_x,
+        //                     read_y);
+        // }
+
+        if constexpr(REMAINDER_ROW)
         {
-            // load left side (lenght of span)
-            buffer[base_pos - span] = syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
-
-            // buffer[(it.get_local_range(1) + (span << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1)] =
-            //   syclexp::sample_image<float>(src, sycl::float2{read_x - span, read_y});
+            if(loop_end >= dst_h)
+                loop_end = dst_h; // Limit to last pixel
         }
-        else if(it.get_local_id(1) >= (it.get_local_range(1) - span))
+
+        for(; write_y < loop_end; ++write_y) // Modifies write_y want that later
         {
-            if(!(edge_col || edge_corner || edge_corner_2))
+            // write_y++;
+            // if constexpr(REMAINDER_ROW)
+            // {
+            //     if(write_y >= dst_h)
+            //         break; // exit for rows in remainder out of image
+            // }
+
+            // read_y += read_y_increment; // Floating point error accumulation hence not using
+            read_y = (write_y + shift) / dst_h;
+
+#if USE_SHARED_MEM_FOR_INPUT
+            buffer[base_pos] = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y}); // every one does this
+
+            if(it.get_local_id(1) < span)
             {
-                // Load right side
-                buffer[base_pos + span] = syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
-
-                // buffer[(it.get_local_range(1) + (span << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1) +
-                //        (span << 1)] = syclexp::sample_image<float>(src, sycl::float2{read_x + span, read_y});
+                // load left side (lenght of span)
+                buffer[base_pos - span] = syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
             }
+            else if(it.get_local_id(1) >= (it.get_local_range(1) - span))
+            {
+                buffer[base_pos + span] = syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
+            }
+
+            // Here would be good to do async load of next row but does not seem to be possible to do with bindless
+            // images But for remaining parts it will be not sure if we should use local mem for this part however
+            sycl::group_barrier(it.get_group()); // Ensure all is loaded before we do horiz
+
+            horiz_local_mem<REMAINDER_COL>(intermediate, buffer, filter, span, dst_w, write_x, write_y, base_pos);
+#else
+            horiz_bindless_input<REMAINDER_COL>(
+              intermediate, src, filter, span, dst_w, write_x, write_y, read_x, read_y, base_pos);
+
+#endif
+
+            // Second row buffer in use: Same as above otherwise
+
+            write_y++;
+            if(write_y >= loop_end)
+                break;
+
+            // if constexpr(REMAINDER_ROW)
+            // {
+            //     if(write_y >= dst_h)
+            //         break; // exit for rows in remainder out of image
+            // }
+
+            // read_y += float(i) / dst_h;
+            // read_y += read_y_increment; // Floating point error accumulation hence not using
+            read_y = (write_y + shift) / dst_h;
+
+#if USE_SHARED_MEM_FOR_INPUT
+            buffer[base_pos_2] = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
+
+            if(it.get_local_id(1) < span)
+            {
+                buffer[base_pos_2 - span] = syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
+            }
+            else if(it.get_local_id(1) >= (it.get_local_range(1) - span))
+            {
+                buffer[base_pos_2 + span] = syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
+            }
+
+            sycl::group_barrier(it.get_group());
+
+            horiz_local_mem<REMAINDER_COL>(intermediate, buffer, filter, span, dst_w, write_x, write_y, base_pos_2);
+#else
+            horiz_bindless_input<REMAINDER_COL>(
+              intermediate, src, filter, span, dst_w, write_x, write_y, read_x, read_y, base_pos);
+
+#endif
         }
 
-        // Here would be good to do async load of next row but does not seem to be possible to do with bindless  images
-        // But for remaining parts it will be not sure if we should use local mem for this part however
-        sycl::group_barrier(it.get_group()); // Ensure all is loaded before we do horiz
+        // Start doing Vert then later we do horiz on data_array so not using sampled image then we can use async load
+        // of next row
+        // Do vert for this one then make loop over the levels for the rest with horiz from prev and vert from
+        // intermediate
 
-        horiz_local_mem(intermediate, buffer, filter, span, dst_w, write_x, write_y, base_pos);
-
-        if constexpr(REMAINDER_COL)
-        {
-            // Need to deal with column
-        }
-
-        // Now we have loaded the whole row into shared memory and we can start doing horiz
-
-        // Currently just supporting buffered version
+        // Then we do DoG -- Or do DoG as we are storing the next level as we have the value in register and only need
+        // to load one value (prev_level) and then we can store DoG as we go giving another justification for doing it
+        // the persistent way and perhaps faster :D
     }
 };
 
 } // namespace normalizedSource
 
-bool Pyramid::build_octave_one_wave_input(const Config& conf,
-                                          ImageBase* base,
-                                          sycl::event d_gauss_write,
-                                          sycl::event img_write)
+// bool Pyramid::build_octave_one_wave_input(const Config& conf,
+sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
+                                                 ImageBase* base,
+                                                 sycl::event d_gauss_write,
+                                                 sycl::event img_write)
 {
     Octave& oct_obj = _octaves[0];
 
@@ -441,8 +644,12 @@ bool Pyramid::build_octave_one_wave_input(const Config& conf,
     const int height = oct_obj.getHeight();
     persistent_pyramid_octave_config sg_region = compute_persistent_sg_region_block(width, height);
 
+    // if(!sg_region.use_persistent_block)
+    //     return false; // Could not use persistent block
+
+    // Just for test
     if(!sg_region.use_persistent_block)
-        return false; // Could not use persistent block
+        return sycl::event(); // Could not use persistent block
 
     // Use persistent block
 
@@ -477,28 +684,113 @@ bool Pyramid::build_octave_one_wave_input(const Config& conf,
         const bool row = sg_region.sg_block.y_remainder != 0;
 
         const int buffer_size = (sg_region.local[1] + (Pyramid::span << 2)) * sg_region.local[0];
+        printf("THIS IS SHIFT = %f -- widht=%d -- height=%d  -- col = %d -- row = %d -- Buffer_size = %d",
+               shift,
+               width,
+               height,
+               col,
+               row,
+               buffer_size);
 
-        sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
-            cgh.depends_on({d_gauss_write, img_write});
+        if(col && row)
+        {
+            printf("We doing col and row whop whop\n");
+            // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
+            return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
+                cgh.depends_on({d_gauss_write, img_write});
 
-            // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
+                // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
 
-            auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+                auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
 
-            cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
-                             normalizedSource::BuildOctave<true, true>(base->getInputImage(),
-                                                                       oct_obj.getDataArray(),
-                                                                       oct_obj.getDogArray(),
-                                                                       oct_obj.getIntermediate(),
-                                                                       _d_gauss,
-                                                                       buffer,
-                                                                       sg_region.sg_block,
-                                                                       width,
-                                                                       height,
-                                                                       shift,
-                                                                       _levels));
-        });
-        _device_queue.wait(); // For testing
+                cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
+                                 normalizedSource::BuildOctave<true, true>(base->getInputImage(),
+                                                                           oct_obj.getDataArray(),
+                                                                           oct_obj.getDogArray(),
+                                                                           oct_obj.getIntermediate(),
+                                                                           _d_gauss,
+                                                                           buffer,
+                                                                           sg_region.sg_block,
+                                                                           width,
+                                                                           height,
+                                                                           shift,
+                                                                           _levels));
+            });
+        }
+        else if(col)
+        {
+            // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
+            return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
+                cgh.depends_on({d_gauss_write, img_write});
+
+                // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
+
+                auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+
+                cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
+                                 normalizedSource::BuildOctave<true, false>(base->getInputImage(),
+                                                                            oct_obj.getDataArray(),
+                                                                            oct_obj.getDogArray(),
+                                                                            oct_obj.getIntermediate(),
+                                                                            _d_gauss,
+                                                                            buffer,
+                                                                            sg_region.sg_block,
+                                                                            width,
+                                                                            height,
+                                                                            shift,
+                                                                            _levels));
+            });
+        }
+        else if(row)
+        {
+            // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
+            return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
+                cgh.depends_on({d_gauss_write, img_write});
+
+                // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
+
+                auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+
+                cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
+                                 normalizedSource::BuildOctave<false, true>(base->getInputImage(),
+                                                                            oct_obj.getDataArray(),
+                                                                            oct_obj.getDogArray(),
+                                                                            oct_obj.getIntermediate(),
+                                                                            _d_gauss,
+                                                                            buffer,
+                                                                            sg_region.sg_block,
+                                                                            width,
+                                                                            height,
+                                                                            shift,
+                                                                            _levels));
+            });
+        }
+        else
+        {
+            // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
+            return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
+                cgh.depends_on({d_gauss_write, img_write});
+
+                // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
+
+                auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+
+                cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
+                                 normalizedSource::BuildOctave<false, false>(base->getInputImage(),
+                                                                             oct_obj.getDataArray(),
+                                                                             oct_obj.getDogArray(),
+                                                                             oct_obj.getIntermediate(),
+                                                                             _d_gauss,
+                                                                             buffer,
+                                                                             sg_region.sg_block,
+                                                                             width,
+                                                                             height,
+                                                                             shift,
+                                                                             _levels));
+            });
+        }
+
+        // _device_queue.wait(); // For testing
     }
     else
     {
@@ -511,7 +803,7 @@ bool Pyramid::build_octave_one_wave_input(const Config& conf,
         //   0));
     }
 
-    return true;
+    return sycl::event();
 }
 
 } // namespace popsift

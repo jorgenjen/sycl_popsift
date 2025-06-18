@@ -172,16 +172,16 @@ void Pyramid::build_pyramid(const Config& conf,
 #ifdef USE_PERSISTENT
         // sg_region = compute_persistent_sg_region_block(oct_obj.getWidth(), oct_obj.getHeight());
 
-        if(octave == 0)
-        {
-            use_persistent_block = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
-        }
-        else
-        {
-            // TODO: Add version for from prev octave
-            // use_persistent_block = build_octave_one_wave_prev_octave(octave);
-            use_persistent_block = false;
-        }
+        // if(octave == 0)
+        // {
+        //     use_persistent_block = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+        // }
+        // else
+        // {
+        //     // TODO: Add version for from prev octave
+        //     // use_persistent_block = build_octave_one_wave_prev_octave(octave);
+        //     use_persistent_block = false;
+        // }
 
         // // if(sg_region.use_persistent_block == true)
         // if(use_persistent_block)
@@ -197,11 +197,19 @@ void Pyramid::build_pyramid(const Config& conf,
                 {
                     if(octave == 0)
                     {
-                        sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                        // build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+                        sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+                        // printf("AFTER ONE WAVE \n");
+
+                        // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+
                         // Storing event to class only for profiling not needed for normal use
+
 #if QUEUE_PROFILING
                         _input_horiz_event = horiz; // copy it for use later
 #endif
+
                         oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
                     }
                     else

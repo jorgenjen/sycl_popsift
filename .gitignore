@@ -9,3 +9,4 @@ src/sycl_popsift/.cache/clangd/index
 src/application/.cache/clangd/index
 build_cpu
 build_no_experimental
+old_build

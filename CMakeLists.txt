@@ -71,6 +71,8 @@ include(cmake/ConfigureSYCL.cmake)
 # # Enable AddressSanitizer set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}
 # -fsanitize=address")
 
+list(APPEND SYCL_FALGS -fsycl-device-code-split=per_kernel)
+
 # TODO: Make it like this for amd and intel gpu's too so you can toggle on and
 # off cpu only
 if(${ENABLE_CUDA})
