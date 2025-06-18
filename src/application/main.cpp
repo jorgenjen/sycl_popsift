@@ -180,8 +180,13 @@ void read_job(SiftJob* job)
 {
     popsift::FeaturesHost* feature_list = job->getHost(); // wait for job to complete
 
-    cerr << "Number of feature points: " << feature_list->getFeatureCount()
-         << " number of feature descriptors: " << feature_list->getDescriptorCount() << endl;
+    // cerr << "\nNumber of feature points: " << feature_list->getFeatureCount()
+    //      << " number of feature descriptors: " << feature_list->getDescriptorCount() << endl;
+
+    fprintf(stderr,
+            "\nNumbmer of features points: %d  number of feature descriptors: %d\n",
+            feature_list->getFeatureCount(),
+            feature_list->getDescriptorCount());
 
     if(write_features)
     {

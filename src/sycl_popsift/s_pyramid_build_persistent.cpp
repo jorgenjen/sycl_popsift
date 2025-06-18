@@ -39,6 +39,7 @@ struct persistent_pyramid_octave_config
 
 // This should be part of experimental as it is relying on root group
 
+#define DEBUGG_LOG 0
 // Computes regions that allows the compute to be done in one wave. Computes the smallest regions per sub-group that
 // results in one wave. computes a 2d block that is used for both horiz and vert
 persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, int height)
@@ -106,7 +107,8 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
                 break;
             }
             sg_region.use_persistent_block = true;
-            // We have reached a block size that is large enough to cover no more than one wave
+// We have reached a block size that is large enough to cover no more than one wave
+#if DEBUGG_LOG
             printf("WE DONE --> total_blocks = %d - Max_total_sg = %d -- num_col_sg = %d -- x_blocks = %d -- "
                    "main_region = %d -- "
                    "x_remainder = %d -- y_remainder = %d\n",
@@ -117,6 +119,7 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
                    x_blocks * y_blocks,
                    sg_region.sg_block.x_remainder,
                    sg_region.sg_block.y_remainder);
+#endif
 
             break;
         }
@@ -148,6 +151,7 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
             sg_region.sg_block.col_pixel_length = col_sg_full_width * sg_region.sg_block.width;
             sg_region.sg_block.corner_pixel_length = corner_full_width * sg_region.sg_block.width + corner_pixels;
 
+#if DEBUGG_LOG
             printf(
               "\n col_pixels = %d -- col_pixel_length = %d -- corner_pixel = %d -- total_col_pixels = %d -- Normal "
               "block pixel count = %d\n\t Corner_pixels = %d -- corner_full_widht = %d -- col_sg_full_width = %d\n",
@@ -159,6 +163,7 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
               corner_pixels,
               corner_full_width,
               col_sg_full_width);
+#endif
 
             if(sg_region.sg_block.corner_pixel_length > sg_region.sg_block.col_pixel_length)
             {
@@ -178,6 +183,7 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
                 sg_region.sg_block.second_corner_length = 0; // Meaning it's not in use
             }
 
+#if DEBUGG_LOG
             printf(
               "\n col_pixels = %d -- col_pixel_length = %d -- corner_pixel = %d -- total_col_pixels = %d -- Normal "
               "block pixel count = %d\n\t Corner_pixels = %d -- corner_full_widht = %d -- col_sg_full_width = %d -- "
@@ -191,6 +197,7 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
               corner_full_width,
               col_sg_full_width,
               sg_region.sg_block.second_corner_length);
+#endif
         }
         else
         {
@@ -199,7 +206,9 @@ persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, i
             sg_region.sg_block.second_corner_length = 0;
         }
 
+#if DEBUGG_LOG
         printf("x_blocks = %d -- y_blocks = %d\n", x_blocks, y_blocks);
+#endif
 
         // Figure out global and local
         // Want to use work_groups to ensure SG located in neigbourhood are on same CU allowing for better L1
@@ -438,7 +447,7 @@ namespace normalizedSource {
 // This aspect is required to use sampled image need to add a check for that earlier in selection
 // template<bool if_required>
 
-#define USE_SHARED_MEM_FOR_INPUT 0
+#define USE_SHARED_MEM_FOR_INPUT 1
 template<bool REMAINDER_COL, bool REMAINDER_ROW>
 class BuildOctave
 {
@@ -517,7 +526,7 @@ class BuildOctave
           (it.get_local_range(1) + (span << 1)) * ((it.get_local_id(0) << 1) + 1) + it.get_local_id(1) + span;
 
         // const int rel_span = ((1 / dst_w) * span); // Relative span value used for offset
-        const int rel_span = float(span) / dst_w; // Relative span value used for offset
+        const float rel_span = float(span) / dst_w; // Relative span value used for offset
 
         // for(int i = 0; i < sg_region.height; i++)
 
@@ -683,7 +692,7 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
         const bool col = sg_region.sg_block.x_remainder != 0;
         const bool row = sg_region.sg_block.y_remainder != 0;
 
-        const int buffer_size = (sg_region.local[1] + (Pyramid::span << 2)) * sg_region.local[0];
+        const int buffer_size = (sg_region.local[1] + (Pyramid::span << 2)) * (sg_region.local[0] << 2);
         printf("THIS IS SHIFT = %f -- widht=%d -- height=%d  -- col = %d -- row = %d -- Buffer_size = %d",
                shift,
                width,
