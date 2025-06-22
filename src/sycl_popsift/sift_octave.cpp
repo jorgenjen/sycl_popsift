@@ -1,8 +1,10 @@
 #include "sycl_popsift/sift_octave.hpp"
 
 #include "sycl/usm.hpp"
+#include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/common/bindless_helpers.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
+#include "sycl_popsift/use_root_group_macro.h" // For USE_ROOT_GROUP macro want one definition
 
 #include <sstream>
 
@@ -33,6 +35,16 @@ void OctaveBase::alloc(const Config& conf, int width, int height, int levels)
     _level_complete_events = new sycl::event[levels];
 
     alloc_arrays();
+
+#if !USE_ROOT_GROUP
+    sg_region = compute_persistent_sg_region_block(width, height);
+    if(sg_region.use_persistent_block)
+    {
+        sycl::range<2> work_group_grid = sg_region.global / sg_region.local;
+        if (work_group_grid.size() >
+    }
+
+#endif
 }
 
 /*************************************************************
@@ -140,6 +152,10 @@ void Octave::resetDimensions(const Config& conf, int w, int h)
 {
     if(w == _w && h == _h)
         return;
+
+#if !USE_ROOT_GROUP
+
+#endif
 
     if(w * h <= _max_w * _max_h)
     {
