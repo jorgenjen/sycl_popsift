@@ -34,9 +34,9 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     int x_blocks = width / sg_block.width;
     int y_blocks;
 
-    sg_block.x_remainder = width % sg_block.width;
+    x_remainder = width % sg_block.width;
 
-    int total_x = sg_block.x_remainder == 0 ? x_blocks : x_blocks + 1;
+    int total_x = x_remainder == 0 ? x_blocks : x_blocks + 1;
     int total_y;
 
     int total_blocks;
@@ -49,9 +49,9 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     {
         y_blocks = height / sg_block.height;
 
-        sg_block.y_remainder = height % sg_block.height;
+        y_remainder = height % sg_block.height;
 
-        total_y = sg_block.y_remainder == 0 ? y_blocks : y_blocks + 1;
+        total_y = y_remainder == 0 ? y_blocks : y_blocks + 1;
 
         total_blocks = total_x * total_y;
 
@@ -86,9 +86,9 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
 
     sg_block.bottom_row_height = height % sg_block.height;
 
-    if(sg_block.x_remainder != 0)
+    if(x_remainder != 0)
     {
-        int total_col_pixels = sg_block.x_remainder * height;
+        int total_col_pixels = x_remainder * height;
 
         int total_full_width = total_col_pixels / sg_block.width;
         int corner_pixels = total_col_pixels % sg_block.width;
@@ -166,11 +166,12 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
 // Basic contruructors
 #if USE_ROOT_GROUP
 persistent_pyramid_octave_config::persistent_pyramid_octave_config()
-  : persistent_sync_size(0)
+  : use_persistent_block(false)
 {}
 #else
 persistent_pyramid_octave_config::persistent_pyramid_octave_config(sycl::queue Q)
   : _device_queue(Q)
+  , use_persistent_block(false)
   , persistent_sync_size(0)
 {}
 #endif
@@ -178,13 +179,12 @@ persistent_pyramid_octave_config::persistent_pyramid_octave_config(sycl::queue Q
 // Constructors hat compute (not in use currently)
 // Computes regions that allows the compute to be done in one wave. Computes the smallest regions per sub-group that
 // results in one wave. computes a 2d block that is used for both horiz and vert
-#if !USE_ROOT_GROUP
+#if USE_ROOT_GROUP
+persistent_pyramid_octave_config::persistent_pyramid_octave_config(int width, int height)
+#else
 persistent_pyramid_octave_config::persistent_pyramid_octave_config(int width, int height, sycl::queue Q)
   : _device_queue(Q)
   , persistent_sync_size(0)
-#else
-persistent_pyramid_octave_config::persistent_pyramid_octave_config(int width, int height)
-  : persistent_sync_size(0)
 #endif
 {
     reconfigure(width, height);
@@ -207,8 +207,8 @@ void persistent_pyramid_octave_config::reconfigure(int width, int height)
     //         global[1],
     //         sg_block.width,
     //         sg_block.height,
-    //         sg_block.x_remainder,
-    // sg_block.y_remainder);
+    //         x_remainder,
+    // y_remainder);
 
 #if !USE_ROOT_GROUP
     if(use_persistent_block)
@@ -217,12 +217,13 @@ void persistent_pyramid_octave_config::reconfigure(int width, int height)
         size_t wg_grid_size = work_group_grid.size();
         if(wg_grid_size > persistent_sync_size)
         {
-            sycl::free(wg_sync_state, _device_queue);
-            sycl_common::malloc_devT<unsigned char>(work_group_grid.size(),
-                                                    __FILE__,
-                                                    __LINE__,
-                                                    "Failed to allocate persistent blocks synchronization array",
-                                                    _device_queue);
+            sycl::free(sg_block.wg_sync_state, _device_queue);
+            sg_block.wg_sync_state =
+              sycl_common::malloc_devT<unsigned char>(work_group_grid.size(),
+                                                      __FILE__,
+                                                      __LINE__,
+                                                      "Failed to allocate persistent blocks synchronization array",
+                                                      _device_queue);
 
             persistent_sync_size = wg_grid_size; // Update value
         }
@@ -233,9 +234,9 @@ void persistent_pyramid_octave_config::reconfigure(int width, int height)
 #if !USE_ROOT_GROUP
 persistent_pyramid_octave_config::~persistent_pyramid_octave_config()
 {
-    if(wg_sync_state)
+    if(sg_block.wg_sync_state)
     {
-        sycl::free(wg_sync_state, _device_queue);
+        sycl::free(sg_block.wg_sync_state, _device_queue);
     }
 }
 #endif

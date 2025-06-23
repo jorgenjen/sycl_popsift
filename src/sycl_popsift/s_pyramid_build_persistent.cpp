@@ -567,8 +567,10 @@ class BuildOctave
             if(loop_end >= dst_h)
                 loop_end = dst_h; // Limit to last pixel
         }
-        auto root = it.ext_oneapi_get_root_group();
-        // Root group all work_items running kernel
+
+#if USE_ROOT_GROUP
+        auto root = it.ext_oneapi_get_root_group(); // Root group all work_items running kernel
+#endif
         for(; write_y < loop_end; ++write_y) // Modifies write_y want that later
         {
             // write_y++;
@@ -642,7 +644,11 @@ class BuildOctave
               intermediate, src, filter, span, dst_w, write_x, write_y, read_x, read_y, base_pos);
 
 #endif
+#if USE_ROOT_GROUP
             sycl::group_barrier(root);
+#else
+// Use local hand crafted sychronization
+#endif
         }
 
         // Start doing Vert then later we do horiz on data_array so not using sampled image then we can use async load
@@ -672,22 +678,22 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
     const int height = oct_obj.getHeight();
     // persistent_pyramid_octave_config sg_region = compute_persistent_sg_region_block(width, height);
 
-    fprintf(stderr,
-            "Local(%zu, %zu) -- global (%zu, %zu) -- sg_region --  width = %d - height = %d -- x_remainder = %d -- "
-            "y_remainder = %d\n\n",
-            sg_region.local[0],
-            sg_region.local[1],
-            sg_region.global[0],
-            sg_region.global[1],
-            sg_region.sg_block.width,
-            sg_region.sg_block.height,
-            sg_region.sg_block.x_remainder,
-            sg_region.sg_block.y_remainder);
+    // fprintf(stderr,
+    //         "Local(%zu, %zu) -- global (%zu, %zu) -- sg_region --  width = %d - height = %d -- x_remainder = %d -- "
+    //         "y_remainder = %d\n\n",
+    //         sg_region.local[0],
+    //         sg_region.local[1],
+    //         sg_region.global[0],
+    //         sg_region.global[1],
+    //         sg_region.sg_block.width,
+    //         sg_region.sg_block.height,
+    //         sg_region.sg_block.x_remainder,
+    //         sg_region.sg_block.y_remainder);
 
     // if(!sg_region.use_persistent_block)
     //     return false; // Could not use persistent block
 
-#if false
+#if true
     for(auto& plat : sycl::platform::get_platforms())
     {
         std::cout << "CUDA‐SYCL platform name: " << plat.get_info<sycl::info::platform::name>() << "\n"
@@ -716,7 +722,9 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
     // So for from prev version this would also need to be our dependency (not sure if that is good enough not sure
     // this would work in case of other kernels being in flight...)
 
-    // auto props = syclexp::properties{syclexp::use_root_sync}; // Does not seem to be supported by sycl backend
+#if USE_ROOT_GROUP
+    auto props = syclexp::properties{syclexp::use_root_sync}; // Does not seem to be supported by cuda backend for dpc++
+#endif
     if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
                  sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
     {
@@ -738,8 +746,8 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
         // Bindless version
         const float shift = 0.5f * sycl::pow(2.0f, conf.getUpscaleFactor());
 
-        const bool col = sg_region.sg_block.x_remainder != 0;
-        const bool row = sg_region.sg_block.y_remainder != 0;
+        const bool col = sg_region.x_remainder != 0;
+        const bool row = sg_region.y_remainder != 0;
 
         const int buffer_size = (sg_region.local[1] + (Pyramid::span << 2)) * (sg_region.local[0] << 2);
         // printf("THIS IS SHIFT = %f -- widht=%d -- height=%d  -- col = %d -- row = %d -- Buffer_size = %d",
@@ -762,7 +770,9 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
                 auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
 
                 cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
-                                 // props,
+#if USE_ROOT_GROUP
+                                 props,
+#endif
                                  normalizedSource::BuildOctave<true, true>(base->getInputImage(),
                                                                            oct_obj.getDataArray(),
                                                                            oct_obj.getDogArray(),
@@ -787,7 +797,9 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
                 auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
 
                 cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
-                                 // props,
+#if USE_ROOT_GROUP
+                                 props,
+#endif
                                  normalizedSource::BuildOctave<true, false>(base->getInputImage(),
                                                                             oct_obj.getDataArray(),
                                                                             oct_obj.getDogArray(),
@@ -812,7 +824,9 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
                 auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
 
                 cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
-                                 // props,
+#if USE_ROOT_GROUP
+                                 props,
+#endif
                                  normalizedSource::BuildOctave<false, true>(base->getInputImage(),
                                                                             oct_obj.getDataArray(),
                                                                             oct_obj.getDogArray(),
@@ -837,7 +851,9 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
                 auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
 
                 cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
-                                 // props,
+#if USE_ROOT_GROUP
+                                 props,
+#endif
                                  normalizedSource::BuildOctave<false, false>(base->getInputImage(),
                                                                              oct_obj.getDataArray(),
                                                                              oct_obj.getDogArray(),
