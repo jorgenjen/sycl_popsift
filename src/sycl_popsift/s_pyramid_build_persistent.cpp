@@ -1,4 +1,5 @@
 #include "sycl_popsift/common/assist.h"
+#include "sycl_popsift/persistent_configuration.hpp"
 #include "sycl_popsift/popsift.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 #include "sycl_popsift/use_root_group_macro.h" // If we are using root group or handcrafted wg syncrinozation
@@ -657,6 +658,7 @@ class BuildOctave
 
 } // namespace normalizedSource
 
+#if USE_PERSISTENT
 // bool Pyramid::build_octave_one_wave_input(const Config& conf,
 sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
                                                  ImageBase* base,
@@ -664,10 +666,23 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
                                                  sycl::event img_write)
 {
     Octave& oct_obj = _octaves[0];
+    persistent_pyramid_octave_config& sg_region = oct_obj._sg_region;
 
     const int width = oct_obj.getWidth();
     const int height = oct_obj.getHeight();
-    persistent_pyramid_octave_config sg_region = compute_persistent_sg_region_block(width, height);
+    // persistent_pyramid_octave_config sg_region = compute_persistent_sg_region_block(width, height);
+
+    fprintf(stderr,
+            "Local(%zu, %zu) -- global (%zu, %zu) -- sg_region --  width = %d - height = %d -- x_remainder = %d -- "
+            "y_remainder = %d\n\n",
+            sg_region.local[0],
+            sg_region.local[1],
+            sg_region.global[0],
+            sg_region.global[1],
+            sg_region.sg_block.width,
+            sg_region.sg_block.height,
+            sg_region.sg_block.x_remainder,
+            sg_region.sg_block.y_remainder);
 
     // if(!sg_region.use_persistent_block)
     //     return false; // Could not use persistent block
@@ -852,6 +867,7 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 
     return sycl::event();
 }
+#endif // if USE_PERSISTENT
 
 } // namespace popsift
 

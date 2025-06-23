@@ -10,8 +10,9 @@
 // don't think this is used and hence needed
 // #include "sycl_popsift/s_image.hpp"
 #include "sycl/queue.hpp"
-#include "sycl_popsift/common/assist.h"
+// #include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
+#include "sycl_popsift/persistent_configuration.hpp"
 #include "sycl_popsift/use_root_group_macro.h"
 
 #include <sycl/sycl.hpp>
@@ -48,11 +49,7 @@ class OctaveBase
     OctaveBase(sycl::queue Q);
 
 #if USE_PERSISTENT
-    persistent_pyramid_octave_config sg_region;
-#if !USE_ROOT_GROUP
-    // bool* persistent_sync; // For signaling what work groups are done
-    // int persistent_sync_size = 0;
-#endif
+    persistent_pyramid_octave_config _sg_region;
 #endif
 
     void alloc(const Config& conf, int width, int height, int levels);

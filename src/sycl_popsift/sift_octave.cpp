@@ -1,9 +1,10 @@
 #include "sycl_popsift/sift_octave.hpp"
 
 #include "sycl/usm.hpp"
-#include "sycl_popsift/common/assist.h"
+// #include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/common/bindless_helpers.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
+#include "sycl_popsift/persistent_configuration.hpp"
 #include "sycl_popsift/use_root_group_macro.h" // For USE_ROOT_GROUP macro want one definition
 
 #include <sstream>
@@ -16,8 +17,17 @@ namespace syclexp = sycl::ext::oneapi::experimental;
  * OctaveBase
  *************************************************************/
 
+// This is quite ugly with the preprocessor stuff...
 OctaveBase::OctaveBase(sycl::queue Q)
   : _device_queue(Q)
+#if USE_PERSISTENT
+  ,
+#if USE_ROOT_GROUP
+  _sg_region(persistent_pyramid_octave_config())
+#else
+  _sg_region(persistent_pyramid_octave_config(Q))
+#endif
+#endif
 {}
 
 void OctaveBase::alloc(const Config& conf, int width, int height, int levels)
@@ -35,15 +45,8 @@ void OctaveBase::alloc(const Config& conf, int width, int height, int levels)
     _level_complete_events = new sycl::event[levels];
 
     alloc_arrays();
-
-#if !USE_ROOT_GROUP
-    sg_region = compute_persistent_sg_region_block(width, height);
-    if(sg_region.use_persistent_block)
-    {
-        sycl::range<2> work_group_grid = sg_region.global / sg_region.local;
-        if (work_group_grid.size() >
-    }
-
+#if USE_PERSISTENT
+    _sg_region.reconfigure(width, height);
 #endif
 }
 
@@ -150,11 +153,26 @@ void Octave::free_arrays()
 
 void Octave::resetDimensions(const Config& conf, int w, int h)
 {
+    // Config changes need's to be responded to I think during runtime
+    if(_levels - 3 != conf.levels) // conf.levels is searchable levels so there are 3 more octave levels
+    {
+        free_arrays();
+        fprintf(stderr, "Levels have changed since initialization");
+        // Could do this in all cases aswell IDK what is better
+
+        // NOTE: Should mby have this run always to have config changes take effect. Currenly changes to filterGridsize
+        // would not be updated unless also levels change
+        alloc(conf, w, h, conf.levels + 3); // persistent reconfigure called in this function
+
+        return;
+    }
+
     if(w == _w && h == _h)
         return;
 
-#if !USE_ROOT_GROUP
-
+    // For all other cases than being identical we need to reconfigure sg_region
+#if USE_PERSISTENT
+    _sg_region.reconfigure(w, h);
 #endif
 
     if(w * h <= _max_w * _max_h)
@@ -168,18 +186,6 @@ void Octave::resetDimensions(const Config& conf, int w, int h)
     // Larger than current segment -- need to free and allocate again
 
     free_arrays();
-
-    // Only listens to changes when too small
-    if(_levels - 3 != conf.levels) // conf.levels is searchable levels so there are 3 more octave levels
-    {
-        fprintf(stderr, "Levels have changed since initialization");
-        // Could do this in all cases aswell IDK what is better
-
-        // NOTE: Should mby have this run always to have config changes take effect. Currenly changes to filterGridsize
-        // would not be updated unless also levels change
-        alloc(conf, w, h, conf.levels + 3);
-        return;
-    }
 
     _max_w = _w = w;
     _max_h = _h = h;

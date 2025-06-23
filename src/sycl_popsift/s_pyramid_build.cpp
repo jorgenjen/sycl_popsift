@@ -197,10 +197,11 @@ void Pyramid::build_pyramid(const Config& conf,
                 {
                     if(octave == 0)
                     {
+                        // fprintf(stderr, "PRE ONE WAVE \n");
                         // build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
                         sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
 
-                        // printf("AFTER ONE WAVE \n");
+                        // fprintf(stderr, "AFTER ONE WAVE \n");
 
                         // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
 

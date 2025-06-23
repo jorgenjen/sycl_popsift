@@ -4,6 +4,8 @@
 
 namespace popsift {
 
+// Need to cleaan up these structs as alot of asttirbutes are not in use
+
 struct sg_region_blocks
 {
     // Full block dimensions
@@ -36,17 +38,23 @@ struct persistent_pyramid_octave_config
 
     // To make it self contained
     void reconfigure(int width, int height);
-    persistent_pyramid_octave_config() = delete;
 
 #if !USE_ROOT_GROUP
-    bool* wg_sync_flags; // work group status flags for synchronization
+    unsigned char* wg_sync_state; // work group status flags for synchronization
     int persistent_sync_size;
     sycl::queue _device_queue; // Queue for managing the device malloced bool array
 
+    persistent_pyramid_octave_config(sycl::queue Q);
     persistent_pyramid_octave_config(int width, int height, sycl::queue Q);
+
+    ~persistent_pyramid_octave_config();
 #else
+    persistent_pyramid_octave_config();
     persistent_pyramid_octave_config(int width, int height);
 #endif
+
+  private:
+    inline void compute_size(int width, int height); // To not duplicate code
 };
 
 } // namespace popsift
