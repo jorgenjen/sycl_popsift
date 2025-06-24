@@ -18,7 +18,10 @@ struct sg_region_blocks
     int bottom_row_height; // Uses width
 
 #if !USE_ROOT_GROUP
-    unsigned char* wg_sync_state; // work group status flags for synchronization
+    // unsigned char* wg_sync_state; // work group status flags for synchronization
+
+    // Need to be int for use of atomic_ref
+    int* wg_sync_state; // work group status flags for synchronization
 #endif
 
     // Uses remainder to determine which pixel each work item is responsible for
@@ -51,6 +54,7 @@ struct persistent_pyramid_octave_config
     // unsigned char* wg_sync_state; // work group status flags for synchronization
     int persistent_sync_size;
     sycl::queue _device_queue; // Queue for managing the device malloced bool array
+    sycl::event _zeroed_event; // To ensure the memset is done before we start incrementing
 
     persistent_pyramid_octave_config(sycl::queue Q);
     persistent_pyramid_octave_config(int width, int height, sycl::queue Q);

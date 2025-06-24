@@ -219,11 +219,12 @@ void persistent_pyramid_octave_config::reconfigure(int width, int height)
         {
             sycl::free(sg_block.wg_sync_state, _device_queue);
             sg_block.wg_sync_state =
-              sycl_common::malloc_devT<unsigned char>(work_group_grid.size(),
-                                                      __FILE__,
-                                                      __LINE__,
-                                                      "Failed to allocate persistent blocks synchronization array",
-                                                      _device_queue);
+              sycl_common::malloc_devT<int>(work_group_grid.size(),
+                                            __FILE__,
+                                            __LINE__,
+                                            "Failed to allocate persistent blocks synchronization array",
+                                            _device_queue);
+            _zeroed_event = _device_queue.memset(sg_block.wg_sync_state, 0, sizeof(int) * wg_grid_size);
 
             persistent_sync_size = wg_grid_size; // Update value
         }

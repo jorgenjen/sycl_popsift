@@ -461,6 +461,7 @@ namespace normalizedSource {
 // This aspect is required to use sampled image need to add a check for that earlier in selection
 // template<bool if_required>
 
+#define USE_ATOMIC_SYNC 1 // For using atomic ref on the work-group state used for synchronizatio
 #define USE_SHARED_MEM_FOR_INPUT 1
 template<bool REMAINDER_COL, bool REMAINDER_ROW>
 class BuildOctave
@@ -642,19 +643,115 @@ class BuildOctave
 #else
             horiz_bindless_input<REMAINDER_COL>(
               intermediate, src, filter, span, dst_w, write_x, write_y, read_x, read_y, base_pos);
+#endif
 
-#endif
-#if USE_ROOT_GROUP
-            sycl::group_barrier(root);
-#else
-// Use local hand crafted sychronization
-#endif
+            // Synchronize and then do horiz
         }
 
         // Start doing Vert then later we do horiz on data_array so not using sampled image then we can use async load
         // of next row
         // Do vert for this one then make loop over the levels for the rest with horiz from prev and vert from
         // intermediate
+
+#if USE_ROOT_GROUP
+        sycl::group_barrier(root);
+#else
+        // Use local hand crafted sychronization
+        // Need to increment as we are done with horiz
+
+        sycl::group group = it.get_group();
+        sycl::group_barrier(group);       // Ensure all have done horiz
+        if(it.get_local_linear_id() == 0) // only one per work_group
+        {
+            int group_pos = it.get_group(1);
+            int group_final_index = it.get_group_range(1) - 1;
+            int group_linear_pos = it.get_group_linear_id();
+#if USE_ATOMIC_SYNC
+            // Need to be a 4 byte wide data type like int or unsigned int for this to work...
+            sycl::atomic_ref<int,
+                             sycl::memory_order_relaxed,
+                             sycl::memory_scope_device,
+                             sycl::access::address_space::global_space>(sg_region.wg_sync_state[group_linear_pos])++;
+            // .fetch_add(1);
+
+            // Active wait-- spin lock
+            if(group_pos == 0)
+            {
+                // left border -- only depends on right
+
+                sycl::atomic_ref<int,
+                                 sycl::memory_order_relaxed,
+                                 sycl::memory_scope_device,
+                                 sycl::access::address_space::global_space>
+                  right(sg_region.wg_sync_state[group_linear_pos + 1]);
+
+                while(right < 1) {}
+            }
+            else if(group_pos == group_final_index)
+            {
+                // right most border -- only depends on left
+
+                sycl::atomic_ref<int,
+                                 sycl::memory_order_relaxed,
+                                 sycl::memory_scope_device,
+                                 sycl::access::address_space::global_space>
+                  left(sg_region.wg_sync_state[group_linear_pos - 1]);
+                while(left < 1) {}
+            }
+            else
+            {
+                // Normal in the middle  -- depends on left and right
+                sycl::atomic_ref<int,
+                                 sycl::memory_order_relaxed,
+                                 sycl::memory_scope_device,
+                                 sycl::access::address_space::global_space>
+                  right(sg_region.wg_sync_state[group_linear_pos + 1]);
+
+                sycl::atomic_ref<int,
+                                 sycl::memory_order_relaxed,
+                                 sycl::memory_scope_device,
+                                 sycl::access::address_space::global_space>
+                  left(sg_region.wg_sync_state[group_linear_pos - 1]);
+
+                while(left < 1 && right < 1) {}
+            }
+
+#else
+            // BUG: This deadlocks probably does not get the update and the value is stale
+
+            // Use normal memory think that should be fine for global aswell...
+            // Could cause deadlock if it never let's other's work or if it does not properly update the value on
+            // each iteration and just continues to read the initial stale value -- if so atomics would be required
+
+            // Convert to int to use less registers (might help)
+            // int group_pos = it.get_group(1);
+            // int group_final_index = it.get_group_range(1) - 1;
+            // int group_linear_pos = it.get_group_linear_id();
+            // work group leader
+            sg_region.wg_sync_state[group_linear_pos]++; // Signal horiz done
+
+            // Active wait -- spin lock
+            if(group_pos == 0)
+            {
+                // left border -- only depends on right
+                while(sg_region.wg_sync_state[group_linear_pos + 1] < 1) {}
+            }
+            else if(group_pos == group_final_index)
+            {
+                // right most border -- only depends on left
+                while(sg_region.wg_sync_state[group_linear_pos - 1] < 1) {}
+            }
+            else
+            {
+                // Normal in the middle  -- depends on left and right
+                while(sg_region.wg_sync_state[group_linear_pos - 1] < 1 &&
+                      sg_region.wg_sync_state[group_linear_pos + 1] < 1)
+                {}
+            }
+#endif
+        }
+        sycl::group_barrier(group); // Wait for wg leader to finish spin lock ensuring dependencies are done
+#endif
 
         // Then we do DoG -- Or do DoG as we are storing the next level as we have the value in register and only need
         // to load one value (prev_level) and then we can store DoG as we go giving another justification for doing it
@@ -763,7 +860,7 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
             // printf("We doing col and row whop whop\n");
             // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
             return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
-                cgh.depends_on({d_gauss_write, img_write});
+                cgh.depends_on({d_gauss_write, img_write, sg_region._zeroed_event});
 
                 // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
 
@@ -790,7 +887,7 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
         {
             // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
             return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
-                cgh.depends_on({d_gauss_write, img_write});
+                cgh.depends_on({d_gauss_write, img_write, sg_region._zeroed_event});
 
                 // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
 
@@ -817,7 +914,7 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
         {
             // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
             return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
-                cgh.depends_on({d_gauss_write, img_write});
+                cgh.depends_on({d_gauss_write, img_write, sg_region._zeroed_event});
 
                 // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
 
@@ -844,7 +941,7 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
         {
             // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
             return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
-                cgh.depends_on({d_gauss_write, img_write});
+                cgh.depends_on({d_gauss_write, img_write, sg_region._zeroed_event});
 
                 // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
 
