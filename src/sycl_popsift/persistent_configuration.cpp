@@ -166,9 +166,7 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     int wg_per_cu = max_sg_per_cu / lead_sg_count; // Number of work_groups per compute unit
 
     auto device = _device_queue.get_device();
-    int local_mem_size = static_cast<float>(device.get_info<sycl::info::device::local_mem_size>());
-
-    int max_local_mem_size = local_mem_size / wg_per_cu;
+    int device_local_mem_size = static_cast<float>(device.get_info<sycl::info::device::local_mem_size>());
 
     // For full sliding window in local mem and async load of corresponding dog row (final sum part)
     int vert_local_size = (((largest_span << 1) + 1) * local[1]) * local[0] + local[0] * local[1];
@@ -190,9 +188,10 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
                 wg_per_cu,
                 vert_local_size,
                 horiz_local_size);
-    int mem_per_wg = local_mem_size / wg_per_cu; // Assumes local mem is per CU which it is for GPU's
-    local_mem_vert = mem_per_wg >= vert_local_size;
-    local_mem_horiz = mem_per_wg >= horiz_local_size;
+    int max_mem_per_wg = device_local_mem_size / wg_per_cu; // Assumes local mem is per CU which it is for GPU's
+
+    local_mem_vert = max_mem_per_wg >= vert_local_size;
+    local_mem_horiz = max_mem_per_wg >= horiz_local_size;
     if(local_mem_horiz && local_mem_vert)
     {
         local_mem_size = sycl::max(vert_local_size, horiz_local_size);

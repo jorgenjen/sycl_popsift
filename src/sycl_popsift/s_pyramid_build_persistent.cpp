@@ -910,32 +910,34 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
         const bool col = sg_region.x_remainder != 0;
         const bool row = sg_region.y_remainder != 0;
 
-        auto device = _device_queue.get_device();
-
-        // Get local memory size in bytes
-        size_t local_mem_size = device.get_info<sycl::info::device::local_mem_size>();
-
+        // auto device = _device_queue.get_device();
+        //
+        // // Get local memory size in bytes
+        // size_t local_mem_size = device.get_info<sycl::info::device::local_mem_size>();
+        //
         const int buffer_size = (sg_region.local[1] + (Pyramid::largest_span << 2)) * (sg_region.local[0] << 2);
-        const int vert_buffer_size =
-          ((sg_region.local[1] * 13) * sg_region.local[0]); // might be better to store the 13 values in registers
-                                                            // might be problematic if register pressure get's too high
-        printf("Local(%zu, %zu) -- global(%zu, %zu) --- Local mem size = %zu -- largest span = %d\n",
-               sg_region.local[0],
-               sg_region.local[1],
-               sg_region.global[0],
-               sg_region.global[1],
-               local_mem_size,
-               largest_span);
-        printf("THIS IS SHIFT = %f -- widht=%d -- height=%d  -- col = %d -- row = %d -- Buffer_size = %d -- "
-               "vert_buffer_size = %d",
-               shift,
-               width,
-               height,
-               col,
-               row,
-               buffer_size,
-               vert_buffer_size);
+        std::printf("Buffer_size = %d -- sg_region.local_mem_size = %d\n", buffer_size, sg_region.local_mem_size);
+        // const int vert_buffer_size =
+        //   ((sg_region.local[1] * 13) * sg_region.local[0]); // might be better to store the 13 values in registers
+        // might be problematic if register pressure get's too high
+        // printf("Local(%zu, %zu) -- global(%zu, %zu) --- Local mem size = %zu -- largest span = %d\n",
+        //        sg_region.local[0],
+        //        sg_region.local[1],
+        //        sg_region.global[0],
+        //        sg_region.global[1],
+        //        local_mem_size,
+        //        largest_span);
+        // printf("THIS IS SHIFT = %f -- widht=%d -- height=%d  -- col = %d -- row = %d -- Buffer_size = %d -- "
+        //        "vert_buffer_size = %d",
+        //        shift,
+        //        width,
+        //        height,
+        //        col,
+        //        row,
+        //        buffer_size,
+        //        vert_buffer_size);
 
+        // sg_region.local_mem_size
         if(col && row)
         {
             // printf("We doing col and row whop whop\n");
@@ -945,7 +947,8 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 
                 // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
 
-                auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+                // auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+                auto buffer = sycl::local_accessor<float, 1>(sg_region.local_mem_size, cgh);
 
                 cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
 #if USE_ROOT_GROUP
@@ -972,7 +975,8 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 
                 // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
 
-                auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+                // auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+                auto buffer = sycl::local_accessor<float, 1>(sg_region.local_mem_size, cgh);
 
                 cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
 #if USE_ROOT_GROUP
@@ -999,7 +1003,8 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 
                 // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
 
-                auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+                // auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+                auto buffer = sycl::local_accessor<float, 1>(sg_region.local_mem_size, cgh);
 
                 cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
 #if USE_ROOT_GROUP
@@ -1026,7 +1031,8 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 
                 // TODO: Need to figure out what type of buffer I need for vert and assign the largest one to use
 
-                auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+                // auto buffer = sycl::local_accessor<float, 1>(buffer_size, cgh);
+                auto buffer = sycl::local_accessor<float, 1>(sg_region.local_mem_size, cgh);
 
                 cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
 #if USE_ROOT_GROUP
