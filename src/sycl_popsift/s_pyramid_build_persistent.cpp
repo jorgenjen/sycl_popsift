@@ -451,10 +451,22 @@ static inline void horiz_local_mem(float* intermediate,
     intermediate[write_x + write_y * dst_w] = out * 255.0f;
 }
 
+static inline void vert_persistent(float* intermediate,
+                                   sycl::local_accessor<float, 1> buffer,
+                                   const float* filter,
+                                   const int span,
+                                   const int dst_w,
+                                   const int write_x,
+                                   int write_y,
+                                   int base_pos)
+{
+    // Vert kernel that resues registers
+}
+
 #define USE_ATOMIC_SYNC 1 // For using atomic ref on the work-group state used for synchronizatio
 
-// synchronizes horiz execution so that all data needed to do vert is available and correct
-static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it)
+// synchronizes vert execution so that ll data needed to do horiz is available and correct
+static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it, int wait_on_state)
 {
 #if USE_ROOT_GROUP
     sycl::group_barrier(root);
@@ -487,7 +499,7 @@ static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it)
                              sycl::access::address_space::global_space>
               right(wg_sync_state[group_linear_pos + 1]);
 
-            while(right < 1) {}
+            while(right < wait_on_state) {}
         }
         else if(group_pos == group_final_index)
         {
@@ -498,7 +510,7 @@ static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it)
                              sycl::memory_scope_device,
                              sycl::access::address_space::global_space>
               left(wg_sync_state[group_linear_pos - 1]);
-            while(left < 1) {}
+            while(left < wait_on_state) {}
         }
         else
         {
@@ -507,15 +519,15 @@ static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it)
                              sycl::memory_order_relaxed,
                              sycl::memory_scope_device,
                              sycl::access::address_space::global_space>
-              right(wg_sync_state[group_linear_pos + 1]);
+              left(wg_sync_state[group_linear_pos - 1]);
 
             sycl::atomic_ref<int,
                              sycl::memory_order_relaxed,
                              sycl::memory_scope_device,
                              sycl::access::address_space::global_space>
-              left(wg_sync_state[group_linear_pos - 1]);
+              right(wg_sync_state[group_linear_pos + 1]);
 
-            while(left < 1 && right < 1) {}
+            while(left < wait_on_state && right < wait_on_state) {}
         }
 
 #else
@@ -550,6 +562,76 @@ static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it)
             while(wg_sync_state[group_linear_pos - 1] < 1 && wg_sync_state[group_linear_pos + 1] < 1) {}
         }
 #endif
+    }
+    sycl::group_barrier(group); // Wait for wg leader to finish spin lock ensuring dependencies are done
+#endif
+}
+
+// synchronizes horiz execution so that all data needed to do vert is available and correct
+static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it, int wait_on_state)
+{
+#if USE_ROOT_GROUP
+    sycl::group_barrier(root);
+#else
+    // Use local hand crafted sychronization -- Volatile requires it all to be scheduled in one wave
+    sycl::group group = it.get_group();
+    sycl::group_barrier(group); // Ensure all have done horiz
+
+    if(it.get_local_linear_id() == 0) // only one per work_group
+    {
+        // Convert to int to use less registers (might help)
+        int group_pos_0 = it.get_group(0);
+        int group_pos_1 = it.get_group(1);
+        int group_range_0 = it.get_group_range(0);
+        int group_range_1 = it.get_group_range(1);
+        // int group_linear_pos = it.get_group_linear_id();
+        // Need to be a 4 byte wide data type like int or unsigned int for this to work...
+        sycl::atomic_ref<int,
+                         sycl::memory_order_relaxed,
+                         sycl::memory_scope_device,
+                         sycl::access::address_space::global_space>(wg_sync_state[it.get_group_linear_id()])++;
+
+        // Active wait-- spin lock
+        if(group_pos_0 == 0)
+        {
+            // top border -- only depends on wg below
+
+            sycl::atomic_ref<int,
+                             sycl::memory_order_relaxed,
+                             sycl::memory_scope_device,
+                             sycl::access::address_space::global_space>
+              below(wg_sync_state[(group_pos_0 + 1) * group_range_1 + group_pos_1]);
+
+            while(below < wait_on_state) {}
+        }
+        else if(group_pos_0 == group_range_0 - 1)
+        {
+            // right most border -- only depends on left
+
+            sycl::atomic_ref<int,
+                             sycl::memory_order_relaxed,
+                             sycl::memory_scope_device,
+                             sycl::access::address_space::global_space>
+              above(wg_sync_state[(group_pos_0 - 1) * group_range_1 + group_pos_1]);
+            while(above < wait_on_state) {}
+        }
+        else
+        {
+            // Normal in the middle  -- depends on left and right
+            sycl::atomic_ref<int,
+                             sycl::memory_order_relaxed,
+                             sycl::memory_scope_device,
+                             sycl::access::address_space::global_space>
+              above(wg_sync_state[(group_pos_0 - 1) * group_range_1 + group_pos_1]);
+
+            sycl::atomic_ref<int,
+                             sycl::memory_order_relaxed,
+                             sycl::memory_scope_device,
+                             sycl::access::address_space::global_space>
+              below(wg_sync_state[(group_pos_0 + 1) * group_range_1 + group_pos_1]);
+
+            while(above < wait_on_state && below < wait_on_state) {}
+        }
     }
     sycl::group_barrier(group); // Wait for wg leader to finish spin lock ensuring dependencies are done
 #endif
@@ -611,20 +693,6 @@ class BuildOctave
     {
         const auto sg_width = it.get_sub_group().get_max_local_range()[0]; // 32 in cuda
 
-        // Attempt to set to false at compiletime if template argumnts are false (not sure if lambda funtion with if
-        // consexpr would do that better (or some other method))
-
-        // const bool edge_col =
-        //   REMAINDER_COL ? sg_region.x_remainder != 0 && (it.get_global_range(1) - it.get_global_id(1) <=
-        //   sg_width)
-        //                 : false; // right most column -- Always false if we dono't have col
-        //
-        // const bool edge_row = REMAINDER_ROW
-        //                         ? sg_region.y_remainder != 0 && (it.get_global_range(0) - it.get_global_id(0)) ==
-        //                         1 : false; // Bottom row
-        //
-        // const bool normal = REMAINDER_COL || REMAINDER_ROW ? !(edge_col || edge_row) : true;
-
         // Used for input only
         const float* filter = &d_gauss->dd.filter[0];
         const int span = d_gauss->dd.span[0];
@@ -653,20 +721,6 @@ class BuildOctave
         // accumulation of floating point error
 
         int loop_end = write_y + sg_region.height;
-
-        // if(it.get_sub_group().leader())
-        // {
-        //     syclexp::printf("write_x = %4d -- write_y = %4d -- glob_x = %4d -- glob_y = %4d -- group_y = %4d -->
-        //     "
-        //                     "read_x = %6f -- read_y = %6f \n",
-        //                     write_x,
-        //                     write_y,
-        //                     static_cast<int>(it.get_global_id(1)),
-        //                     static_cast<int>(it.get_global_id(0)),
-        //                     static_cast<int>(it.get_group(0)),
-        //                     read_x,
-        //                     read_y);
-        // }
 
         if constexpr(REMAINDER_ROW)
         {
@@ -737,11 +791,34 @@ class BuildOctave
 #endif
         }
         // Synchronize and then do horiz
-        horiz_sync_for_vert(sg_region.wg_sync_state, it);
+        horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
 
         // Start doing Vert then later we do horiz on data_array so not using sampled image then we can use async
         // load of next row Do vert for this one then make loop over the levels for the rest with horiz from prev
         // and vert from intermediate
+
+        // Vert
+
+        // float int6 = intermediate[write_y * dst_w + write_x];
+        // float int11 = intermediate[(write_y - 1) * dst_w + write_x];
+        // float int10 = intermediate[(write_y - 2) * dst_w + write_x];
+        // float int9 = intermediate[(write_y - 3) * dst_w + write_x];
+        // float int8 = intermediate[(write_y - 4) * dst_w + write_x];
+        // float int7 = intermediate[(write_y - 5) * dst_w + write_x];
+        // float int6 = intermediate[(write_y - 6) * dst_w + write_x];
+        // float int5 = intermediate[(write_y - 7) * dst_w + write_x];
+        // float int4 = intermediate[(write_y - 8) * dst_w + write_x];
+        // float int3 = intermediate[(write_y - 9) * dst_w + write_x];
+        // float int2 = intermediate[(write_y - 10) * dst_w + write_x];
+        // float int1 = intermediate[(write_y - 11) * dst_w + write_x];
+        // float int0 = intermediate[(write_y - 12) * dst_w + write_x];
+
+        for(; write_y >= (it.get_global_id(0) * sg_region.height); write_y--)
+        {
+            // Move the other way for potential better cache
+        }
+
+        vert_sync_for_horiz(sg_region.wg_sync_state, it, 2);
 
         // Then we do DoG -- Or do DoG as we are storing the next level as we have the value in register and only
         // need to load one value (prev_level) and then we can store DoG as we go giving another justification for
@@ -833,14 +910,31 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
         const bool col = sg_region.x_remainder != 0;
         const bool row = sg_region.y_remainder != 0;
 
-        const int buffer_size = (sg_region.local[1] + (Pyramid::span << 2)) * (sg_region.local[0] << 2);
-        // printf("THIS IS SHIFT = %f -- widht=%d -- height=%d  -- col = %d -- row = %d -- Buffer_size = %d",
-        //        shift,
-        //        width,
-        //        height,
-        //        col,
-        //        row,
-        //        buffer_size);
+        auto device = _device_queue.get_device();
+
+        // Get local memory size in bytes
+        size_t local_mem_size = device.get_info<sycl::info::device::local_mem_size>();
+
+        const int buffer_size = (sg_region.local[1] + (Pyramid::largest_span << 2)) * (sg_region.local[0] << 2);
+        const int vert_buffer_size =
+          ((sg_region.local[1] * 13) * sg_region.local[0]); // might be better to store the 13 values in registers
+                                                            // might be problematic if register pressure get's too high
+        printf("Local(%zu, %zu) -- global(%zu, %zu) --- Local mem size = %zu -- largest span = %d\n",
+               sg_region.local[0],
+               sg_region.local[1],
+               sg_region.global[0],
+               sg_region.global[1],
+               local_mem_size,
+               largest_span);
+        printf("THIS IS SHIFT = %f -- widht=%d -- height=%d  -- col = %d -- row = %d -- Buffer_size = %d -- "
+               "vert_buffer_size = %d",
+               shift,
+               width,
+               height,
+               col,
+               row,
+               buffer_size,
+               vert_buffer_size);
 
         if(col && row)
         {

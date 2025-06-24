@@ -41,29 +41,32 @@ struct persistent_pyramid_octave_config
     sycl::range<2> global;
     sycl::range<2> local;
 
+    // If we can use local mem for horiz and vert
+    // Depends on how much shared memory that is available
+    bool local_mem_horiz = false;
+    bool local_mem_vert = false;
+    int local_mem_size;
+
     int x_remainder;
     int y_remainder;
 
+    sycl::queue _device_queue; // for array when we have that and device info (mem size)
     // To make it self contained
-    void reconfigure(int width, int height);
-
-#if USE_ROOT_GROUP
-    persistent_pyramid_octave_config();
-    persistent_pyramid_octave_config(int width, int height);
-#else
-    // unsigned char* wg_sync_state; // work group status flags for synchronization
-    int persistent_sync_size;
-    sycl::queue _device_queue; // Queue for managing the device malloced bool array
-    sycl::event _zeroed_event; // To ensure the memset is done before we start incrementing
+    void reconfigure(int width, int height, int largest_span);
 
     persistent_pyramid_octave_config(sycl::queue Q);
-    persistent_pyramid_octave_config(int width, int height, sycl::queue Q);
+    persistent_pyramid_octave_config(int width, int height, int largest_span, sycl::queue Q);
+
+#if !USE_ROOT_GROUP
+    // unsigned char* wg_sync_state; // work group status flags for synchronization
+    int persistent_sync_size;
+    sycl::event _zeroed_event; // To ensure the memset is done before we start incrementing
 
     ~persistent_pyramid_octave_config();
 #endif
 
   private:
-    inline void compute_size(int width, int height); // To not duplicate code
+    inline void compute_size(int width, int height, int largest_span); // To not duplicate code
 };
 
 } // namespace popsift

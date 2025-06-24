@@ -377,7 +377,9 @@ sycl::event PopSift::init_gauss_filter()
     }
 
 #ifdef USE_PERSISTENT
-    popsift::Pyramid::span = _h_gauss.dd.span[0];
+    popsift::Pyramid::largest_span = max_span();
+
+    // Find largest span and use that
 
     // const int span = d_gauss->dd.span[0];
 

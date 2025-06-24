@@ -139,6 +139,18 @@ class PopSift
     inline static int sg_per_cu = -1; // sub-group per execution-unit -- Start as not defined(-1)
     inline static int num_cu;
 
+#if USE_PERSISTENT
+
+    inline int max_span()
+    {
+        // _h_gauss.inc.span[_h_gauss.required_filter_stages + 2] should always be largest I think
+        // The final if always largest aswell as it's based on the sigma which grows with the level
+
+        // return max(_h_gauss.dd.span[0], _h_gauss.inc.span[_h_gauss.required_filter_stages + 2]);
+        return _h_gauss.inc.span[_config.levels + 2];
+    }
+#endif
+
   private:
     void modifyImage();
     void printImageRegion(sycl::range<2> horiz, sycl::range<2> vert);

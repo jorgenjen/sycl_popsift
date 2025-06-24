@@ -7,6 +7,10 @@
 #include "sycl_popsift/persistent_configuration.hpp"
 #include "sycl_popsift/use_root_group_macro.h" // For USE_ROOT_GROUP macro want one definition
 
+#if USE_PERSISTENT
+#include "sycl_popsift/sift_pyramid.hpp"
+#endif
+
 #include <sstream>
 
 namespace popsift {
@@ -21,12 +25,7 @@ namespace syclexp = sycl::ext::oneapi::experimental;
 OctaveBase::OctaveBase(sycl::queue Q)
   : _device_queue(Q)
 #if USE_PERSISTENT
-  ,
-#if USE_ROOT_GROUP
-  _sg_region(persistent_pyramid_octave_config())
-#else
-  _sg_region(persistent_pyramid_octave_config(Q))
-#endif
+  , _sg_region(persistent_pyramid_octave_config(Q))
 #endif
 {}
 
@@ -46,7 +45,7 @@ void OctaveBase::alloc(const Config& conf, int width, int height, int levels)
 
     alloc_arrays();
 #if USE_PERSISTENT
-    _sg_region.reconfigure(width, height);
+    _sg_region.reconfigure(width, height, popsift::Pyramid::largest_span);
 #endif
 }
 
@@ -172,7 +171,7 @@ void Octave::resetDimensions(const Config& conf, int w, int h)
 
     // For all other cases than being identical we need to reconfigure sg_region
 #if USE_PERSISTENT
-    _sg_region.reconfigure(w, h);
+    _sg_region.reconfigure(w, h, popsift::Pyramid::largest_span);
 #endif
 
     if(w * h <= _max_w * _max_h)

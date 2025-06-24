@@ -6,6 +6,7 @@
 #include "sycl_popsift/use_root_group_macro.h"
 
 #include <cstdio>
+#include <iostream>
 
 namespace popsift {
 
@@ -13,7 +14,8 @@ namespace popsift {
 
 #if USE_PERSISTENT
 // inline void persistent_pyramid_octave_config::compute_size(int height, int width)
-inline void persistent_pyramid_octave_config::compute_size(int width, int height)
+
+inline void persistent_pyramid_octave_config::compute_size(int width, int height, int largest_span)
 {
     // TODO: IT should be sub_group width for kernel x 13
 
@@ -160,40 +162,84 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
 
     local = {static_cast<size_t>(lead_y), static_cast<size_t>(lead_x * sg_block.width)};
     global = {static_cast<size_t>(total_y), static_cast<size_t>(total_x * sg_block.width)};
+
+    int wg_per_cu = max_sg_per_cu / lead_sg_count; // Number of work_groups per compute unit
+
+    auto device = _device_queue.get_device();
+    int local_mem_size = static_cast<float>(device.get_info<sycl::info::device::local_mem_size>());
+
+    int max_local_mem_size = local_mem_size / wg_per_cu;
+
+    // For full sliding window in local mem and async load of corresponding dog row (final sum part)
+    int vert_local_size = (((largest_span << 1) + 1) * local[1]) * local[0] + local[0] * local[1];
+    // The size of this one is quite constant with respect to image sizes so should work on most GPU's
+    // Also quite constant with respect to number of Compute Units on the GPU as it's a sliding window
+    // Takes around 40k to 50k bytes
+
+    // Could  try a hybrid approach with a part for register storage and part for local mem to balance it out
+    // Could be difficult to implement need to know how many registers that I can use
+
+    int horiz_local_size = ((largest_span << 1) + local[1]) * (local[0] * 2); // Buffering of horiz rows
+
+    // int horiz_local_isze = ((largest_span * 2) + local[1]) * 2) *local[]
+
+    std::printf("w=%d h=%d largest_pan = %d wg_per_cu = %d --> Vert_local_size = %d ---- Horiz_local_size = %d\n",
+                width,
+                height,
+                largest_span,
+                wg_per_cu,
+                vert_local_size,
+                horiz_local_size);
+    int mem_per_wg = local_mem_size / wg_per_cu; // Assumes local mem is per CU which it is for GPU's
+    local_mem_vert = mem_per_wg >= vert_local_size;
+    local_mem_horiz = mem_per_wg >= horiz_local_size;
+    if(local_mem_horiz && local_mem_vert)
+    {
+        local_mem_size = sycl::max(vert_local_size, horiz_local_size);
+    }
+    else if(local_mem_horiz)
+    {
+        local_mem_size = horiz_local_size;
+    }
+    else if(local_mem_vert)
+    {
+        local_mem_size = vert_local_size;
+    }
+    else
+    {
+        local_mem_size = 0; // No shared memory used in this case
+    }
+
+    std::printf("Final local mem size = %d -- local(%zu, %zu)\n", local_mem_size, local[0], local[1]);
+
     // }
 }
 
 // Basic contruructors
-#if USE_ROOT_GROUP
-persistent_pyramid_octave_config::persistent_pyramid_octave_config()
-  : use_persistent_block(false)
-{}
-#else
 persistent_pyramid_octave_config::persistent_pyramid_octave_config(sycl::queue Q)
   : _device_queue(Q)
   , use_persistent_block(false)
   , persistent_sync_size(0)
 {}
-#endif
 
 // Constructors hat compute (not in use currently)
 // Computes regions that allows the compute to be done in one wave. Computes the smallest regions per sub-group that
 // results in one wave. computes a 2d block that is used for both horiz and vert
-#if USE_ROOT_GROUP
-persistent_pyramid_octave_config::persistent_pyramid_octave_config(int width, int height)
-#else
-persistent_pyramid_octave_config::persistent_pyramid_octave_config(int width, int height, sycl::queue Q)
+persistent_pyramid_octave_config::persistent_pyramid_octave_config(int width,
+                                                                   int height,
+                                                                   int largest_span,
+                                                                   sycl::queue Q)
   : _device_queue(Q)
+  , use_persistent_block(false)
   , persistent_sync_size(0)
-#endif
 {
-    reconfigure(width, height);
+    reconfigure(width, height, largest_span);
 }
 
-void persistent_pyramid_octave_config::reconfigure(int width, int height)
+void persistent_pyramid_octave_config::reconfigure(int width, int height, int largest_span)
 {
     // printf("REconfigurint this persistent config!! \n\n");
-    compute_size(width, height);
+    compute_size(width, height, largest_span);
 
     // fprintf(stderr,
     //         "w=%d h=%d -->Local(%zu, %zu) -- global (%zu, %zu) -- sg_region --  width = %d - height = %d -- "
@@ -209,6 +255,8 @@ void persistent_pyramid_octave_config::reconfigure(int width, int height)
     //         sg_block.height,
     //         x_remainder,
     // y_remainder);
+
+    // Figure out the maximum shared memory size per work_group
 
 #if !USE_ROOT_GROUP
     if(use_persistent_block)

@@ -111,7 +111,7 @@ class Pyramid
 #endif
 
 #ifdef USE_PERSISTENT
-    inline static int span;
+    inline static int largest_span;
 #endif
 
     enum GaussTableChoice
