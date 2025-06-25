@@ -517,34 +517,27 @@ class BuildOctave
         // Synchronize and then do horiz
         horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
 
+        // #if false
         // Start doing Vert then later we do horiz on data_array so not using sampled image then we can use async
         // load of next row Do vert for this one then make loop over the levels for the rest with horiz from prev
         // and vert from intermediate
 
         // Vert
+        sycl::group_barrier(it.get_group());
 
         // TODO:  Add tempalte and if constexpr to have different versions based on if horiz and vert are using shared
         // meme solution need non shared mem solution aswell to support that (don't think any GPU would not support
         // horiz as is now so only needed for vert I think)
 
-        // Load in window from bottom (synchronous for now)
-
-        // auto compute = compute_tile.get_multi_ptr<sycl::access::decorated::yes>();
-
-        // auto inter = sycl::address_space_cast<sycl::access::address_space::global_space,
-        // sycl::access::decorated::yes>(
-        //   intermediate);
-
-        // Need to deal with edge for col so that we load correct number of pixels in that case
-
-        const int row_width = [&]() {
+        const auto row_width = [&]() {
             // could remove constexpr to avoid having so many templated classes which could increase load times
             if constexpr(REMAINDER_ROW)
             {
                 if(it.get_group(1) == (it.get_group_range(1) - 1))
                 {
                     // final wg column
-                    return it.get_local_range(1) - (it.get_global_range() - dst_w);
+                    // return (static_cast<int>(it.get_local_range(1) - it.get_global_range(1)) - dst_w);
+                    return it.get_local_range(1) - (it.get_global_range(1) - dst_w);
                 }
                 // Rest of columns
                 return it.get_local_range(1);
@@ -556,11 +549,8 @@ class BuildOctave
             }
         }();
 
-        // bottom row of our region
-        // const int bottom_row =
-        //   it.get_group(1) * it.get_local_range(1) + (it.get_group(0) * sg_region.height + write_y) * dst_w;
+        // bottom of our region
         int start_pos = write_y * dst_w + it.get_group(1) * it.get_local_range(1);
-
         // Bottom row position
         auto intermediate_ptr =
           sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(
@@ -578,29 +568,29 @@ class BuildOctave
 
         // Load into middle of window
         sycl::device_event evt_center =
-          group.async_work_group_copy(intermediate_ptr, buffer_ptr + (span * row_width), row_width);
+          group.async_work_group_copy(buffer_ptr + (span * row_width), intermediate_ptr, row_width);
 
         // Changes with loop matching level -- initial is zero always
         float* filter = &d_gauss->inc.filter[0];
-        // Events for loading in next and waiting on prev to do compute
-        // sycl::device_event above_1_evt;
-        sycl::device_event above_2_evt = sycl::device_event();
-        sycl::device_event below_1_evt = sycl::device_event();
-        sycl::device_event below_2_evt = sycl::device_event();
+
+        std::optional<sycl::device_event> above_events[2]; // Avoids using deleted default constructor of device_event
+        std::optional<sycl::device_event> below_events[2]; // Avoids using deleted default constructor of device_event
 
         // if(write_y - 1 >= 0)
         // {
         // Above is always safe in this case as we are at the bottom of our region hence one above always exits
 
         // Event is reused in loop
-        sycl::device_event above_1_evt =
-          group.async_work_group_copy(intermediate_ptr - dst_w, buffer_ptr + ((span - 1) * row_width), row_width);
+        // sycl::device_event above_1_evt =
+        above_events[0] =
+          group.async_work_group_copy(buffer_ptr + ((span - 1) * row_width), intermediate_ptr - dst_w, row_width);
         // }
 
         if(write_y + 1 < dst_h)
         {
-            below_1_evt =
-              group.async_work_group_copy(intermediate_ptr + dst_w, buffer_ptr + ((span + 1) * row_width), row_width);
+            // below_1_evt =
+            below_events[0] =
+              group.async_work_group_copy(buffer_ptr + ((span + 1) * row_width), intermediate_ptr + dst_w, row_width);
         }
 
         // Need clamping logic
@@ -612,6 +602,8 @@ class BuildOctave
         float g;
 
         int i_max = dst_h - write_y - 1;
+
+#if true
         for(int i = 1; i <= span; ++i)
         {
             int next_i = i + 1;
@@ -620,23 +612,23 @@ class BuildOctave
                 // Above is known to be safe here aslong as we keep mimimum height of block to largest_span + 1
                 // As then we know it's withing bounds for top row and we can omit the check here (we do need it later
                 // on when we start sliding the window up)
-                above_2_evt = group.async_work_group_copy(
-                  intermediate_ptr - dst_w * next_i, buffer_ptr + ((span - next_i) * row_width), row_width);
+                above_events[1] = group.async_work_group_copy(
+                  buffer_ptr + ((span - next_i) * row_width), intermediate_ptr - dst_w * next_i, row_width);
 
                 if(i <= i_max)
                 {
-                    below_2_evt = group.async_work_group_copy(
-                      intermediate_ptr + dst_w * next_i, buffer_ptr + ((span + next_i) * row_width), row_width);
+                    below_events[1] = group.async_work_group_copy(
+                      buffer_ptr + ((span + next_i) * row_width), intermediate_ptr + dst_w * next_i, row_width);
                 }
             }
             g = filter[i];
-            above_1_evt.wait();
+            above_events[0]->wait();
             int val_above = buffer[(span - i) * row_width + it.get_local_id(1)];
             // Could compute and add to out here but I think doing it all in one seems to be more
             // sensible right? But if we are properly memory bound doing it here makes more sense as the
             // extra multliplication don't hurt in that case and more is done earlier
 
-            below_1_evt.wait();
+            below_events[0]->wait();
             // Clamp to edge
             int val_below = i <= i_max ? buffer[(span + i) * row_width + it.get_local_id(1)]
                                        : buffer[(span + i_max) * row_width + it.get_local_id(1)];
@@ -657,22 +649,22 @@ class BuildOctave
 
             if(next_i <= span)
             {
-                above_1_evt = group.async_work_group_copy(
-                  intermediate_ptr - dst_w * next_i, buffer_ptr + ((span - next_i) * row_width), row_width);
+                above_events[0] = group.async_work_group_copy(
+                  buffer_ptr + ((span - next_i) * row_width), intermediate_ptr - dst_w * next_i, row_width);
 
                 if(i <= i_max)
                 {
-                    below_1_evt = group.async_work_group_copy(
-                      intermediate_ptr + dst_w * next_i, buffer_ptr + ((span + next_i) * row_width), row_width);
+                    above_events[0] = group.async_work_group_copy(
+                      buffer_ptr + ((span + next_i) * row_width), intermediate_ptr + dst_w * next_i, row_width);
                 }
             }
 
             g = filter[i];
 
-            above_2_evt.wait();
+            above_events[1]->wait();
             val_above = buffer[(span - i) * row_width + it.get_local_id(1)];
 
-            below_2_evt.wait();
+            below_events[1]->wait();
             // Clamp to edge
             val_below = i <= i_max ? buffer[(span + i) * row_width + it.get_local_id(1)]
                                    : buffer[(span + i_max) * row_width + it.get_local_id(1)];
@@ -680,6 +672,7 @@ class BuildOctave
             out += ((val_above + val_below) * g);
             // Now we have done second iteration and next to wait is above and below 1 and prefetch 2 so we iterate
         }
+#endif
 
         for(; write_y >= (it.get_global_id(0) * sg_region.height); write_y--)
         {
