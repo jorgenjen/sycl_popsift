@@ -602,11 +602,11 @@ class BuildOctave
         float g;
 
         int i_max = dst_h - write_y - 1;
-
-#if true
+        int next_i;
         for(int i = 1; i <= span; ++i)
         {
-            int next_i = i + 1;
+            // int next_i = i + 1;
+            next_i = i + 1;
             if(next_i <= span)
             {
                 // Above is known to be safe here aslong as we keep mimimum height of block to largest_span + 1
@@ -652,7 +652,7 @@ class BuildOctave
                 above_events[0] = group.async_work_group_copy(
                   buffer_ptr + ((span - next_i) * row_width), intermediate_ptr - dst_w * next_i, row_width);
 
-                if(i <= i_max)
+                if(next_i <= i_max)
                 {
                     above_events[0] = group.async_work_group_copy(
                       buffer_ptr + ((span + next_i) * row_width), intermediate_ptr + dst_w * next_i, row_width);
@@ -664,19 +664,93 @@ class BuildOctave
             above_events[1]->wait();
             val_above = buffer[(span - i) * row_width + it.get_local_id(1)];
 
-            below_events[1]->wait();
-            // Clamp to edge
-            val_below = i <= i_max ? buffer[(span + i) * row_width + it.get_local_id(1)]
-                                   : buffer[(span + i_max) * row_width + it.get_local_id(1)];
+            // Ensures we only wait when the event was registered and ensures clamping
+            if(i <= i_max)
+            {
+                below_events[1]->wait();
+                val_below = buffer[(span + i) * row_width + it.get_local_id(1)];
+            }
+            else
+            {
+                // Clamp to edge
+                val_below = buffer[(span + i_max) * row_width + it.get_local_id(1)];
+            }
+            // val_below = i <= i_max ? buffer[(span + i) * row_width + it.get_local_id(1)]
+            //                        : buffer[(span + i_max) * row_width + it.get_local_id(1)];
 
             out += ((val_above + val_below) * g);
             // Now we have done second iteration and next to wait is above and below 1 and prefetch 2 so we iterate
         }
-#endif
+        // Do we want to do write async aswell? Or will that just result in worse performance? mby test
+        data_array[0][write_y * dst_w + write_x] = out; // Store synchronously add asycn option for test later
 
+        // int i_min = 0
+        // 0 is the min that we can go to
+
+        // Move intermediate pointer to next row above so that we can just subtract one dst_w of the pointer each
+        // iteration to load correct positon ( span + 1) * dst_w we need to subtract to do that
+
+        std::optional<sycl::device_event> next_row_event; // Avoids using deleted default constructor of device_event
+        int next_row_fetch = write_y - (span + 1);        // Set it to top row aswell so we can just decrement the value
+        // if(write_y - (span + 1) >= 0)
+        if(next_row_fetch >= 0)
+        {
+            // If greater than zero we can load next row
+            intermediate_ptr -= (span + 1) * dst_w;
+            next_row_event =
+              group.async_work_group_copy(buffer_ptr + ((span << 1) + 1) * row_width, intermediate_ptr, row_width);
+        }
+
+        // Now we have intermediate_ptr at top and we can load that into the free row
+
+        // int i_max = dst_h - write_y - 1;
+        // if (write_y span + 1
+
+        write_y--; // Decrement write_y as we have done the first iteration
         for(; write_y >= (it.get_global_id(0) * sg_region.height); write_y--)
         {
             // Move the other way for potential better cache
+
+            // free row starts at bottom of window (with data in row below as that is how it's left after initial work
+            // pre loop)
+            for(int free = (span << 1); free >= 0; free--)
+            {
+                // Inner loop that moves the prefetch location
+
+                int row_pos = free - (span + 1);
+                if(row_pos >= 0)
+                {
+                    val = buffer[row_pos * row_width + it.get_local_id(1)];
+                    out = val * filter[0]; // Reset by setting
+                }
+                else
+                {
+                    // wrap around
+                    row_pos += (span << 1) + 2;
+                    val = buffer[row_pos * row_width + it.get_local_id(1)];
+                    out = val * filter[0]; // Reset by setting
+                }
+                // TODO: FOlow outline below and check that the whole logic works with wraparound and such
+
+                // Now we have done self (the row we are writing to where the weight is only used once)
+                // now we need to do the span on each side
+                for(int offset = 0; offset < span; offset++)
+                {
+                    // filter[offset] // the filter we use here
+                }
+                // The final one when offset is equal to span then we need to wait on the next_row_event (that is
+                // hopefully complete a long tie ago)
+                next_row_event->wait();
+            }
+
+            // We have widow of span * 2 + 1 and we have one more row for prefetching
+            // We need to shufle the rows around and read from correct rows with respect to our movement up
+
+            next_row_fetch--; // Moving to next row that we are going to fetch
+            if(next_row_fetch >= 0)
+            {
+                // We can fetch next row into the moving free row in local memory
+            }
         }
 
         vert_sync_for_horiz(sg_region.wg_sync_state, it, 2);
