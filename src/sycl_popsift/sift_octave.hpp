@@ -12,8 +12,8 @@
 #include "sycl/queue.hpp"
 // #include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
+#include "sycl_popsift/persistent_config_macros.h" // For USE_ROOT_GROUP macro want one definition
 #include "sycl_popsift/persistent_configuration.hpp"
-#include "sycl_popsift/use_root_group_macro.h"
 
 #include <sycl/sycl.hpp>
 // #include "sift_constants.h"

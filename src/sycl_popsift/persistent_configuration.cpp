@@ -2,8 +2,8 @@
 #include "sycl_popsift/persistent_configuration.hpp"
 
 #include "sycl_popsift/common/debug_macros.hpp"
+#include "sycl_popsift/persistent_config_macros.h"
 #include "sycl_popsift/popsift.hpp"
-#include "sycl_popsift/use_root_group_macro.h"
 
 #include <cstdio>
 #include <iostream>
@@ -28,9 +28,12 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     int max_total_sg = PopSift::sg_per_cu * PopSift::num_cu;
     int max_sg_per_cu = PopSift::sg_per_cu; // Generic would like to figoure out for kernel specificaly if possible
 
-    constexpr int start_height = 13; // This could start out as smaller but not sure how far down it is worth it to use
-                                     // it (Could test and graph that and include in results)
-    sg_block.width = 32;             // Replace 32 with sg widht of device
+    // This could start out as smaller but not sure how far down it is worth it to use
+    // it (Could test and graph that and include in results)
+    int start_height =
+      largest_span + 1; // makes first vert iteration of vert safe to load in above without checking bounds
+
+    sg_block.width = 32; // Replace 32 with sg widht of device
     sg_block.height = start_height;
 
     int x_blocks = width / sg_block.width;
@@ -133,15 +136,16 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
 
     int free_sg_per_cu = (max_total_sg - (x_blocks + 1) * (y_blocks + 1)) / PopSift::num_cu;
 
+#if MULTI_ROW_WG
     int lead_sg_count = 0;
     int lead_x = 0;
     int lead_y = 0;
-    for(int x = 1; x < 8; x++)
+    for(int x = 1; x <= 8; x++)
     {
         if(total_x % x != 0)
             continue;
 
-        for(int y = 1; y < 8; y++)
+        for(int y = 1; y <= 8; y++)
         {
             int sg_count = x * y;
             if(total_y % y != 0)
@@ -164,12 +168,44 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     global = {static_cast<size_t>(total_y), static_cast<size_t>(total_x * sg_block.width)};
 
     int wg_per_cu = max_sg_per_cu / lead_sg_count; // Number of work_groups per compute unit
+#else
+
+    // Async_wrok_group copy only works when load is identical for all work_items in work_group hence multiple rows does
+    // not work(or becomes difficult to program (not too bad just set stride and they could load in one after the other
+    // for rows results in less intuitive memory layout)
+
+    // Easier to limit our selves to one row per work-group will result in more work_group synchronization which is not
+    // great and less chance for cache hits (most likely)
+
+    // This configuration results in larger vert memory usage per compute unit (should still work most cases)
+    int lead_x = 0;
+    for(int x = 1; x <= 32; x++)
+    {
+        if(total_x % x != 0)
+            continue;
+        int sg_count = x;
+
+        if(max_sg_per_cu % x <= free_sg_per_cu)
+        {
+            // accepted
+            lead_x = x;
+        }
+    }
+
+    local = {1, static_cast<size_t>(lead_x * sg_block.width)};
+    global = {static_cast<size_t>(total_y), static_cast<size_t>(total_x * sg_block.width)};
+
+    int wg_per_cu = max_sg_per_cu / lead_x; // Number of work_groups per compute unit
+#endif
 
     auto device = _device_queue.get_device();
     int device_local_mem_size = static_cast<float>(device.get_info<sycl::info::device::local_mem_size>());
 
-    // For full sliding window in local mem and async load of corresponding dog row (final sum part)
-    int vert_local_size = (((largest_span << 1) + 1) * local[1]) * local[0] + local[0] * local[1];
+    //
+    // each sub_group uses a sliding window of height (span * 2 +1) and widht of sg_widht. one row is added for async
+    // loading of next. loca([0])*local[1]) final part is for async loading prev level for doing Difference of Gaussian
+    // (DoG) on the fly to reuse data better
+    int vert_local_size = (((largest_span << 1) + 1 + 1) * local[1]) * local[0] + local[0] * local[1];
     // The size of this one is quite constant with respect to image sizes so should work on most GPU's
     // Also quite constant with respect to number of Compute Units on the GPU as it's a sliding window
     // Takes around 40k to 50k bytes
@@ -189,6 +225,9 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
                 vert_local_size,
                 horiz_local_size);
     int max_mem_per_wg = device_local_mem_size / wg_per_cu; // Assumes local mem is per CU which it is for GPU's
+
+    // local_mem_vert = (max_mem_per_wg >= vert_local_size) &&  ((largest_span << 1) + 1)   // If doing more complex
+    // vert start for better cache we need more things to be true
 
     local_mem_vert = max_mem_per_wg >= vert_local_size;
     local_mem_horiz = max_mem_per_wg >= horiz_local_size;

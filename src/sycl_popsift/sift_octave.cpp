@@ -4,8 +4,8 @@
 // #include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/common/bindless_helpers.hpp"
 #include "sycl_popsift/common/debug_macros.hpp"
+#include "sycl_popsift/persistent_config_macros.h" // For USE_ROOT_GROUP macro want one definition
 #include "sycl_popsift/persistent_configuration.hpp"
-#include "sycl_popsift/use_root_group_macro.h" // For USE_ROOT_GROUP macro want one definition
 
 #if USE_PERSISTENT
 #include "sycl_popsift/sift_pyramid.hpp"

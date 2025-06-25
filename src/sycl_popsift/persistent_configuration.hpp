@@ -1,6 +1,6 @@
 #pragma once
 
-#include "sycl_popsift/use_root_group_macro.h"
+#include "sycl_popsift/persistent_config_macros.h"
 
 #include <sycl/queue.hpp>
 

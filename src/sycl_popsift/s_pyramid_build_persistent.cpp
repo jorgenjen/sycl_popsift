@@ -1,294 +1,12 @@
 #include "sycl_popsift/common/assist.h"
+#include "sycl_popsift/persistent_config_macros.h" // If we are using root group or handcrafted wg syncrinozation
 #include "sycl_popsift/persistent_configuration.hpp"
 #include "sycl_popsift/popsift.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
-#include "sycl_popsift/use_root_group_macro.h" // If we are using root group or handcrafted wg syncrinozation
 
 namespace syclexp = sycl::ext::oneapi::experimental;
 
 namespace popsift {
-
-// Region that a sub-group takes responsibility for
-// struct sg_region_blocks
-// {
-//     // Full block dimensions
-//     int width;
-//     int height;
-//
-//     // Information about remainder
-//     int bottom_row_height; // Uses width
-//
-//     // Not sure if it would be faster to compute this based on with and height in the kernel
-//     int x_remainder;
-//     int y_remainder;
-//
-//     // Uses remainder to determine which pixel each work item is responsible for
-//     int col_pixel_length;     // How many pixels per SG (multiple of sg_widht)
-//     int corner_pixel_length;  // starts at end of col_pixel for final SG
-//     int second_corner_length; // Does full rows but not same as rest to not overload corner
-// };
-//
-// struct persistent_pyramid_octave_config
-// {
-//     bool use_persistent_block;
-//     sg_region_blocks sg_block;
-//     // int num_corner_blocks; // From corner walking up column (per column in case of two)
-//
-//     // Might add this but I don't think it's needed
-//     // int num_col_for_col;   // How many columns are used for dealing with remainder_column
-//     sycl::range<2> global;
-//     sycl::range<2> local;
-// };
-
-// This should be part of experimental as it is relying on root group
-
-#define DEBUGG_LOG 0
-// Computes regions that allows the compute to be done in one wave. Computes the smallest regions per sub-group that
-// results in one wave. computes a 2d block that is used for both horiz and vert
-// persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, int height)
-// {
-//     // Compute based on num_cu and sg_per_cu
-//
-//     // Minimum block is 32x13 (32 along x for contigous reads of one sg)
-//     // TODO: IT should be sub_group width for kernel x 13
-//
-//     // IMPORTANT:
-//     // TODO: Figure out how many registers the kernel uses per thread and how many registers each thread can use to
-//     then
-//     // figure out the how many sub_groups that can reside on a compute_unit based on register usage Currently it
-//     assumes
-//     // that registers is not a bottleneck which might not always be the case
-//     // int sg_width = 32; // set to 32 for now
-//     int max_total_sg = PopSift::sg_per_cu * PopSift::num_cu;
-//     int max_sg_per_cu = PopSift::sg_per_cu; // Generic would like to figoure out for kernel specificaly if possible
-//
-//     persistent_pyramid_octave_config sg_region;
-//
-//     constexpr int start_height = 13; // This could start out as smaller but not sure how far down it is worth it to
-//     use
-//                                      // it (Could test and graph that and include in results)
-//     sg_region.sg_block.width = 32;   // Replace 32 with sg widht of device
-//     sg_region.sg_block.height = start_height;
-//
-//     int x_blocks = width / sg_region.sg_block.width;
-//     int y_blocks;
-//
-//     sg_region.sg_block.x_remainder = width % sg_region.sg_block.width;
-//     // int y_remainder;
-//
-//     int total_x = sg_region.sg_block.x_remainder == 0 ? x_blocks : x_blocks + 1;
-//     int total_y;
-//
-//     int total_blocks;
-//     int num_col_sg;
-//     int right_col_pixels;
-//
-//     // We can cover a whole wave for this octave
-//     // Find max block size that covers a wave
-//     while(true) // Terminated in if
-//     {
-//         y_blocks = height / sg_region.sg_block.height;
-//
-//         sg_region.sg_block.y_remainder = height % sg_region.sg_block.height;
-//
-//         total_y = sg_region.sg_block.y_remainder == 0 ? y_blocks : y_blocks + 1;
-//
-//         // if(sg_region.sg_block.x_remainder == 0 && sg_region.sg_block.y_remainder == 0)
-//         //     total_blocks = x_blocks * y_blocks;
-//         // else if(sg_region.sg_block.x_remainder == 0)
-//         //     total_blocks = x_blocks * (y_blocks + 1);
-//         // else if(sg_region.sg_block.x_remainder == 0)
-//         //     total_blocks = (x_blocks + 1) * y_blocks;
-//         // else
-//         //     total_blocks = (x_blocks + 1) * (y_blocks + 1);
-//
-//         total_blocks = total_x * total_y;
-//
-//         if(total_blocks <= max_total_sg)
-//         {
-//             if(sg_region.sg_block.height == start_height)
-//             {
-//                 // Did not cover a full wave with initial block size hence not usnig
-//                 sg_region.use_persistent_block = false;
-//                 break;
-//             }
-//             sg_region.use_persistent_block = true;
-// // We have reached a block size that is large enough to cover no more than one wave
-// #if DEBUGG_LOG
-//             printf("WE DONE --> total_blocks = %d - Max_total_sg = %d -- num_col_sg = %d -- x_blocks = %d -- "
-//                    "main_region = %d -- "
-//                    "x_remainder = %d -- y_remainder = %d\n",
-//                    total_blocks,
-//                    max_total_sg,
-//                    num_col_sg,
-//                    x_blocks,
-//                    x_blocks * y_blocks,
-//                    sg_region.sg_block.x_remainder,
-//                    sg_region.sg_block.y_remainder);
-// #endif
-//
-//             break;
-//         }
-//         sg_region.sg_block.height++;
-//     }
-//
-//     if(sg_region.use_persistent_block)
-//     {
-//         // Use simple wraping for remainder column poor coaleced reads but each work-item is used at all times
-//         besides
-//         // for corner with this division
-//         // Look at bottom for file for initial outline of a more coaleced way of spliting the column work
-//
-//         // Could use second column to do remainder column if we have enough free sub_groups
-//
-//         // int total_col_pixels = x_remainder * height;
-//
-//         sg_region.sg_block.bottom_row_height = height % sg_region.sg_block.height;
-//
-//         if(sg_region.sg_block.x_remainder != 0)
-//         {
-//             int total_col_pixels = sg_region.sg_block.x_remainder * height;
-//
-//             int total_full_width = total_col_pixels / sg_region.sg_block.width;
-//             int corner_pixels = total_col_pixels % sg_region.sg_block.width;
-//
-//             int col_sg_full_width = total_full_width / y_blocks;
-//             int corner_full_width = total_full_width % y_blocks;
-//
-//             sg_region.sg_block.col_pixel_length = col_sg_full_width * sg_region.sg_block.width;
-//             sg_region.sg_block.corner_pixel_length = corner_full_width * sg_region.sg_block.width + corner_pixels;
-//
-// #if DEBUGG_LOG
-//             printf(
-//               "\n col_pixels = %d -- col_pixel_length = %d -- corner_pixel = %d -- total_col_pixels = %d -- Normal "
-//               "block pixel count = %d\n\t Corner_pixels = %d -- corner_full_widht = %d -- col_sg_full_width = %d\n",
-//               total_col_pixels,
-//               sg_region.sg_block.col_pixel_length,
-//               sg_region.sg_block.corner_pixel_length,
-//               total_col_pixels,
-//               sg_region.sg_block.width * sg_region.sg_block.height,
-//               corner_pixels,
-//               corner_full_width,
-//               col_sg_full_width);
-// #endif
-//
-//             if(sg_region.sg_block.corner_pixel_length > sg_region.sg_block.col_pixel_length)
-//             {
-//                 // Try again but this time using two sub_groups for corner
-//                 col_sg_full_width = total_full_width / (y_blocks - 1); // One less static_cast<size_t>(given to
-//                 corn)er corner_full_width = total_full_width % (y_blocks - 1);
-//
-//                 sg_region.sg_block.col_pixel_length = col_sg_full_width * sg_region.sg_block.width;
-//                 sg_region.sg_block.second_corner_length =
-//                   ((corner_full_width + 1) / 2) * sg_region.sg_block.width; // Posetive integer ceil;
-//                 sg_region.sg_block.corner_pixel_length =
-//                   ((corner_full_width / 2) * sg_region.sg_block.width) + corner_pixels; // Floor division
-//             }
-//             else
-//             {
-//                 // Only need one corner
-//                 sg_region.sg_block.second_corner_length = 0; // Meaning it's not in use
-//             }
-//
-// #if DEBUGG_LOG
-//             printf(
-//               "\n col_pixels = %d -- col_pixel_length = %d -- corner_pixel = %d -- total_col_pixels = %d -- Normal "
-//               "block pixel count = %d\n\t Corner_pixels = %d -- corner_full_widht = %d -- col_sg_full_width = %d -- "
-//               "second_corner_length = %d \n",
-//               total_col_pixels,
-//               sg_region.sg_block.col_pixel_length,
-//               sg_region.sg_block.corner_pixel_length,
-//               total_col_pixels,
-//               sg_region.sg_block.width * sg_region.sg_block.height,
-//               corner_pixels,
-//               corner_full_width,
-//               col_sg_full_width,
-//               sg_region.sg_block.second_corner_length);
-// #endif
-//         }
-//         else
-//         {
-//             sg_region.sg_block.col_pixel_length = 0;
-//             sg_region.sg_block.corner_pixel_length = 0;
-//             sg_region.sg_block.second_corner_length = 0;
-//         }
-//
-// #if DEBUGG_LOG
-//         printf("x_blocks = %d -- y_blocks = %d\n", x_blocks, y_blocks);
-// #endif
-//
-//         // Figure out global and local
-//         // Want to use work_groups to ensure SG located in neigbourhood are on same CU allowing for better L1
-//         // utilization
-//
-//         // Find biggest functioning work_group that allows for full occupancy in our configuration
-//
-//         int free_sg_per_cu = (max_total_sg - (x_blocks + 1) * (y_blocks + 1)) / PopSift::num_cu;
-//
-//         int lead_sg_count = 0;
-//         int lead_x = 0;
-//         int lead_y = 0;
-//         for(int x = 1; x < 8; x++)
-//         {
-//             if(total_x % x != 0)
-//                 continue;
-//
-//             for(int y = 1; y < 8; y++)
-//             {
-//                 int sg_count = x * y;
-//                 if(total_y % y != 0)
-//                     continue;
-//
-//                 if(max_sg_per_cu % sg_count <= free_sg_per_cu)
-//                 {
-//                     // Accepted
-//                     if(lead_sg_count < sg_count)
-//                     {
-//                         lead_sg_count = sg_count;
-//                         lead_x = x;
-//                         lead_y = y;
-//                     }
-//                 }
-//             }
-//         }
-//
-// #if DEBUGG_LOG
-//         printf("lead_sg_count = %d -- lead_x = %d -- lead_y = %d -- free_sg_per_cu = %d -- max_total_sg = %d\n",
-//                lead_sg_count,
-//                lead_x,
-//                lead_y,
-//                free_sg_per_cu,
-//                max_total_sg);
-// #endif
-//
-//         sg_region.local = {static_cast<size_t>(lead_y), static_cast<size_t>(lead_x * sg_region.sg_block.width)};
-//         sg_region.global = {static_cast<size_t>(total_y), static_cast<size_t>(total_x * sg_region.sg_block.width)};
-//
-// #if DEBUGG_LOG
-//         printf("\n\nWidth = %d height= %d --> normal_block (%d, %d), final_row_height = %d -- col_pixel_length = %d
-//         -- "
-//                "corner_pixel = %d -- corner_2_pixel = %d\n",
-//                width,
-//                height,
-//                sg_region.sg_block.width,
-//                sg_region.sg_block.height,
-//                sg_region.sg_block.bottom_row_height,
-//                sg_region.sg_block.col_pixel_length,
-//                sg_region.sg_block.corner_pixel_length,
-//                sg_region.sg_block.second_corner_length);
-//
-//         printf("\tLocal (%zu, %zu) -- Global (%zu, %zu)\n",
-//                sg_region.local[0],
-//                sg_region.local[1],
-//                sg_region.global[0],
-//                sg_region.global[1]);
-//         printf("\ty_remainder = %d == %d\n\n\n", sg_region.sg_block.y_remainder,
-//         sg_region.sg_block.bottom_row_height);
-// #endif
-//     }
-//
-//     return sg_region;
-// }
 
 template<bool REMAINDER_COL>
 static inline void horiz_bindless_input(float* intermediate,
@@ -694,8 +412,8 @@ class BuildOctave
         const auto sg_width = it.get_sub_group().get_max_local_range()[0]; // 32 in cuda
 
         // Used for input only
-        const float* filter = &d_gauss->dd.filter[0];
-        const int span = d_gauss->dd.span[0];
+        const float* filter_input = &d_gauss->dd.filter[0];
+        const int span_input = d_gauss->dd.span[0];
 
         const int write_x = it.get_global_id(1); // Constant in normal block
         // int write_y = it.get_group(0) * sg_region.height; // Changes in normal block aswell
@@ -706,14 +424,14 @@ class BuildOctave
 
         // Not sure if there is a point of using this for input level -- As we can't async load
         const int base_pos =
-          (it.get_local_range(1) + (span << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1) + span;
+          (it.get_local_range(1) + (span_input << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1) + span_input;
 
         // Second buffer row (there are two per row in the work-group)
-        const int base_pos_2 =
-          (it.get_local_range(1) + (span << 1)) * ((it.get_local_id(0) << 1) + 1) + it.get_local_id(1) + span;
+        const int base_pos_2 = (it.get_local_range(1) + (span_input << 1)) * ((it.get_local_id(0) << 1) + 1) +
+                               it.get_local_id(1) + span_input;
 
         // const int rel_span = ((1 / dst_w) * span); // Relative span value used for offset
-        const float rel_span = float(span) / dst_w; // Relative span value used for offset
+        const float rel_span = float(span_input) / dst_w; // Relative span value used for offset
 
         // for(int i = 0; i < sg_region.height; i++)
 
@@ -739,21 +457,24 @@ class BuildOctave
 #if USE_SHARED_MEM_FOR_INPUT
             buffer[base_pos] = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y}); // every one does this
 
-            if(it.get_local_id(1) < span)
+            if(it.get_local_id(1) < span_input)
             {
                 // load left side (lenght of span)
-                buffer[base_pos - span] = syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
+                buffer[base_pos - span_input] =
+                  syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
             }
-            else if(it.get_local_id(1) >= (it.get_local_range(1) - span))
+            else if(it.get_local_id(1) >= (it.get_local_range(1) - span_input))
             {
-                buffer[base_pos + span] = syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
+                buffer[base_pos + span_input] =
+                  syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
             }
 
             // Here would be good to do async load of next row but does not seem to be possible to do with bindless
             // images But for remaining parts it will be not sure if we should use local mem for this part however
             sycl::group_barrier(it.get_group()); // Ensure all is loaded before we do horiz
 
-            horiz_local_mem<REMAINDER_COL>(intermediate, buffer, filter, span, dst_w, write_x, write_y, base_pos);
+            horiz_local_mem<REMAINDER_COL>(
+              intermediate, buffer, filter_input, span_input, dst_w, write_x, write_y, base_pos);
 
 #else
             horiz_bindless_input<REMAINDER_COL>(
@@ -773,21 +494,24 @@ class BuildOctave
 #if USE_SHARED_MEM_FOR_INPUT
             buffer[base_pos_2] = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
 
-            if(it.get_local_id(1) < span)
+            if(it.get_local_id(1) < span_input)
             {
-                buffer[base_pos_2 - span] = syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
+                buffer[base_pos_2 - span_input] =
+                  syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
             }
-            else if(it.get_local_id(1) >= (it.get_local_range(1) - span))
+            else if(it.get_local_id(1) >= (it.get_local_range(1) - span_input))
             {
-                buffer[base_pos_2 + span] = syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
+                buffer[base_pos_2 + span_input] =
+                  syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
             }
 
             sycl::group_barrier(it.get_group());
 
-            horiz_local_mem<REMAINDER_COL>(intermediate, buffer, filter, span, dst_w, write_x, write_y, base_pos_2);
+            horiz_local_mem<REMAINDER_COL>(
+              intermediate, buffer, filter_input, span_input, dst_w, write_x, write_y, base_pos_2);
 #else
             horiz_bindless_input<REMAINDER_COL>(
-              intermediate, src, filter, span, dst_w, write_x, write_y, read_x, read_y, base_pos);
+              intermediate, src, filter_input, span_input, dst_w, write_x, write_y, read_x, read_y, base_pos);
 #endif
         }
         // Synchronize and then do horiz
@@ -799,19 +523,163 @@ class BuildOctave
 
         // Vert
 
-        // float int6 = intermediate[write_y * dst_w + write_x];
-        // float int11 = intermediate[(write_y - 1) * dst_w + write_x];
-        // float int10 = intermediate[(write_y - 2) * dst_w + write_x];
-        // float int9 = intermediate[(write_y - 3) * dst_w + write_x];
-        // float int8 = intermediate[(write_y - 4) * dst_w + write_x];
-        // float int7 = intermediate[(write_y - 5) * dst_w + write_x];
-        // float int6 = intermediate[(write_y - 6) * dst_w + write_x];
-        // float int5 = intermediate[(write_y - 7) * dst_w + write_x];
-        // float int4 = intermediate[(write_y - 8) * dst_w + write_x];
-        // float int3 = intermediate[(write_y - 9) * dst_w + write_x];
-        // float int2 = intermediate[(write_y - 10) * dst_w + write_x];
-        // float int1 = intermediate[(write_y - 11) * dst_w + write_x];
-        // float int0 = intermediate[(write_y - 12) * dst_w + write_x];
+        // TODO:  Add tempalte and if constexpr to have different versions based on if horiz and vert are using shared
+        // meme solution need non shared mem solution aswell to support that (don't think any GPU would not support
+        // horiz as is now so only needed for vert I think)
+
+        // Load in window from bottom (synchronous for now)
+
+        // auto compute = compute_tile.get_multi_ptr<sycl::access::decorated::yes>();
+
+        // auto inter = sycl::address_space_cast<sycl::access::address_space::global_space,
+        // sycl::access::decorated::yes>(
+        //   intermediate);
+
+        // Need to deal with edge for col so that we load correct number of pixels in that case
+
+        const int row_width = [&]() {
+            // could remove constexpr to avoid having so many templated classes which could increase load times
+            if constexpr(REMAINDER_ROW)
+            {
+                if(it.get_group(1) == (it.get_group_range(1) - 1))
+                {
+                    // final wg column
+                    return it.get_local_range(1) - (it.get_global_range() - dst_w);
+                }
+                // Rest of columns
+                return it.get_local_range(1);
+            }
+            else
+            {
+                // There is no remainder hence all are full rows
+                return it.get_local_range(1);
+            }
+        }();
+
+        // bottom row of our region
+        // const int bottom_row =
+        //   it.get_group(1) * it.get_local_range(1) + (it.get_group(0) * sg_region.height + write_y) * dst_w;
+        int start_pos = write_y * dst_w + it.get_group(1) * it.get_local_range(1);
+
+        // Bottom row position
+        auto intermediate_ptr =
+          sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(
+            intermediate + start_pos);
+
+        // auto inter =
+        //   sycl::make_ptr<sycl::access::address_space::global_space, sycl::access::decorated::yes>(intermediate);
+        // auto intermeidate_ptr = inter.template get_multi_ptr<sycl::access::decorated::yes>();
+        auto buffer_ptr = buffer.template get_multi_ptr<sycl::access::decorated::yes>();
+
+        // Changes with loop matching level -- initial is zero always
+        int span = d_gauss->inc.span[0];
+
+        sycl::group group = it.get_group();
+
+        // Load into middle of window
+        sycl::device_event evt_center =
+          group.async_work_group_copy(intermediate_ptr, buffer_ptr + (span * row_width), row_width);
+
+        // Changes with loop matching level -- initial is zero always
+        float* filter = &d_gauss->inc.filter[0];
+        // Events for loading in next and waiting on prev to do compute
+        // sycl::device_event above_1_evt;
+        sycl::device_event above_2_evt = sycl::device_event();
+        sycl::device_event below_1_evt = sycl::device_event();
+        sycl::device_event below_2_evt = sycl::device_event();
+
+        // if(write_y - 1 >= 0)
+        // {
+        // Above is always safe in this case as we are at the bottom of our region hence one above always exits
+
+        // Event is reused in loop
+        sycl::device_event above_1_evt =
+          group.async_work_group_copy(intermediate_ptr - dst_w, buffer_ptr + ((span - 1) * row_width), row_width);
+        // }
+
+        if(write_y + 1 < dst_h)
+        {
+            below_1_evt =
+              group.async_work_group_copy(intermediate_ptr + dst_w, buffer_ptr + ((span + 1) * row_width), row_width);
+        }
+
+        // Need clamping logic
+
+        evt_center.wait();
+
+        float val = buffer[span * row_width + it.get_local_id(1)];
+        float out = val * filter[0];
+        float g;
+
+        int i_max = dst_h - write_y - 1;
+        for(int i = 1; i <= span; ++i)
+        {
+            int next_i = i + 1;
+            if(next_i <= span)
+            {
+                // Above is known to be safe here aslong as we keep mimimum height of block to largest_span + 1
+                // As then we know it's withing bounds for top row and we can omit the check here (we do need it later
+                // on when we start sliding the window up)
+                above_2_evt = group.async_work_group_copy(
+                  intermediate_ptr - dst_w * next_i, buffer_ptr + ((span - next_i) * row_width), row_width);
+
+                if(i <= i_max)
+                {
+                    below_2_evt = group.async_work_group_copy(
+                      intermediate_ptr + dst_w * next_i, buffer_ptr + ((span + next_i) * row_width), row_width);
+                }
+            }
+            g = filter[i];
+            above_1_evt.wait();
+            int val_above = buffer[(span - i) * row_width + it.get_local_id(1)];
+            // Could compute and add to out here but I think doing it all in one seems to be more
+            // sensible right? But if we are properly memory bound doing it here makes more sense as the
+            // extra multliplication don't hurt in that case and more is done earlier
+
+            below_1_evt.wait();
+            // Clamp to edge
+            int val_below = i <= i_max ? buffer[(span + i) * row_width + it.get_local_id(1)]
+                                       : buffer[(span + i_max) * row_width + it.get_local_id(1)];
+
+            out += ((val_above + val_below) * g);
+
+            // Second iteration of the same just using different variables for events could do the same with array of
+            // events and do mod to figoure out which one to use but this should be less expensive than doing mod
+            // (though less readable)
+
+            // Next iteration
+            if(next_i > span) // Exit check
+                break;
+
+            i = next_i; // Not sure if incrementing is faster ?
+            next_i++;
+            // Next iteration with swaped event variables
+
+            if(next_i <= span)
+            {
+                above_1_evt = group.async_work_group_copy(
+                  intermediate_ptr - dst_w * next_i, buffer_ptr + ((span - next_i) * row_width), row_width);
+
+                if(i <= i_max)
+                {
+                    below_1_evt = group.async_work_group_copy(
+                      intermediate_ptr + dst_w * next_i, buffer_ptr + ((span + next_i) * row_width), row_width);
+                }
+            }
+
+            g = filter[i];
+
+            above_2_evt.wait();
+            val_above = buffer[(span - i) * row_width + it.get_local_id(1)];
+
+            below_2_evt.wait();
+            // Clamp to edge
+            val_below = i <= i_max ? buffer[(span + i) * row_width + it.get_local_id(1)]
+                                   : buffer[(span + i_max) * row_width + it.get_local_id(1)];
+
+            out += ((val_above + val_below) * g);
+            // Now we have done second iteration and next to wait is above and below 1 and prefetch 2 so we iterate
+        }
 
         for(; write_y >= (it.get_global_id(0) * sg_region.height); write_y--)
         {
@@ -842,14 +710,17 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
     const int height = oct_obj.getHeight();
     // persistent_pyramid_octave_config sg_region = compute_persistent_sg_region_block(width, height);
 
-    // fprintf(stderr,
-    //         "Local(%zu, %zu) -- global (%zu, %zu) -- sg_region --  width = %d - height = %d -- x_remainder = %d
-    //         -- " "y_remainder = %d\n\n", sg_region.local[0], sg_region.local[1], sg_region.global[0],
-    //         sg_region.global[1],
-    //         sg_region.sg_block.width,
-    //         sg_region.sg_block.height,
-    //         sg_region.sg_block.x_remainder,
-    //         sg_region.sg_block.y_remainder);
+    fprintf(stderr,
+            "Local(%zu, %zu) -- global (%zu, %zu) -- sg_region --  width = %d - height = %d -- x_remainder = %d --"
+            " y_remainder = % d\n\n ",
+            sg_region.local[0],
+            sg_region.local[1],
+            sg_region.global[0],
+            sg_region.global[1],
+            sg_region.sg_block.width,
+            sg_region.sg_block.height,
+            sg_region.x_remainder,
+            sg_region.y_remainder);
 
     // if(!sg_region.use_persistent_block)
     //     return false; // Could not use persistent block
