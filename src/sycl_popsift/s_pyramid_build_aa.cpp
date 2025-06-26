@@ -244,11 +244,6 @@ class Vert
         const int span = d_gauss->inc.span[level];
         const float* filter = &d_gauss->inc.filter[level * GAUSS_ALIGN];
 
-        if(it.get_global_linear_id() == 0)
-        {
-            syclexp::printf("Level = %d --> Span = %d -- Vert\n", level, span);
-        }
-
         // This need to be here  I think. Was not in cuda PopSift probs due to textures making it a non issue
         if(x >= width || y >= height)
             return;

@@ -217,13 +217,18 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
 
     // int horiz_local_isze = ((largest_span * 2) + local[1]) * 2) *local[]
 
-    std::printf("w=%d h=%d largest_pan = %d wg_per_cu = %d --> Vert_local_size = %d ---- Horiz_local_size = %d\n",
+    std::printf("w=%d h=%d largest_pan = %d wg_per_cu = %d --> Vert_local_size = %d ---- Horiz_local_size = %d "
+                "local(%zu, %zu) global(%zu, %zu)\n",
                 width,
                 height,
                 largest_span,
                 wg_per_cu,
                 vert_local_size,
-                horiz_local_size);
+                horiz_local_size,
+                local[0],
+                local[1],
+                global[0],
+                global[1]);
     int max_mem_per_wg = device_local_mem_size / wg_per_cu; // Assumes local mem is per CU which it is for GPU's
 
     // local_mem_vert = (max_mem_per_wg >= vert_local_size) &&  ((largest_span << 1) + 1)   // If doing more complex

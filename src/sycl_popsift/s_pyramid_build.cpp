@@ -197,9 +197,18 @@ void Pyramid::build_pyramid(const Config& conf,
                 {
                     if(octave == 0)
                     {
+#define ONLY_HORIZ false
                         // fprintf(stderr, "PRE ONE WAVE \n");
                         // build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+#if ONLY_HORIZ
                         sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+#else
+
+                        // WORKS AS BOTH HORIZ AND VERT FOR THIS LEVEL
+                        // oct_obj._level_complete_events[0] =
+                        //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+#endif
 
                         // fprintf(stderr, "AFTER ONE WAVE \n");
 
@@ -208,10 +217,50 @@ void Pyramid::build_pyramid(const Config& conf,
                         // Storing event to class only for profiling not needed for normal use
 
 #if QUEUE_PROFILING
+#if ONLY_HORIZ
                         _input_horiz_event = horiz; // copy it for use later
+#else
+                        // _input_horiz_event = oct_obj._level_complete_events[0]; // When working as both horiz and
+                        // vert
+#endif
+#endif
+#if ONLY_HORIZ
+                        oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
 #endif
 
+                        // My own test case We do horiz normaly and then Vert with wave code
+
+                        sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                        // sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+                        _input_horiz_event = horiz; // copy it for use later
+
+                        horiz.wait();
+
+                        popsift::sycl_common::print_region(oct_obj.getIntermediate(),
+                                                           "AFTER HORIZ o=0 l=0",
+                                                           2720,
+                                                           2730,
+                                                           0,
+                                                           48,
+                                                           oct_obj.getWidth(),
+                                                           _device_queue);
+
                         oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                        // Test if vert part works alone
+                        // oct_obj._level_complete_events[0] =
+                        //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+                        oct_obj._level_complete_events[0].wait();
+
+                        popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[0],
+                                                           "AFTER HORIZ o=0 l=0",
+                                                           2720,
+                                                           2730,
+                                                           0,
+                                                           48,
+                                                           oct_obj.getWidth(),
+                                                           _device_queue);
                     }
                     else
                     {
