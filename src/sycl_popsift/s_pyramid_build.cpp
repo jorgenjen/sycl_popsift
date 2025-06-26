@@ -242,14 +242,14 @@ void Pyramid::build_pyramid(const Config& conf,
                                                            2720,
                                                            2730,
                                                            0,
-                                                           48,
+                                                           120,
                                                            oct_obj.getWidth(),
                                                            _device_queue);
 
-                        oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                        // oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
                         // Test if vert part works alone
-                        // oct_obj._level_complete_events[0] =
-                        //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+                        oct_obj._level_complete_events[0] =
+                          build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
 
                         oct_obj._level_complete_events[0].wait();
 
@@ -258,7 +258,7 @@ void Pyramid::build_pyramid(const Config& conf,
                                                            2720,
                                                            2730,
                                                            0,
-                                                           48,
+                                                           120,
                                                            oct_obj.getWidth(),
                                                            _device_queue);
                     }

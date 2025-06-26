@@ -698,6 +698,9 @@ class BuildOctave
             // val_below = i <= i_max ? buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)]
             //                        : buffer[(span + i_max) * it.get_local_range(1) + it.get_local_id(1)];
 
+            // Safe as notmal Vert (just smarter placed there)
+            // out += (val_above * g);
+            // out += (val_below * g);
             out += ((val_above + val_below) * g);
 
             // ######################################################################################################
@@ -753,6 +756,8 @@ class BuildOctave
             // val_below = i <= i_max ? buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)]
             //                        : buffer[(span + i_max) * it.get_local_range(1) + it.get_local_id(1)];
 
+            // out += (val_above * g);
+            // out += (val_below * g);
             out += ((val_above + val_below) * g);
             // Now we have done second iteration and next to wait is above and below 1 and prefetch 2 so we iterate
         }
@@ -852,7 +857,11 @@ class BuildOctave
                     // Load value around self
                     val_above = buffer[(row_pos - offset) * it.get_local_range(1) + it.get_local_id(1)];
                     val_below = buffer[(row_pos + offset) * it.get_local_range(1) + it.get_local_id(1)];
+
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
                     out += ((val_above + val_below) * filter[offset]);
+                    // Using one out is same as two atleast from sample test (with respect to precision)
                 }
                 // Moving final iteration out of loop so that we can wait on prev row load first
                 // Final row could either be final iteration for self loop or final iteration for free loop so
@@ -903,16 +912,27 @@ class BuildOctave
                 {
                     val_above = buffer[(row_pos - self_loop_size) * it.get_local_range(1) + it.get_local_id(1)];
                     val_below = buffer[(row_pos + self_loop_size) * it.get_local_range(1) + it.get_local_id(1)];
+
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
                     out += ((val_above + val_below) * filter[offset]);
+
+                    // Increment offset here so that we are at correct offset when this runs and when we only loop
+                    // around free
+                    offset++;
                 }
 
                 for(int i = span - self_loop_size; i > 0; --i)
                 {
                     // loop around free row
-                    offset++; // continues for free
                     val_above = buffer[(free - i) * it.get_local_range(1) + it.get_local_id(1)];
                     val_below = buffer[(free + i) * it.get_local_range(1) + it.get_local_id(1)];
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
                     out += ((val_above + val_below) * filter[offset]);
+
+                    offset++; // only increment at end so that when ours is at top and bottom of window we use correct
+                              // filter
                 }
 
                 if(live)
