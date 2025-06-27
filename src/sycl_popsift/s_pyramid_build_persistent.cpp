@@ -588,82 +588,78 @@ class BuildOctave
 
         sycl::group group = it.get_group();
 
-        // NOTE:  Window is always as wide as wide as it.get_local_range(1) but we only load in row_widht wide data
-        // This still alows for no bank conflicts and the work-items outside of range can safely do the same as rest on
-        // the dono't care data in their location and we only need so safe guard the writes to global memory minimizing
-        // the number of if checks we need (and doing more in locstep does not really add performance overhead)
-
-        // Load into middle of window
+#if false 
         sycl::device_event evt_center =
           group.async_work_group_copy(buffer_ptr + (span * it.get_local_range(1)), intermediate_ptr, row_width);
 
-        // Changes with loop matching level -- initial is zero always
-        float* filter = &d_gauss->inc.filter[0];
+        evt_center.wait();
+
+        float my_val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
+
+        if(it.get_global_linear_id() == 0)
+        {
+            syclexp::printf("\n\tMY FLIPPIN VAL IS = %f\n\n", my_val);
+        }
+
+#endif
+        // NOTE:  Window is always as wide as wide as it.get_local_range(1) but we only load in row_widht wide data
+        // This still alows for no bank conflicts and the work-items outside of range can safely do the same as rest
+        // on the dono't care data in their location and we only need so safe guard the writes to global memory
+        // minimizing the number of if checks we need (and doing more in locstep does not really add performance
+        // overhead)
 
         std::optional<sycl::device_event> above_events[2]; // Avoids using deleted default constructor of device_event
         std::optional<sycl::device_event> below_events[2]; // Avoids using deleted default constructor of device_event
 
-        // if(write_y - 1 >= 0)
-        // {
         // Above is always safe in this case as we are at the bottom of our region hence one above always exits
+
+        // Load top of widow
+        // Should be span - 1  for multiplication with dst_w as we don't need span row as filter is always zero there
+        above_events[0] = group.async_work_group_copy(buffer_ptr, intermediate_ptr - (dst_w * span), row_width);
 
         // If true it should only do async_work_group copy and nothing else
         bool live = it.get_local_id(1) < row_width;
-        // bool exclude = it.get_local_id(1) >= row_width;
+        // Changes with loop matching level -- initial is zero always
+        float* filter = &d_gauss->inc.filter[0];
 
-        // Event is reused in loop
-        // sycl::device_event above_1_evt =
-        above_events[0] = group.async_work_group_copy(
-          buffer_ptr + ((span - 1) * it.get_local_range(1)), intermediate_ptr - dst_w, row_width);
-        // }
-
-        evt_center.wait(); // Need to finish in case we need to copy from it for clamping below
-        // At this point we could just do it synchronous...
-        if(write_y + 1 < dst_h)
+        // if(write_y + 1 < dst_h)
+        int i_max = dst_h - 1 - write_y; // How many pixels we can go down before we are beyond image bounds
+        if(span <= i_max)
         {
-            // below_1_evt =
+            // Load in bottom row
             below_events[0] = group.async_work_group_copy(
-              buffer_ptr + ((span + 1) * it.get_local_range(1)), intermediate_ptr + dst_w, row_width);
+              buffer_ptr + ((span << 1) * it.get_local_range(1)), intermediate_ptr + (dst_w * span), row_width);
         }
         else
         {
-            // Clamp to edge by copying from center to 1 below
-            buffer[(span + 1) * it.get_local_range(1) + it.get_local_id(1)] =
-              buffer[span * it.get_local_range(1) + it.get_local_id(1)];
-            // No need for barrier as only work_item that reads from it is the one that wrote to it hence no need to
-            // sync
+            // CLAMPING (Load from final row of image)
+            below_events[0] = group.async_work_group_copy(
+              buffer_ptr + ((span << 1) * it.get_local_range(1)), intermediate_ptr + (dst_w * i_max), row_width);
         }
 
-        // float val = buffer[span * row_width + it.get_local_id(1)];
-        // float val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
-        float val = 0.0f;
-        // float out = val * filter[0];
-        float out; // Need to add the self part last to get same result as popsift makes big difference on filnal
-                   // values due to float inaccuracies
-
-        float out_sep = val * filter[0];
+        float out = 0.0f; // Need to add the self part last to get same result as popsift makes big difference on filnal
+                          // values due to float inaccuracies
         float g;
-
-        if(it.get_global_linear_id() == 0)
-        {
-            // syclexp::printf("Val self = %f\n", val);
-            syclexp::printf("Val self = %.10f FILTER=%.20f\n", val, filter[0]);
-        }
-
-        int i_max = dst_h - write_y - 1; // How many pixels we can go down before we are beyond image bounds
-        int next_i;
+        int next_i = span;
 
         float val_above;
         float val_below;
-        for(int i = 1; i <= span; ++i)
+
+        std::optional<sycl::device_event> event_center;
+        // for(int i = 1; i <= span; ++i)
+        // Should be span - 1 as filter[span] is always zero
+        for(int i = span; i > 0; --i) // Need to start at largest (smallest filter) for precision
         {
             // int next_i = i + 1;
-            next_i = i + 1;
-            if(next_i <= span)
+            // next_i = i - 1;
+            next_i--;
+            // if(next_i <= span)
+            if(next_i > 0)
             {
                 // Above is known to be safe here aslong as we keep mimimum height of block to largest_span + 1
                 // As then we know it's withing bounds for top row and we can omit the check here (we do need it
                 // later on when we start sliding the window up)
+                // Also safe when y_remainder is less than that as that is at bottom of image and always in image bounds
                 above_events[1] = group.async_work_group_copy(
                   buffer_ptr + ((span - next_i) * it.get_local_range(1)), intermediate_ptr - dst_w * next_i, row_width);
 
@@ -675,25 +671,22 @@ class BuildOctave
                                                   row_width);
                 }
 
-                // Could consider doing this to avoid the if below but might not be worth it
-                // NOTE:  Dont' think this is safe due to the posibility for this event not to be populated and then
-                // we wait on a non existing event not sure what heppens then SAfe when using std::optional and
-                // using has_value() method to verify
-
                 else
                 {
-                    // Copy from i_max position into it's row position so that we don't need to do the if check
-                    // later on in the loop -- Does not happen for most Sub_groups so should be worth the tradeoff
-                    // and local to local memcopy should not be that slow -- And as each work-item is only using the
-                    // value they are copying we do not need to use a barrier to ensure all can see the update as
-                    // only our-work item needs it (essentially a register spill hardcoded)
-
-                    // Copy into our position the edge value from where it was stored in local memory (always safe)
-                    buffer[(span - next_i) * it.get_local_range(1) + it.get_local_id(1)] =
-                      buffer[(span - i_max) * it.get_local_range(1) + it.get_local_id(1)];
+                    // CLAMPING -- Load from bottom row
+                    below_events[1] =
+                      group.async_work_group_copy(buffer_ptr + ((span + next_i) * it.get_local_range(1)),
+                                                  intermediate_ptr + dst_w * i_max,
+                                                  row_width);
                 }
             }
-            // First iteration wait() always exists
+            else
+            {
+                // load in self (center)
+
+                event_center =
+                  group.async_work_group_copy(buffer_ptr + (span * it.get_local_range(1)), intermediate_ptr, row_width);
+            }
             g = filter[i];
 
             above_events[0]->wait();
@@ -702,31 +695,33 @@ class BuildOctave
             // sensible right? But if we are properly memory bound doing it here makes more sense as the
             // extra multliplication don't hurt in that case and more is done earlier
 
-            if(below_events[1].has_value())
+            out += (val_above * g);
+            if(it.get_global_linear_id() == 0)
             {
-                below_events[1]->wait();
+                syclexp::printf("i=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n",
+                                i,
+                                out,
+                                val_above,
+                                (val_above * g),
+                                g);
             }
+
+            below_events[1]->wait();
             val_below = buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)];
             // Always in correct position due to copying in case of clamping
 
-            // below_events[0]->wait();
-            // // Clamp to edge
-            // val_below = i <= i_max ? buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)]
-            //                        : buffer[(span + i_max) * it.get_local_range(1) + it.get_local_id(1)];
+            out += (val_below * g);
+            // out += ((val_above + val_below) * g);
 
             if(it.get_global_linear_id() == 0)
             {
-                syclexp::printf(
-                  "i=%d vals: Above=%.10f Below=%.10f FILTER = %.20f-- TOP IN LOOP\n ", i, val_above, val_below, g);
+                syclexp::printf("i=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n\n",
+                                i,
+                                out,
+                                val_below,
+                                (val_below * g),
+                                g);
             }
-
-            // Safe as notmal Vert (just smarter placed there)
-            // out += (val_above * g);
-            // out += (val_below * g);
-            out += ((val_above + val_below) * g);
-
-            out_sep += (val_above * g);
-            out_sep += (val_below * g);
 
             // ######################################################################################################
             // Second iteration of the same just using different variables for events could do the same with array
@@ -735,15 +730,17 @@ class BuildOctave
             // ######################################################################################################
 
             // Next iteration
-            if(next_i > span) // Exit check
+            if(next_i <= 0) // Exit check
                 break;
 
-            i = next_i; // Not sure if incrementing is faster ?
-            next_i++;
+            i = next_i; // Not sure if is faster ?
+            next_i--;
             // Next iteration with swaped event variables
 
-            if(next_i <= span)
+            // if(next_i <= span)
+            if(next_i > 0)
             {
+                // Always safe
                 above_events[0] = group.async_work_group_copy(
                   buffer_ptr + ((span - next_i) * it.get_local_range(1)), intermediate_ptr - dst_w * next_i, row_width);
 
@@ -756,9 +753,20 @@ class BuildOctave
                 }
                 else
                 {
-                    buffer[(span - next_i) * it.get_local_range(1) + it.get_local_id(1)] =
-                      buffer[(span - i_max) * it.get_local_range(1) + it.get_local_id(1)];
+                    // As we are moving inwards we dono't already have loaded the values so need to load from
+                    // intermeidate directly
+                    above_events[0] =
+                      group.async_work_group_copy(buffer_ptr + ((span + next_i) * it.get_local_range(1)),
+                                                  intermediate_ptr + dst_w * i_max,
+                                                  row_width);
                 }
+            }
+            else
+            {
+                // load in self (center)
+
+                event_center =
+                  group.async_work_group_copy(buffer_ptr + (span * it.get_local_range(1)), intermediate_ptr, row_width);
             }
 
             g = filter[i];
@@ -768,43 +776,44 @@ class BuildOctave
 
             // Don't need to ensure clamping as we have copied clamped values to their correct position in window to
             // avoid having to do if checks in loop below
-            if(below_events[1].has_value())
+            out += (val_above * g);
+            if(it.get_global_linear_id() == 0)
             {
-                below_events[1]->wait();
+                syclexp::printf("i=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n",
+                                i,
+                                out,
+                                val_above,
+                                (val_above * g),
+                                g);
             }
+            below_events[1]->wait();
+
             val_below = buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)];
-            // else
-            // {
-            //     // Clamp to edge
-            //     val_below = buffer[(span + i_max) * it.get_local_range(1) + it.get_local_id(1)];
-            // }
-            // val_below = i <= i_max ? buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)]
-            //                        : buffer[(span + i_max) * it.get_local_range(1) + it.get_local_id(1)];
+            out += (val_below * g);
 
             if(it.get_global_linear_id() == 0)
             {
-                syclexp::printf(
-                  "i=%d vals: Above=%.10f Below=%.10f FIlTER = %.20f-- BOTTOM IN LOOP\n ", i, val_above, val_below, g);
+                syclexp::printf("i=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n\n",
+                                i,
+                                out,
+                                val_above,
+                                (val_above * g),
+                                g);
             }
 
-            // out += (val_above * g);
-            // out += (val_below * g);
-            out += ((val_above + val_below) * g);
+            // out += ((val_above + val_below) * g);
 
-            out_sep += (val_above * g);
-            out_sep += (val_below * g);
-            // Now we have done second iteration and next to wait is above and below 1 and prefetch 2 so we iterate
-        }
-        // Do we want to do write async aswell? Or will that just result in worse performance? mby test
-        if(live)
-        {
             if(it.get_global_linear_id() == 0)
             {
-                syclexp::printf("Final value of out for self = %.10f -- out_sep = %.10f\n", out, out_sep);
+                // syclexp::printf("i=%d vals: Above=%.10f Below=%.10f out=%.10f  --> FILTER = %.20f-- BOTTOM IN LOOP\n
+                // ",
+                //                 i,
+                //                 val_above,
+                //                 val_below,
+                //                 out,
+                //                 g);
 
-                // Compute whole value print every step
-
-#if true
+#if false
 
                 // int out; // Local so we don't modify outer out
                 float out = 0.0f;
@@ -890,20 +899,62 @@ class BuildOctave
 
 #endif
             }
+            // Now we have done second iteration and next to wait is above and below 1 and prefetch 2 so we iterate
+        }
+        // int val;
+        // Do we want to do write async aswell? Or will that just result in worse performance? mby test
 
-            val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
-            out += (val * filter[0]);
+        event_center->wait();
 
-            float out_sep = val * filter[0];
+        // Load synchronoous
+        // buffer[span * it.get_local_range(1) + it.get_local_id(1)] = intermediate[write_y * dst_w + write_x];
+        float val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
+        // int val = intermediate[write_y * dst_w + write_x];
+        out += (val * filter[0]);
+
+        // if(it.get_global_linear_id() == 0)
+        // {
+        //     syclexp::printf("SELF val = %.10f --> what we add to out = %.10f\n", val, (val * filter[0]));
+        // }
+
+        if(it.get_global_linear_id() == 0)
+        {
+            syclexp::printf(
+              "SELF -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n\n", out, val, (val * filter[0]), filter[0]);
+        }
+        if(live)
+        {
+            // float out_sep = val * filter[0];
 
             if(it.get_global_linear_id() == 0)
             {
-                syclexp::printf("Final out when adding self last ==> %.10f\n", out);
+                syclexp::printf("Final out when adding self last ==> %.10f -- val = %f\n",
+                                out,
+                                intermediate[write_y * dst_w + write_x]);
+
+                float my_val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
+                float my_val_2 = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
+
+                if(it.get_global_linear_id() == 0)
+                {
+                    syclexp::printf("\n\tMY FLIPPIN VAL IS = %f and after all stufus it is %f\n\n", my_val, my_val_2);
+                }
             }
 
             //
             data_array[0][write_y * dst_w + write_x] = out; // Store synchronously add asycn option for test later
         }
+
+        // ###########################################################################################################
+        // ###########################################################################################################
+        // ###########################################################################################################
+        // ###########################################################################################################
+        // ######################################### NOTHING DONE PAST THIS POINT
+        // ####################################
+        // ###########################################################################################################
+        // ###########################################################################################################
+        // ###########################################################################################################
+        // ###########################################################################################################
 
         // int i_min = 0
         // 0 is the min that we can go to
@@ -1069,8 +1120,8 @@ class BuildOctave
                     // out += (val_below * filter[offset]);
                     out += ((val_above + val_below) * filter[offset]);
 
-                    offset++; // only increment at end so that when ours is at top and bottom of window we use correct
-                              // filter
+                    offset++; // only increment at end so that when ours is at top and bottom of window we use
+                              // correct filter
                 }
 
                 if(live)
