@@ -369,7 +369,7 @@ namespace normalizedSource {
 #define DO_HORIZ 0
 #define DO_VERT 1
 
-#define COMPUTE_ONE_BY_ONE 0 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
+#define COMPUTE_ONE_BY_ONE 1 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
 #define USE_SHARED_MEM_FOR_INPUT 1
 template<bool REMAINDER_COL, bool REMAINDER_ROW>
 class BuildOctave
@@ -543,10 +543,10 @@ class BuildOctave
 #if !DO_HORIZ
         // So it is the same it would have been if we were doing horiz
         write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1);
-        if(it.get_global_linear_id() == 0)
-        {
-            syclexp::printf("write_y = %d intermediate_value = %f \n ", write_y, intermediate[write_y * dst_w]);
-        }
+        // if(it.get_global_linear_id() == 0)
+        // {
+        //     syclexp::printf("write_y = %d intermediate_value = %f \n ", write_y, intermediate[write_y * dst_w]);
+        // }
 #endif
 
         const auto row_width = [&]() {
@@ -572,7 +572,7 @@ class BuildOctave
         // need to ensure only it.get_local_id(1) < row_width is doing something but I think they also need to reach the
         // async work group copy for that to work So need if protection on all else code to avoid it messing that up
 
-        // bottom of our region
+        // bottom of our region (safe as write_y has already been bounds checked for below)
         int start_pos = write_y * dst_w + it.get_group(1) * it.get_local_range(1);
         // Bottom row position
         auto intermediate_ptr =
@@ -584,8 +584,12 @@ class BuildOctave
         // auto intermeidate_ptr = inter.template get_multi_ptr<sycl::access::decorated::yes>();
         auto buffer_ptr = buffer.template get_multi_ptr<sycl::access::decorated::yes>();
 
-        // Changes with loop matching level -- initial is zero always
+// Changes with loop matching level -- initial is zero always
+#if MINIMAL_WINDOW
+        int span = d_gauss->inc.span[0] - 1; // As filter[span] is 0 hence no point computing that
+#else
         int span = d_gauss->inc.span[0];
+#endif
 
         sycl::group group = it.get_group();
 
@@ -651,10 +655,7 @@ class BuildOctave
         // Should be span - 1 as filter[span] is always zero
         for(int i = span; i > 0; --i) // Need to start at largest (smallest filter) for precision
         {
-            // int next_i = i + 1;
-            // next_i = i - 1;
             next_i--;
-            // if(next_i <= span)
             if(next_i > 0)
             {
                 // Above is known to be safe here aslong as we keep mimimum height of block to largest_span + 1
@@ -699,16 +700,6 @@ class BuildOctave
 #if COMPUTE_ONE_BY_ONE
             out += (val_above * g);
 #endif
-            if(it.get_global_linear_id() == 0)
-            {
-                syclexp::printf("i=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n",
-                                i,
-                                out,
-                                val_above,
-                                (val_above * g),
-                                g);
-            }
-
             below_events[1]->wait();
             val_below = buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)];
             // Always in correct position due to copying in case of clamping
@@ -718,16 +709,6 @@ class BuildOctave
 #else
             out += ((val_above + val_below) * g);
 #endif
-
-            if(it.get_global_linear_id() == 0)
-            {
-                syclexp::printf("i=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n\n",
-                                i,
-                                out,
-                                val_below,
-                                (val_below * g),
-                                g);
-            }
 
             // ######################################################################################################
             // Second iteration of the same just using different variables for events could do the same with array
@@ -786,15 +767,6 @@ class BuildOctave
 #if COMPUTE_ONE_BY_ONE
             out += (val_above * g);
 #endif
-            if(it.get_global_linear_id() == 0)
-            {
-                syclexp::printf("i=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n",
-                                i,
-                                out,
-                                val_above,
-                                (val_above * g),
-                                g);
-            }
             below_events[1]->wait();
 
             val_below = buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)];
@@ -804,69 +776,44 @@ class BuildOctave
             out += ((val_above + val_below) * g);
 #endif
 
-            if(it.get_global_linear_id() == 0)
-            {
-                syclexp::printf("i=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n\n",
-                                i,
-                                out,
-                                val_above,
-                                (val_above * g),
-                                g);
-            }
-
-            if(it.get_global_linear_id() == 0)
-            {
-                // syclexp::printf("i=%d vals: Above=%.10f Below=%.10f out=%.10f  --> FILTER = %.20f-- BOTTOM IN LOOP\n
-                // ",
-                //                 i,
-                //                 val_above,
-                //                 val_below,
-                //                 out,
-                //                 g);
-            }
             // Now we have done second iteration and next to wait is above and below 1 and prefetch 2 so we iterate
         }
         // int val;
         // Do we want to do write async aswell? Or will that just result in worse performance? mby test
 
+        // Start loading top so that it has the most time to be ready before we need it instatnly at the loop (We skip
+        // double buffer and just have one)
+#if false
+        std::optional<sycl::device_event> next_row_event; // Avoids using deleted default constructor of device_event
+        int next_row_fetch = write_y - (span + 1);        // Set it to top row aswell so we can just decrement the value
+
+        if(next_row_fetch >= 0)
+        {
+            // Can load next row
+            intermediate_ptr -= ((span + 1) * dst_w); // Can just decrement for next
+            next_row_event = group.async_work_group_copy(
+              buffer_ptr + ((span << 1) + 1) * it.get_local_range(1), intermediate_ptr, row_width);
+        }
+        else
+        {
+            // We need to copy from local memory to the location to avoid if's later
+            // This row is already loaded in and safe to use
+            buffer[((span << 1) + 1) * it.get_local_range(1) + it.get_local_id(1)] = buffer[it.get_local_id(1)];
+        }
+
+#endif
         event_center->wait();
 
-        // Load synchronoous
-        // buffer[span * it.get_local_range(1) + it.get_local_id(1)] = intermediate[write_y * dst_w + write_x];
         float val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
-        // int val = intermediate[write_y * dst_w + write_x];
         out += (val * filter[0]);
 
-        // if(it.get_global_linear_id() == 0)
-        // {
-        //     syclexp::printf("SELF val = %.10f --> what we add to out = %.10f\n", val, (val * filter[0]));
-        // }
-
-        if(it.get_global_linear_id() == 0)
-        {
-            syclexp::printf(
-              "SELF -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n\n", out, val, (val * filter[0]), filter[0]);
-        }
         if(live)
         {
             // float out_sep = val * filter[0];
-
             if(it.get_global_linear_id() == 0)
             {
-                syclexp::printf("Final out when adding self last ==> %.10f -- val = %f\n",
-                                out,
-                                intermediate[write_y * dst_w + write_x]);
-
-                float my_val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
-                float my_val_2 = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
-
-                if(it.get_global_linear_id() == 0)
-                {
-                    syclexp::printf("\n\tMY FLIPPIN VAL IS = %f and after all stufus it is %f\n\n", my_val, my_val_2);
-                }
+                syclexp::printf("\n\tSELF - OUT_VAL = %f\n", out);
             }
-
-            //
             data_array[0][write_y * dst_w + write_x] = out; // Store synchronously add asycn option for test later
         }
 
@@ -874,8 +821,7 @@ class BuildOctave
         // ###########################################################################################################
         // ###########################################################################################################
         // ###########################################################################################################
-        // ######################################### NOTHING DONE PAST THIS POINT
-        // ####################################
+        // ######################################### NOTHING DONE PAST THIS POINT ####################################
         // ###########################################################################################################
         // ###########################################################################################################
         // ###########################################################################################################
@@ -887,6 +833,13 @@ class BuildOctave
         // Move intermediate pointer to next row above so that we can just subtract one dst_w of the pointer each
         // iteration to load correct positon ( span + 1) * dst_w we need to subtract to do that
 
+        // Now we have intermediate_ptr at top and we can load that into the free row
+
+        // int i_max = dst_h - write_y - 1;
+        // if (write_y span + 1
+
+#define RUN_RUNNING_WRONG 0
+#if RUN_RUNNING_WRONG
         std::optional<sycl::device_event> next_row_event; // Avoids using deleted default constructor of device_event
         int next_row_fetch = write_y - (span + 1);        // Set it to top row aswell so we can just decrement the value
 
@@ -897,50 +850,398 @@ class BuildOctave
         //         syclexp::printf("Optional does not have a value\n");
         //     }
         // }
-        // next_row_event->wait(); // WAit on a non existing event
+        // next_row_event->wait(); // wait on a non existing event
 
         // if(write_y - (span + 1) >= 0)
 
         if(next_row_fetch >= 0)
         {
-            // If greater than zero we can load next row
+            // if greater than zero we can load next row
             intermediate_ptr -= (span + 1) * dst_w;
             next_row_event = group.async_work_group_copy(
               buffer_ptr + ((span << 1) + 1) * it.get_local_range(1), intermediate_ptr, row_width);
         }
         else
         {
-            // We need to copy from local memory to the location to avoid if's later
+            // we need to copy from local memory to the location to avoid if's later
             buffer[((span << 1) + 1) * it.get_local_range(1) + it.get_local_id(1)] = buffer[it.get_local_id(1)];
         }
 
-        // Now we have intermediate_ptr at top and we can load that into the free row
+        // now we have intermediate_ptr at top and we can load that into the free row
 
         // int i_max = dst_h - write_y - 1;
         // if (write_y span + 1
 
 #if true
-        write_y--;              // Decrement write_y as we have done the first iteration
-        int free = (span << 1); // As we have already done it when free is at (span<<1) +  1 location (final pos)
+        write_y--;              // decrement write_y as we have done the first iteration
+        int free = (span << 1); // as we have already done it when free is at (span<<1) +  1 location (final pos)
         int end_pos = (it.get_global_id(0) * sg_region.height);
         // for(; write_y >= end_pos; write_y--)
         while(true)
         {
-            // Move the other way for potential better cache
+            // move the other way for potential better cache
 
             // free row starts at bottom of window (with data in row below as that is how it's left after initial
             // work pre loop)
             for(int free = (span << 1); free >= 0; free--)
             // can stop and start at these position as then next loop it will be wrong
             {
-                // Inner loop that moves the prefetch location
+                // inner loop that moves the prefetch location
 
                 int row_pos = free - (span + 1);
                 int self_loop_size;
                 if(row_pos >= 0)
                 {
                     val = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)];
-                    out = val * filter[0]; // Reset by setting
+                    out = val * filter[0]; // reset by setting
+
+                    // compute size of loop around self and implicitly loop size of around free
+                    self_loop_size = row_pos; // dist to top
+                }
+                else
+                {
+                    // wrap around
+                    row_pos += (span << 1) + 2;
+                    val = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)];
+                    out = val * filter[0]; // reset by setting
+
+                    // compute size of loop around self and implicitly loop size of around free
+                    self_loop_size = ((span << 1) + 1) - row_pos; // dist to botom
+                }
+                // todo: folow outline below and check that the whole logic works with wraparound and such
+
+                // now we have done self (the row we are writing to where the weight is only used once)
+                // now we need to do the span on each side
+
+                //
+
+                // do the loop around row_pos
+
+                // by copying for clamping we don't need any boundary checks for these two loops
+                int offset = 1;
+                for(; offset < self_loop_size; ++offset)
+                {
+                    // load value around self
+                    val_above = buffer[(row_pos - offset) * it.get_local_range(1) + it.get_local_id(1)];
+                    val_below = buffer[(row_pos + offset) * it.get_local_range(1) + it.get_local_id(1)];
+
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
+                    out += ((val_above + val_below) * filter[offset]);
+                    // using one out is same as two atleast from sample test (with respect to precision)
+                }
+                // moving final iteration out of loop so that we can wait on prev row load first
+                // final row could either be final iteration for self loop or final iteration for free loop so
+                // waiting here ensures it's loaded and avoids if inside of loop. should also in most cases be late
+                // enough that it won't hamper performance too much (could do if instead inside of loop but i think
+                // that's worse) // in some cases it will be bad when self is at top of window all is around free
+                // hance it's done straight away
+                if(next_row_event.has_value())
+                {
+                    next_row_event->wait();
+                }
+
+                // load next_row_value here
+                write_y--; // decrement here (we need to add one when writing result) this decrement is a bit early
+                           // as it's for next already while we have not written current yet
+
+                if(write_y >= end_pos)
+                {
+                    // load in next row either async or copy from local to work as clamp
+                    if((write_y - (span + 1)) >= 0)
+                    {
+                        intermediate_ptr -= dst_w; // move to row above
+
+                        next_row_event = group.async_work_group_copy(
+                          buffer_ptr + free * it.get_local_range(1), intermediate_ptr, row_width);
+                    }
+                    else
+                    {
+                        // clamp to edge by copying data from prev row(row below)
+                        // if multiple needed it works as a chain and as intended
+                        int row_below = free + 1;
+                        if(row_below <= (span << 1) + 1) // final row of widow
+                        {
+                            buffer[free * it.get_local_range(1) + it.get_local_id(1)] =
+                              buffer[row_below * it.get_local_range(1) + it.get_local_id(1)];
+                        }
+                        else
+                        {
+                            // free is row at bottom of window so we need to load from top as that is whats below it
+                            // when we wrap around
+                            buffer[free * it.get_local_range(1) + it.get_local_id(1)] = buffer[it.get_local_id(1)];
+                        }
+                    }
+                }
+
+                // offset should be equal to self_loop_size now as that is the value when it terminated loop above
+                if(self_loop_size != 0)
+                {
+                    val_above = buffer[(row_pos - self_loop_size) * it.get_local_range(1) + it.get_local_id(1)];
+                    val_below = buffer[(row_pos + self_loop_size) * it.get_local_range(1) + it.get_local_id(1)];
+
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
+                    out += ((val_above + val_below) * filter[offset]);
+
+                    // increment offset here so that we are at correct offset when this runs and when we only loop
+                    // around free
+                    offset++;
+                }
+
+                for(int i = span - self_loop_size; i > 0; --i)
+                {
+                    // loop around free row
+                    val_above = buffer[(free - i) * it.get_local_range(1) + it.get_local_id(1)];
+                    val_below = buffer[(free + i) * it.get_local_range(1) + it.get_local_id(1)];
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
+                    out += ((val_above + val_below) * filter[offset]);
+
+                    offset++; // only increment at end so that when ours is at top and bottom of window we use
+                              // correct filter
+                }
+
+                if(live)
+                {
+                    // we need to pluss one to write_y as we did decrement it a bit early
+                    // so that we are writing to correct position
+
+                    if(it.get_global_linear_id() == 0)
+                    {
+                        syclexp::printf("write_y = %d --> out = %f\n", write_y, out);
+                    }
+
+                    data_array[0][(write_y + 1) * dst_w + write_x] = out; // synchronous setting
+                }
+
+                if(write_y < end_pos) // next check is here we currently at write_y + 1
+                {
+                    break; // we are done // outer loop will also exit at this point
+                }
+            }
+            if(write_y < end_pos)
+            {
+                break; // break out of otuer loop
+            }
+            // otherwise reset free and continue
+
+            // set free to final pos as we have not had one iteration outside of the loop now
+            int free = (span << 1) + 1;
+        }
+#endif
+
+#endif
+
+#define new_try 1
+
+#if new_try
+        std::optional<sycl::device_event> next_row_event; // Avoids using deleted default constructor of device_event
+        int next_row_fetch = write_y - (span + 1);        // Set it to top row aswell so we can just decrement the value
+
+        if(next_row_fetch >= 0)
+        {
+            // if greater than zero we can load next row
+            intermediate_ptr -= (span + 1) * dst_w;
+            next_row_event = group.async_work_group_copy(
+              buffer_ptr + ((span << 1) + 1) * it.get_local_range(1), intermediate_ptr, row_width);
+        }
+        else
+        {
+            // we need to copy from local memory to the location to avoid if's later
+            buffer[((span << 1) + 1) * it.get_local_range(1) + it.get_local_id(1)] = buffer[it.get_local_id(1)];
+        }
+
+        // now we have intermediate_ptr at top and we can load that into the free row
+
+        // int i_max = dst_h - write_y - 1;
+        // if (write_y span + 1
+
+#if true
+        write_y--;              // decrement write_y as we have done the first iteration
+        int free = (span << 1); // as we have already done it when free is at (span<<1) +  1 location (final pos)
+        int end_pos = (it.get_global_id(0) * sg_region.height);
+        // for(; write_y >= end_pos; write_y--)
+        while(true)
+        {
+            // for(int free = (span << 1); free >= 0; free--)
+            for(; free >= 0; free--)
+            // can stop and start at these position as then next loop it will be wrong
+            {
+                // inner loop that moves the prefetch location
+
+                int row_pos = free - (span + 1);
+                int self_loop_size;
+                if(row_pos >= 0)
+                {
+                    val = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)];
+                    out = val * filter[0]; // reset by setting
+
+                    // compute size of loop around self and implicitly loop size of around free
+                    self_loop_size = row_pos; // dist to top
+                }
+                else
+                {
+                    // wrap around
+                    row_pos += (span << 1) + 2;
+                    val = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)];
+                    out = val * filter[0]; // reset by setting
+
+                    // compute size of loop around self and implicitly loop size of around free
+                    self_loop_size = ((span << 1) + 1) - row_pos; // dist to botom
+                }
+                // todo: folow outline below and check that the whole logic works with wraparound and such
+
+                // now we have done self (the row we are writing to where the weight is only used once)
+                // now we need to do the span on each side
+
+                //
+
+                // do the loop around row_pos
+
+                // by copying for clamping we don't need any boundary checks for these two loops
+                int offset = 1;
+                for(; offset < self_loop_size; ++offset)
+                {
+                    // load value around self
+                    val_above = buffer[(row_pos - offset) * it.get_local_range(1) + it.get_local_id(1)];
+                    val_below = buffer[(row_pos + offset) * it.get_local_range(1) + it.get_local_id(1)];
+
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
+                    out += ((val_above + val_below) * filter[offset]);
+                    // using one out is same as two atleast from sample test (with respect to precision)
+                }
+                // moving final iteration out of loop so that we can wait on prev row load first
+                // final row could either be final iteration for self loop or final iteration for free loop so
+                // waiting here ensures it's loaded and avoids if inside of loop. should also in most cases be late
+                // enough that it won't hamper performance too much (could do if instead inside of loop but i think
+                // that's worse) // in some cases it will be bad when self is at top of window all is around free
+                // hance it's done straight away
+                if(next_row_event.has_value())
+                {
+                    next_row_event->wait();
+                }
+
+                // load next_row_value here
+                write_y--; // decrement here (we need to add one when writing result) this decrement is a bit early
+                           // as it's for next already while we have not written current yet
+
+                if(write_y >= end_pos)
+                {
+                    // load in next row either async or copy from local to work as clamp
+                    if((write_y - (span + 1)) >= 0)
+                    {
+                        intermediate_ptr -= dst_w; // move to row above
+
+                        next_row_event = group.async_work_group_copy(
+                          buffer_ptr + free * it.get_local_range(1), intermediate_ptr, row_width);
+                    }
+                    else
+                    {
+                        // clamp to edge by copying data from prev row(row below)
+                        // if multiple needed it works as a chain and as intended
+                        int row_below = free + 1;
+                        if(row_below <= (span << 1) + 1) // final row of widow
+                        {
+                            buffer[free * it.get_local_range(1) + it.get_local_id(1)] =
+                              buffer[row_below * it.get_local_range(1) + it.get_local_id(1)];
+                        }
+                        else
+                        {
+                            // free is row at bottom of window so we need to load from top as that is whats below it
+                            // when we wrap around
+                            buffer[free * it.get_local_range(1) + it.get_local_id(1)] = buffer[it.get_local_id(1)];
+                        }
+                    }
+                }
+
+                // offset should be equal to self_loop_size now as that is the value when it terminated loop above
+                if(self_loop_size != 0)
+                {
+                    val_above = buffer[(row_pos - self_loop_size) * it.get_local_range(1) + it.get_local_id(1)];
+                    val_below = buffer[(row_pos + self_loop_size) * it.get_local_range(1) + it.get_local_id(1)];
+
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
+                    out += ((val_above + val_below) * filter[offset]);
+
+                    // increment offset here so that we are at correct offset when this runs and when we only loop
+                    // around free
+                    offset++;
+                }
+
+                for(int i = span - self_loop_size; i > 0; --i)
+                {
+                    // loop around free row
+                    val_above = buffer[(free - i) * it.get_local_range(1) + it.get_local_id(1)];
+                    val_below = buffer[(free + i) * it.get_local_range(1) + it.get_local_id(1)];
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
+                    out += ((val_above + val_below) * filter[offset]);
+
+                    offset++; // only increment at end so that when ours is at top and bottom of window we use
+                              // correct filter
+                }
+
+                if(live)
+                {
+                    // we need to pluss one to write_y as we did decrement it a bit early
+                    // so that we are writing to correct position
+
+                    // if(it.get_global_linear_id() == 0)
+                    // {
+                    //     syclexp::printf("write_y = %d --> out = %f\n", write_y, out);
+                    // }
+
+                    data_array[0][(write_y + 1) * dst_w + write_x] = out; // synchronous setting
+                }
+
+                if(write_y < end_pos) // next check is here we currently at write_y + 1
+                {
+                    break; // we are done // outer loop will also exit at this point
+                }
+            }
+            if(write_y < end_pos)
+            {
+                break; // break out of otuer loop
+            }
+            // otherwise reset free and continue
+
+            // set free to final pos as we have not had one iteration outside of the loop now
+            free = (span << 1) + 1;
+        }
+#endif
+
+#endif
+
+#if false
+        write_y--;              // Decrement write_y as we have done the first iteration
+        int free = (span << 1); // As we have already done it when free is at (span<<1) +  1 location (final pos)
+        int end_pos = (it.get_global_id(0) * sg_region.height);
+        float loop_out;
+        // for(; write_y >= end_pos; write_y--)
+        // bool print = true;
+        while(true)
+        {
+            // Move the other way for potential better cache
+
+            // free row starts at bottom of window (with data in row below as that is how it's left after initial
+            // work pre loop)
+            for(; free >= 0; free--)
+            // can stop and start at these position as then next loop it will be wrong
+            {
+                // Inner loop that moves the prefetch location
+
+                int row_pos = free - (span + 1);
+                int self_loop_size;
+                loop_out = 0.0f; // Need to reset can't reset by setting (that requires if to know which loop)
+
+                if(row_pos >= 0)
+                {
+                    // Can't do that because of precision need to be done last...
+                    // val = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)];
+                    // out = val * filter[0]; // Reset by setting
 
                     // compute size of loop around self and implicitly loop size of around free
                     self_loop_size = row_pos; // Dist to top
@@ -949,40 +1250,18 @@ class BuildOctave
                 {
                     // wrap around
                     row_pos += (span << 1) + 2;
-                    val = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)];
-                    out = val * filter[0]; // Reset by setting
+
+                    // Can't do that because of precision need to be done last...
+                    // val = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)];
+                    // out = val * filter[0]; // Reset by setting
 
                     // compute size of loop around self and implicitly loop size of around free
                     self_loop_size = ((span << 1) + 1) - row_pos; // Dist to botom
                 }
-                // TODO: Folow outline below and check that the whole logic works with wraparound and such
 
-                // Now we have done self (the row we are writing to where the weight is only used once)
-                // now we need to do the span on each side
-
-                //
-
-                // Do the loop around row_pos
-
-                // by copying for clamping we don't need any boundary checks for these two loops
-                int offset = 1;
-                for(; offset < self_loop_size; ++offset)
-                {
-                    // Load value around self
-                    val_above = buffer[(row_pos - offset) * it.get_local_range(1) + it.get_local_id(1)];
-                    val_below = buffer[(row_pos + offset) * it.get_local_range(1) + it.get_local_id(1)];
-
-                    // out += (val_above * filter[offset]);
-                    // out += (val_below * filter[offset]);
-                    out += ((val_above + val_below) * filter[offset]);
-                    // Using one out is same as two atleast from sample test (with respect to precision)
-                }
-                // Moving final iteration out of loop so that we can wait on prev row load first
-                // Final row could either be final iteration for self loop or final iteration for free loop so
-                // waiting here ensures it's loaded and avoids if inside of loop. Should also in most cases be late
-                // enough that it won't hamper performance too much (Could do if instead inside of loop but I think
-                // that's worse) // In some cases it will be bad when self is at top of window all is around free
-                // hance it's done straight away
+                // As we need this value at the start of the loop
+                // Could consider double buffering but only bad for first time this runs after that it will be long time
+                // between async call and this wait (hence don't think it's worth the extra memory)
                 if(next_row_event.has_value())
                 {
                     next_row_event->wait();
@@ -990,7 +1269,7 @@ class BuildOctave
 
                 // Load next_row_value here
                 write_y--; // Decrement here (We need to add one when writing result) This decrement is a bit early
-                           // as it's for next already while we have not written current yet
+                           // as it's for next already while we have not written current (might be more confusing...)
 
                 if(write_y >= end_pos)
                 {
@@ -1021,45 +1300,125 @@ class BuildOctave
                     }
                 }
 
-                // Offset should be equal to self_loop_size now as that is the value when it terminated loop above
-                if(self_loop_size != 0)
+                // ################################################################################
+                // ######################## LOOPY MADNESS #########################################
+                // ################################################################################
+
+                // if(print && it.get_global_linear_id() == 0)
+                if(it.get_global_linear_id() == 0)
                 {
-                    val_above = buffer[(row_pos - self_loop_size) * it.get_local_range(1) + it.get_local_id(1)];
-                    val_below = buffer[(row_pos + self_loop_size) * it.get_local_range(1) + it.get_local_id(1)];
-
-                    // out += (val_above * filter[offset]);
-                    // out += (val_below * filter[offset]);
-                    out += ((val_above + val_below) * filter[offset]);
-
-                    // Increment offset here so that we are at correct offset when this runs and when we only loop
-                    // around free
-                    offset++;
+                    syclexp::printf("LOOP stats: self_loop_size=%d, span = %d\n\n", self_loop_size, span);
                 }
 
-                for(int i = span - self_loop_size; i > 0; --i)
+                int offset = span;
+                // for(int i = span - self_loop_size; i > 0; --i)
+                for(; offset > self_loop_size; --offset)
                 {
                     // loop around free row
-                    val_above = buffer[(free - i) * it.get_local_range(1) + it.get_local_id(1)];
-                    val_below = buffer[(free + i) * it.get_local_range(1) + it.get_local_id(1)];
-                    // out += (val_above * filter[offset]);
-                    // out += (val_below * filter[offset]);
-                    out += ((val_above + val_below) * filter[offset]);
+                    val_above = buffer[(free - offset) * it.get_local_range(1) + it.get_local_id(1)];
+#if COMPUTE_ONE_BY_ONE
+                    loop_out += (val_above * filter[offset]);
 
-                    offset++; // only increment at end so that when ours is at top and bottom of window we use
-                              // correct filter
+                    // if(print && it.get_global_linear_id() == 0)
+                    if(it.get_global_linear_id() == 0)
+                    {
+                        //     syclexp::printf("offset=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n",
+                        //                     offset,
+                        //                     out,
+                        //                     val_above,
+                        //                     (val_above * filter[offset]),
+                        //                     filter[offset]);
+
+                        // syclexp::printf("offset=%d -> out = %f - val = %f\n", offset, out, val_above);
+                        // syclexp::printf("offset SUP MY GUY -> offset = %d -- out=%f \n", offset, out);
+
+                        // syclexp::printf("offset=%d ->  - val = %f What_we_add=%f - Filter = %.8f -- above\n",
+                        //                 offset,
+                        //                 val_above,
+                        //                 (val_above * filter[offset]),
+                        //                 filter[offset]);
+                        syclexp::printf("MY OUT  %f\n", loop_out);
+                    }
+#endif
+                    val_below = buffer[(free + offset) * it.get_local_range(1) + it.get_local_id(1)];
+#if COMPUTE_ONE_BY_ONE
+                    loop_out += (val_below * filter[offset]);
+
+                    // if(print && it.get_global_linear_id() == 0)
+                    // {
+                    //     syclexp::printf("offset=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f --
+                    //     below\n\n",
+                    //                     offset,
+                    //                     out,
+                    //                     val_below,
+                    //                     (val_below * filter[offset]),
+                    //                     filter[offset]);
+                    // }
+#else
+                    out += ((val_above + val_below) * filter[offset]);
+#endif
                 }
+
+                // When loop exits offset is equal to self_loop_size so we can continue on to looping around self for
+                // inner
+
+                // by copying for clamping we don't need any boundary checks for these two loops
+                for(; offset > 0; --offset)
+                {
+                    // Load value around self
+                    val_above = buffer[(row_pos - offset) * it.get_local_range(1) + it.get_local_id(1)];
+
+#if COMPUTE_ONE_BY_ONE
+                    loop_out += (val_above * filter[offset]);
+                    // if(print && it.get_global_linear_id() == 0)
+                    // {
+                    //     syclexp::printf("offset=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n",
+                    //                     offset,
+                    //                     out,
+                    //                     val_above,
+                    //                     (val_above * filter[offset]),
+                    //                     filter[offset]);
+                    // }
+#endif
+
+                    val_below = buffer[(row_pos + offset) * it.get_local_range(1) + it.get_local_id(1)];
+
+#if COMPUTE_ONE_BY_ONE
+                    loop_out += (val_below * filter[offset]);
+
+                    // if(print && it.get_global_linear_id() == 0)
+                    // {
+                    //     syclexp::printf("offset=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f --
+                    //     below\n\n",
+                    //                     offset,
+                    //                     out,
+                    //                     val_below,
+                    //                     (val_below * filter[offset]),
+                    //                     filter[offset]);
+                    // }
+#else
+                    out += ((val_above + val_below) * filter[offset]);
+#endif
+                }
+
+                // Need to do our self (center)
+
+                // val = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)];
+                // out = val * filter[0]; // Reset by setting
+                loop_out = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)] * filter[0];
 
                 if(live)
                 {
                     // We need to pluss one to write_y as we did decrement it a bit early
                     // So that we are writing to correct position
-                    data_array[0][(write_y + 1) * dst_w + write_x] = out; // Synchronous setting
+                    data_array[0][(write_y + 1) * dst_w + write_x] = loop_out; // Synchronous setting
                 }
 
                 if(write_y < end_pos) // Next check is here we currently at write_y + 1
                 {
                     break; // We are done // Outer loop will also exit at this point
                 }
+                // print = false;
             }
             if(write_y < end_pos)
             {
@@ -1068,14 +1427,14 @@ class BuildOctave
             // Otherwise reset free and continue
 
             // Set free to final pos as we have not had one iteration outside of the loop now
-            int free = (span << 1) + 1;
+            free = (span << 1) + 1;
         }
 #endif
 #if DO_HORIZ
         vert_sync_for_horiz(sg_region.wg_sync_state, it, 2);
 #else
-        vert_sync_for_horiz(
-          sg_region.wg_sync_state, it, 1); // Set to one as we have not done horiz and hence can't get to that
+        // Set to one as we have not done horiz and hence can't get to that
+        vert_sync_for_horiz(sg_region.wg_sync_state, it, 1);
 #endif
 
         // Then we do DoG -- Or do DoG as we are storing the next level as we have the value in register and
@@ -1382,4 +1741,151 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
     out += (v3 * g);
 
     dst_data[write_x + write_y * dst_w] = out * 255.0f;
+#endif
+
+#if false
+// OLD loop code for window for reference... DELETE WHEN YOU CAN
+
+        while(true)
+        {
+            // Move the other way for potential better cache
+
+            // free row starts at bottom of window (with data in row below as that is how it's left after initial
+            // work pre loop)
+            for(int free = (span << 1); free >= 0; free--)
+            // can stop and start at these position as then next loop it will be wrong
+            {
+                // Inner loop that moves the prefetch location
+
+                int row_pos = free - (span + 1);
+                int self_loop_size;
+                if(row_pos >= 0)
+                {
+                    // Can't do that because of precision need to be done last...
+                    // val = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)];
+                    // out = val * filter[0]; // Reset by setting
+
+                    // compute size of loop around self and implicitly loop size of around free
+                    self_loop_size = row_pos; // Dist to top
+                }
+                else
+                {
+                    // wrap around
+                    row_pos += (span << 1) + 2;
+
+                    // Can't do that because of precision need to be done last...
+                    // val = buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)];
+                    // out = val * filter[0]; // Reset by setting
+
+                    // compute size of loop around self and implicitly loop size of around free
+                    self_loop_size = ((span << 1) + 1) - row_pos; // Dist to botom
+                }
+
+                // by copying for clamping we don't need any boundary checks for these two loops
+                int offset = 1;
+                for(; offset < self_loop_size; ++offset)
+                {
+                    // Load value around self
+                    val_above = buffer[(row_pos - offset) * it.get_local_range(1) + it.get_local_id(1)];
+                    val_below = buffer[(row_pos + offset) * it.get_local_range(1) + it.get_local_id(1)];
+
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
+                    out += ((val_above + val_below) * filter[offset]);
+                    // Using one out is same as two atleast from sample test (with respect to precision)
+                }
+                // Moving final iteration out of loop so that we can wait on prev row load first
+                // Final row could either be final iteration for self loop or final iteration for free loop so
+                // waiting here ensures it's loaded and avoids if inside of loop. Should also in most cases be late
+                // enough that it won't hamper performance too much (Could do if instead inside of loop but I think
+                // that's worse) // In some cases it will be bad when self is at top of window all is around free
+                // hance it's done straight away
+                if(next_row_event.has_value())
+                {
+                    next_row_event->wait();
+                }
+
+                // Load next_row_value here
+                write_y--; // Decrement here (We need to add one when writing result) This decrement is a bit early
+                           // as it's for next already while we have not written current yet
+
+                if(write_y >= end_pos)
+                {
+                    // Load in next row either async or copy from local to work as clamp
+                    if((write_y - (span + 1)) >= 0)
+                    {
+                        intermediate_ptr -= dst_w; // Move to row above
+
+                        next_row_event = group.async_work_group_copy(
+                          buffer_ptr + free * it.get_local_range(1), intermediate_ptr, row_width);
+                    }
+                    else
+                    {
+                        // clamp to edge by copying data from prev row(row below)
+                        // If multiple needed it works as a chain and as intended
+                        int row_below = free + 1;
+                        if(row_below <= (span << 1) + 1) // Final row of widow
+                        {
+                            buffer[free * it.get_local_range(1) + it.get_local_id(1)] =
+                              buffer[row_below * it.get_local_range(1) + it.get_local_id(1)];
+                        }
+                        else
+                        {
+                            // Free is row at bottom of window so we need to load from top as that is whats below it
+                            // when we wrap around
+                            buffer[free * it.get_local_range(1) + it.get_local_id(1)] = buffer[it.get_local_id(1)];
+                        }
+                    }
+                }
+
+                // Offset should be equal to self_loop_size now as that is the value when it terminated loop above
+                if(self_loop_size != 0)
+                {
+                    val_above = buffer[(row_pos - self_loop_size) * it.get_local_range(1) + it.get_local_id(1)];
+                    val_below = buffer[(row_pos + self_loop_size) * it.get_local_range(1) + it.get_local_id(1)];
+
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
+                    out += ((val_above + val_below) * filter[offset]);
+
+                    // Increment offset here so that we are at correct offset when this runs and when we only loop
+                    // around free
+                    offset++;
+                }
+
+                for(int i = span - self_loop_size; i > 0; --i)
+                {
+                    // loop around free row
+                    val_above = buffer[(free - i) * it.get_local_range(1) + it.get_local_id(1)];
+                    val_below = buffer[(free + i) * it.get_local_range(1) + it.get_local_id(1)];
+                    // out += (val_above * filter[offset]);
+                    // out += (val_below * filter[offset]);
+                    out += ((val_above + val_below) * filter[offset]);
+
+                    offset++; // only increment at end so that when ours is at top and bottom of window we use
+                              // correct filter
+                }
+
+                if(live)
+                {
+                    // We need to pluss one to write_y as we did decrement it a bit early
+                    // So that we are writing to correct position
+                    data_array[0][(write_y + 1) * dst_w + write_x] = out; // Synchronous setting
+                }
+
+                if(write_y < end_pos) // Next check is here we currently at write_y + 1
+                {
+                    break; // We are done // Outer loop will also exit at this point
+                }
+            }
+            if(write_y < end_pos)
+            {
+                break; // Break out of otuer loop
+            }
+            // Otherwise reset free and continue
+
+            // Set free to final pos as we have not had one iteration outside of the loop now
+            int free = (span << 1) + 1;
+        }
+
 #endif

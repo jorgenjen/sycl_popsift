@@ -205,7 +205,17 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     // each sub_group uses a sliding window of height (span * 2 +1) and widht of sg_widht. one row is added for async
     // loading of next. loca([0])*local[1]) final part is for async loading prev level for doing Difference of Gaussian
     // (DoG) on the fly to reuse data better
+
+#if MINIMAL_WINDOW
+    // Remove part of window that is equal to sspan as filter[span] seems to always be zero
+    // largest_span << 1 is for whole thing as dist around self is span - 1 and self is one and buffer row is 1
+    // So same as ((largest_span - 1) << 1) + 1 + 1;
+
+    int vert_local_size = ((largest_span << 1) * local[1]) * local[0] + local[0] * local[1];
+#else
+    // +1 is for self; second + 1 is for free buffer row; largest_span * 2 is for span range around self
     int vert_local_size = (((largest_span << 1) + 1 + 1) * local[1]) * local[0] + local[0] * local[1];
+#endif
     // The size of this one is quite constant with respect to image sizes so should work on most GPU's
     // Also quite constant with respect to number of Compute Units on the GPU as it's a sliding window
     // Takes around 40k to 50k bytes
@@ -213,6 +223,7 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     // Could  try a hybrid approach with a part for register storage and part for local mem to balance it out
     // Could be difficult to implement need to know how many registers that I can use
 
+    // Should add minimal here aswell when I support that in the horiz part as I believe that the same is true there
     int horiz_local_size = ((largest_span << 1) + local[1]) * (local[0] * 2); // Buffering of horiz rows
 
     // int horiz_local_isze = ((largest_span * 2) + local[1]) * 2) *local[]
