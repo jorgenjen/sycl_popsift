@@ -369,6 +369,7 @@ namespace normalizedSource {
 #define DO_HORIZ 0
 #define DO_VERT 1
 
+#define COMPUTE_ONE_BY_ONE 0 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
 #define USE_SHARED_MEM_FOR_INPUT 1
 template<bool REMAINDER_COL, bool REMAINDER_ROW>
 class BuildOctave
@@ -695,7 +696,9 @@ class BuildOctave
             // sensible right? But if we are properly memory bound doing it here makes more sense as the
             // extra multliplication don't hurt in that case and more is done earlier
 
+#if COMPUTE_ONE_BY_ONE
             out += (val_above * g);
+#endif
             if(it.get_global_linear_id() == 0)
             {
                 syclexp::printf("i=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n",
@@ -710,8 +713,11 @@ class BuildOctave
             val_below = buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)];
             // Always in correct position due to copying in case of clamping
 
+#if COMPUTE_ONE_BY_ONE
             out += (val_below * g);
-            // out += ((val_above + val_below) * g);
+#else
+            out += ((val_above + val_below) * g);
+#endif
 
             if(it.get_global_linear_id() == 0)
             {
@@ -776,7 +782,10 @@ class BuildOctave
 
             // Don't need to ensure clamping as we have copied clamped values to their correct position in window to
             // avoid having to do if checks in loop below
+
+#if COMPUTE_ONE_BY_ONE
             out += (val_above * g);
+#endif
             if(it.get_global_linear_id() == 0)
             {
                 syclexp::printf("i=%d -> out = %f - val = %f What_we_add=%f - Filter = %.8f\n",
@@ -789,7 +798,11 @@ class BuildOctave
             below_events[1]->wait();
 
             val_below = buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)];
+#if COMPUTE_ONE_BY_ONE
             out += (val_below * g);
+#else
+            out += ((val_above + val_below) * g);
+#endif
 
             if(it.get_global_linear_id() == 0)
             {
@@ -801,8 +814,6 @@ class BuildOctave
                                 g);
             }
 
-            // out += ((val_above + val_below) * g);
-
             if(it.get_global_linear_id() == 0)
             {
                 // syclexp::printf("i=%d vals: Above=%.10f Below=%.10f out=%.10f  --> FILTER = %.20f-- BOTTOM IN LOOP\n
@@ -812,92 +823,6 @@ class BuildOctave
                 //                 val_below,
                 //                 out,
                 //                 g);
-
-#if false
-
-                // int out; // Local so we don't modify outer out
-                float out = 0.0f;
-                float out_2 = 0.0f;
-                float out_3 = 0.0f;
-                float val;
-                float val_2;
-                // float val_3;
-                float g;
-                int x = 0;
-                int y = 97;
-                int height = dst_h;
-                int width = dst_w;
-
-                g = filter[0];
-
-                val_2 = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
-                out_2 = (val_2 * g);
-
-                syclexp::printf("SELF -- added_to_out_3= %.10f\n", (val_2 * g));
-
-                for(int offset = span; offset > 0; offset--)
-                // for(int offset = span - 1; offset > 0; offset--)
-                {
-                    g = filter[offset];
-
-                    int idy = y - offset;
-                    val = idy < 0 ? intermediate[x] : intermediate[x + idy * width]; // clamp edge
-                    out += (val * g);
-
-                    val_2 = buffer[(span - offset) * it.get_local_range(1) + it.get_local_id(1)];
-                    out_2 += (val_2 * g);
-                    out_3 += (val_2 * g); // Doing self increment last
-
-                    syclexp::printf("offset=%d  vals: Above=%.10f -- out=%.10f --> val_2=%.10f - out_2=%.10f\n",
-                                    offset,
-                                    span,
-                                    val,
-                                    out,
-                                    val_2,
-                                    out_2);
-                    // "offset = %d span =%d vals: Above=%f -- out = %f --> ", offset, span, val, out);
-
-                    idy = y + offset;
-                    val = idy >= height ? intermediate[x + (height - 1) * width]
-                                        : intermediate[x + idy * width]; // clamp edge
-                    out += (val * g);
-
-                    val_2 = buffer[(span + offset) * it.get_local_range(1) + it.get_local_id(1)];
-                    out_2 += (val_2 * g);
-                    out_3 += (val_2 * g); // Doing self increment last
-
-                    // if(x == 0 && y == 97 && level == 0)
-                    // if(x == 0 && y == 97)
-                    // {
-                    // syclexp::printf("offset = %d vals: Above=%f Below=%f FILTER=%f\n", offset, val_1, val, g);
-                    syclexp::printf("Below=%.10f -- out =%.10f FILTER=%.20f --> val_2=%.10f - out_2=%.10f\n\n",
-                                    val,
-                                    out,
-                                    g,
-                                    val_2,
-                                    out_2);
-                    // }
-                }
-
-                g = filter[0];
-                val = intermediate[x + y * width];
-
-                out += (val * g);
-
-                // Testing last and fist diff
-                val_2 = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
-                out_3 += (val_2 * g);
-                syclexp::printf("SELF AKA 0 =%.10f -- Final out out =%.10f FILTER=%.20f --> val_2=%.10f - out_2=%.10f "
-                                "- out_3=%.10f -- added_to_out_3= %.10f\n\n\n",
-                                val,
-                                out,
-                                g,
-                                val_2,
-                                out_2,
-                                out_3,
-                                (val_2 * g));
-
-#endif
             }
             // Now we have done second iteration and next to wait is above and below 1 and prefetch 2 so we iterate
         }
