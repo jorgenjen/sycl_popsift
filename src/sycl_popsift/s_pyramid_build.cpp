@@ -237,14 +237,14 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         horiz.wait();
 
-                        popsift::sycl_common::print_region(oct_obj.getIntermediate(),
-                                                           "AFTER HORIZ o=0 l=0",
-                                                           2720,
-                                                           2730,
-                                                           0,
-                                                           120,
-                                                           oct_obj.getWidth(),
-                                                           _device_queue);
+                        // popsift::sycl_common::print_region(oct_obj.getIntermediate(),
+                        //                                    "AFTER HORIZ o=0 l=0",
+                        //                                    0,
+                        //                                    10,
+                        //                                    0,
+                        //                                    120,
+                        //                                    oct_obj.getWidth(),
+                        //                                    _device_queue);
 
                         // oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
                         // Test if vert part works alone
@@ -253,14 +253,14 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         oct_obj._level_complete_events[0].wait();
 
-                        popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[0],
-                                                           "AFTER HORIZ o=0 l=0",
-                                                           2720,
-                                                           2730,
-                                                           0,
-                                                           120,
-                                                           oct_obj.getWidth(),
-                                                           _device_queue);
+                        // popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[0],
+                        //                                    "AFTER HORIZ o=0 l=0",
+                        //                                    0,
+                        //                                    10,
+                        //                                    0,
+                        //                                    120,
+                        //                                    oct_obj.getWidth(),
+                        //                                    _device_queue);
                     }
                     else
                     {

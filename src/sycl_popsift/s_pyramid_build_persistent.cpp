@@ -542,6 +542,10 @@ class BuildOctave
 #if !DO_HORIZ
         // So it is the same it would have been if we were doing horiz
         write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1);
+        if(it.get_global_linear_id() == 0)
+        {
+            syclexp::printf("write_y = %d intermediate_value = %f \n ", write_y, intermediate[write_y * dst_w]);
+        }
 #endif
 
         const auto row_width = [&]() {
@@ -614,6 +618,7 @@ class BuildOctave
         // }
 
         evt_center.wait(); // Need to finish in case we need to copy from it for clamping below
+        // At this point we could just do it synchronous...
         if(write_y + 1 < dst_h)
         {
             // below_1_evt =
@@ -630,9 +635,20 @@ class BuildOctave
         }
 
         // float val = buffer[span * row_width + it.get_local_id(1)];
-        float val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
-        float out = val * filter[0];
+        // float val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
+        float val = 0.0f;
+        // float out = val * filter[0];
+        float out; // Need to add the self part last to get same result as popsift makes big difference on filnal
+                   // values due to float inaccuracies
+
+        float out_sep = val * filter[0];
         float g;
+
+        if(it.get_global_linear_id() == 0)
+        {
+            // syclexp::printf("Val self = %f\n", val);
+            syclexp::printf("Val self = %.10f FILTER=%.20f\n", val, filter[0]);
+        }
 
         int i_max = dst_h - write_y - 1; // How many pixels we can go down before we are beyond image bounds
         int next_i;
@@ -698,10 +714,19 @@ class BuildOctave
             // val_below = i <= i_max ? buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)]
             //                        : buffer[(span + i_max) * it.get_local_range(1) + it.get_local_id(1)];
 
+            if(it.get_global_linear_id() == 0)
+            {
+                syclexp::printf(
+                  "i=%d vals: Above=%.10f Below=%.10f FILTER = %.20f-- TOP IN LOOP\n ", i, val_above, val_below, g);
+            }
+
             // Safe as notmal Vert (just smarter placed there)
             // out += (val_above * g);
             // out += (val_below * g);
             out += ((val_above + val_below) * g);
+
+            out_sep += (val_above * g);
+            out_sep += (val_below * g);
 
             // ######################################################################################################
             // Second iteration of the same just using different variables for events could do the same with array
@@ -756,14 +781,127 @@ class BuildOctave
             // val_below = i <= i_max ? buffer[(span + i) * it.get_local_range(1) + it.get_local_id(1)]
             //                        : buffer[(span + i_max) * it.get_local_range(1) + it.get_local_id(1)];
 
+            if(it.get_global_linear_id() == 0)
+            {
+                syclexp::printf(
+                  "i=%d vals: Above=%.10f Below=%.10f FIlTER = %.20f-- BOTTOM IN LOOP\n ", i, val_above, val_below, g);
+            }
+
             // out += (val_above * g);
             // out += (val_below * g);
             out += ((val_above + val_below) * g);
+
+            out_sep += (val_above * g);
+            out_sep += (val_below * g);
             // Now we have done second iteration and next to wait is above and below 1 and prefetch 2 so we iterate
         }
         // Do we want to do write async aswell? Or will that just result in worse performance? mby test
         if(live)
         {
+            if(it.get_global_linear_id() == 0)
+            {
+                syclexp::printf("Final value of out for self = %.10f -- out_sep = %.10f\n", out, out_sep);
+
+                // Compute whole value print every step
+
+#if true
+
+                // int out; // Local so we don't modify outer out
+                float out = 0.0f;
+                float out_2 = 0.0f;
+                float out_3 = 0.0f;
+                float val;
+                float val_2;
+                // float val_3;
+                float g;
+                int x = 0;
+                int y = 97;
+                int height = dst_h;
+                int width = dst_w;
+
+                g = filter[0];
+
+                val_2 = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
+                out_2 = (val_2 * g);
+
+                syclexp::printf("SELF -- added_to_out_3= %.10f\n", (val_2 * g));
+
+                for(int offset = span; offset > 0; offset--)
+                // for(int offset = span - 1; offset > 0; offset--)
+                {
+                    g = filter[offset];
+
+                    int idy = y - offset;
+                    val = idy < 0 ? intermediate[x] : intermediate[x + idy * width]; // clamp edge
+                    out += (val * g);
+
+                    val_2 = buffer[(span - offset) * it.get_local_range(1) + it.get_local_id(1)];
+                    out_2 += (val_2 * g);
+                    out_3 += (val_2 * g); // Doing self increment last
+
+                    syclexp::printf("offset=%d  vals: Above=%.10f -- out=%.10f --> val_2=%.10f - out_2=%.10f\n",
+                                    offset,
+                                    span,
+                                    val,
+                                    out,
+                                    val_2,
+                                    out_2);
+                    // "offset = %d span =%d vals: Above=%f -- out = %f --> ", offset, span, val, out);
+
+                    idy = y + offset;
+                    val = idy >= height ? intermediate[x + (height - 1) * width]
+                                        : intermediate[x + idy * width]; // clamp edge
+                    out += (val * g);
+
+                    val_2 = buffer[(span + offset) * it.get_local_range(1) + it.get_local_id(1)];
+                    out_2 += (val_2 * g);
+                    out_3 += (val_2 * g); // Doing self increment last
+
+                    // if(x == 0 && y == 97 && level == 0)
+                    // if(x == 0 && y == 97)
+                    // {
+                    // syclexp::printf("offset = %d vals: Above=%f Below=%f FILTER=%f\n", offset, val_1, val, g);
+                    syclexp::printf("Below=%.10f -- out =%.10f FILTER=%.20f --> val_2=%.10f - out_2=%.10f\n\n",
+                                    val,
+                                    out,
+                                    g,
+                                    val_2,
+                                    out_2);
+                    // }
+                }
+
+                g = filter[0];
+                val = intermediate[x + y * width];
+
+                out += (val * g);
+
+                // Testing last and fist diff
+                val_2 = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
+                out_3 += (val_2 * g);
+                syclexp::printf("SELF AKA 0 =%.10f -- Final out out =%.10f FILTER=%.20f --> val_2=%.10f - out_2=%.10f "
+                                "- out_3=%.10f -- added_to_out_3= %.10f\n\n\n",
+                                val,
+                                out,
+                                g,
+                                val_2,
+                                out_2,
+                                out_3,
+                                (val_2 * g));
+
+#endif
+            }
+
+            val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
+            out += (val * filter[0]);
+
+            float out_sep = val * filter[0];
+
+            if(it.get_global_linear_id() == 0)
+            {
+                syclexp::printf("Final out when adding self last ==> %.10f\n", out);
+            }
+
+            //
             data_array[0][write_y * dst_w + write_x] = out; // Store synchronously add asycn option for test later
         }
 
@@ -1065,6 +1203,8 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
         //
         const int buffer_size = (sg_region.local[1] + (Pyramid::largest_span << 2)) * (sg_region.local[0] << 2);
         std::printf("Buffer_size = %d -- sg_region.local_mem_size = %d\n", buffer_size, sg_region.local_mem_size);
+
+        printf("\tSG_REGION_HEIGHT = %d\n\n", sg_region.sg_block.height);
         // const int vert_buffer_size =
         //   ((sg_region.local[1] * 13) * sg_region.local[0]); // might be better to store the 13 values in
         //   registers
