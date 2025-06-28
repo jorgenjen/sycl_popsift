@@ -284,7 +284,53 @@ static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it,
     sycl::group_barrier(group); // Wait for wg leader to finish spin lock ensuring dependencies are done
 #endif
 }
+static inline void full_sync(int* wg_sync_state, sycl::nd_item<2>& it)
+{
+    // Just for testing waiting for all to do their thing
 
+    sycl::group group = it.get_group();
+    sycl::group_barrier(group); // Ensure all have done horiz
+
+    if(it.get_local_linear_id() == 0) // only one per work_group
+    {
+        // Need to be a 4 byte wide data type like int or unsigned int for this to work...
+        sycl::atomic_ref<int,
+                         sycl::memory_order_relaxed,
+                         sycl::memory_scope_device,
+                         sycl::access::address_space::global_space>(wg_sync_state[0])++;
+        // All use zero so that we count everyone and once all have reached we continue
+
+        // Active wait-- spin lock
+
+        int num_work_groups = it.get_group_range(0) * it.get_group_range(1);
+        if(it.get_global_linear_id() == 0)
+        {
+            syclexp::printf("Num work groups %d \n", num_work_groups);
+        }
+
+        // sycl::atomic_ref<int,
+        //                  sycl::memory_order_relaxed,
+        //                  sycl::memory_scope_device,
+        //                  sycl::access::address_space::global_space>
+        //   state(wg_sync_state[0]);
+
+        sycl::atomic_ref<int,
+                         sycl::memory_order_relaxed,
+                         sycl::memory_scope_device,
+                         sycl::access::address_space::global_space>
+          state(wg_sync_state[0]);
+
+        int copy_state = state;
+        syclexp::printf("Num_work_grops_after me %d --> target = %d -- my_wg_id = %d\n",
+                        copy_state,
+                        num_work_groups,
+                        static_cast<int>(it.get_group_linear_id()));
+
+        // Active wait -- spin lock (waits for everyone to have done horiz before moving on (SLOW))
+        while(state < num_work_groups) {}
+    }
+    sycl::group_barrier(group); // Wait for wg leader to finish spin lock ensuring dependencies are done
+}
 // synchronizes horiz execution so that all data needed to do vert is available and correct
 static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it, int wait_on_state)
 {
@@ -366,8 +412,10 @@ namespace normalizedSource {
 // template<bool if_required>
 
 // For debugging remove!
-#define DO_HORIZ 0
-#define DO_VERT 1
+#define DO_HORIZ 1
+#define DO_VERT 0
+
+#define DEBUG 0
 
 #define COMPUTE_ONE_BY_ONE 1 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
 #define USE_SHARED_MEM_FOR_INPUT 1
@@ -525,7 +573,23 @@ class BuildOctave
         write_y--;
 
         // Synchronize and then do horiz
+#define USE_FULL_SYNC 0
+#if USE_FULL_SYNC
+        // Ensures all work groups have completed horiz before moving on to vert
+        full_sync(sg_region.wg_sync_state, it);
+
+        // if(it.get_local_linear_id() == 0)
+        // {
+        //     syclexp::printf("WG_ID %d --> Num_wg = %d\n",
+        //                     static_cast<int>(it.get_group_linear_id()),
+        //                     static_cast<int>(it.get_group_range(0) * it.get_group_range(1)));
+        // }
+        //
+        // horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
+#else
+        // Only necessary negbours (top and bottom) are waited on
         horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
+#endif
 
         // #if false
         // Start doing Vert then later we do horiz on data_array so not using sampled image then we can use async
@@ -809,11 +873,13 @@ class BuildOctave
 
         if(live)
         {
-            // float out_sep = val * filter[0];
+// float out_sep = val * filter[0];
+#if DEBUG
             if(it.get_global_linear_id() == 0)
             {
                 syclexp::printf("\n\tSELF - OUT_VAL = %f\n", out);
             }
+#endif
             data_array[0][write_y * dst_w + write_x] = out; // Store synchronously add asycn option for test later
         }
 
@@ -1007,10 +1073,12 @@ class BuildOctave
                     // we need to pluss one to write_y as we did decrement it a bit early
                     // so that we are writing to correct position
 
+#if DEBUG
                     if(it.get_global_linear_id() == 0)
                     {
                         syclexp::printf("write_y = %d --> out = %f\n", write_y, out);
                     }
+#endif
 
                     data_array[0][(write_y + 1) * dst_w + write_x] = out; // synchronous setting
                 }
@@ -1115,11 +1183,13 @@ class BuildOctave
 
                 if(it.get_global_linear_id() == 0)
                 {
+#if DEBUG
                     syclexp::printf("Self_loop_size = %d  -- row_pos = %d -- free = %d -- write_y = %d\n",
                                     self_loop_size,
                                     row_pos,
                                     free,
                                     write_y);
+#endif
                 }
 
                 // Need to be done early as it's the first accessed value -- Slow for first iteration of while loop rest
@@ -1173,11 +1243,13 @@ class BuildOctave
                 int offset = span;
 
                 // for(int i = span - self_loop_size; i > 0; --i)
+#if DEBUG
 
                 if(it.get_global_linear_id() == 0)
                 {
                     syclexp::printf("\tFree loop, i = %d \n", span - self_loop_size);
                 }
+#endif
                 // for(int i = span - self_loop_size; i > 0; --i)
                 for(int i = 1; i <= (span - self_loop_size); ++i) // Closes to free is farthest from self
                 {
@@ -1196,6 +1268,7 @@ class BuildOctave
                     out += ((val_above + val_below) * filter[offset]);
 #endif
 
+#if DEBUG
                     if(it.get_global_linear_id() == 0)
                     {
                         syclexp::printf("\t\ti = %d -> v_above = %f -- v_below = %f -> added_to_out = %f -> "
@@ -1208,14 +1281,17 @@ class BuildOctave
                                         offset,
                                         filter[offset]);
                     }
+#endif
                     offset--;
                 }
                 // Offset will be equal to self_loop_size here
 
+#if DEBUG
                 if(it.get_global_linear_id() == 0)
                 {
                     syclexp::printf("\tself_loop offset_start=%d \n", offset);
                 }
+#endif
 
                 for(; offset > 0; --offset)
                 {
@@ -1232,6 +1308,7 @@ class BuildOctave
                     // out += ((val_above + val_below) * filter[offset]);
 #endif
 
+#if DEBUG
                     if(it.get_global_linear_id() == 0)
                     {
                         syclexp::printf("\t\to = %d -> v_above = %f -- v_below = %f -> added_to_out = %f -> "
@@ -1244,6 +1321,7 @@ class BuildOctave
                                         offset,
                                         filter[offset]);
                     }
+#endif
                     // using one out is same as two atleast from sample test (with respect to precision)
                 }
 
@@ -1266,6 +1344,7 @@ class BuildOctave
                 // ############ OLD LOOPY LOOP START #######
                 // #########################################
 
+#if DEBUG
                 if(it.get_global_linear_id() == 0)
                 {
                     syclexp::printf("Self_loop_size = %d  -- row_pos = %d -- free = %d -- write_y = %d\n",
@@ -1274,14 +1353,17 @@ class BuildOctave
                                     free,
                                     write_y);
                 }
+#endif
 
                 // by copying for clamping we don't need any boundary checks for these two loops
                 int offset = 1;
 
+#if DEBUG
                 if(it.get_global_linear_id() == 0)
                 {
                     syclexp::printf("\tself_loop offset_start=%d \n", offset);
                 }
+#endif
                 for(; offset < self_loop_size; ++offset)
                 {
                     // load value around self
@@ -1293,6 +1375,7 @@ class BuildOctave
                     out += ((val_above + val_below) * filter[offset]);
                     // using one out is same as two atleast from sample test (with respect to precision)
 
+#if DEBUG
                     if(it.get_global_linear_id() == 0)
                     {
                         syclexp::printf("\t\to = %d -> v_above = %f -- v_below = %f -> added_to_out = %f -> "
@@ -1305,6 +1388,7 @@ class BuildOctave
                                         offset,
                                         filter[offset]);
                     }
+#endif
                 }
                 // moving final iteration out of loop so that we can wait on prev row load first
                 // final row could either be final iteration for self loop or final iteration for free loop so
@@ -1363,6 +1447,7 @@ class BuildOctave
                     // increment offset here so that we are at correct offset when this runs and when we only loop
                     // around free
 
+#if DEBUG
                     if(it.get_global_linear_id() == 0)
                     {
                         syclexp::printf("\t\to = %d -> v_above = %f -- v_below = %f -> added_to_out = %f -> "
@@ -1375,14 +1460,17 @@ class BuildOctave
                                         offset,
                                         filter[offset]);
                     }
+#endif
 
                     offset++;
                 }
 
+#if DEBUG
                 if(it.get_global_linear_id() == 0)
                 {
                     syclexp::printf("\tFree loop, i = %d \n", span - self_loop_size);
                 }
+#endif
                 for(int i = span - self_loop_size; i > 0; --i)
                 {
                     // loop around free row
@@ -1392,6 +1480,7 @@ class BuildOctave
                     // out += (val_below * filter[offset]);
                     out += ((val_above + val_below) * filter[offset]);
 
+#if DEBUG
                     if(it.get_global_linear_id() == 0)
                     {
                         syclexp::printf("\t\ti = %d -> v_above = %f -- v_below = %f -> added_to_out = %f -> "
@@ -1404,6 +1493,7 @@ class BuildOctave
                                         offset,
                                         filter[offset]);
                     }
+#endif
 
                     offset++; // only increment at end so that when ours is at top and bottom of window we use
                               // correct filter
@@ -1420,10 +1510,12 @@ class BuildOctave
                     // we need to pluss one to write_y as we did decrement it a bit early
                     // so that we are writing to correct position
 
+#if DEBUG
                     if(it.get_global_linear_id() == 0)
                     {
                         syclexp::printf("\t\t\twrite_y = %d --> out = %f\n", write_y, out);
                     }
+#endif
 
                     data_array[0][(write_y + 1) * dst_w + write_x] = out; // synchronous setting
                 }
