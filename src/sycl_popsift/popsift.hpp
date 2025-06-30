@@ -147,6 +147,12 @@ class PopSift
         // The final if always largest aswell as it's based on the sigma which grows with the level
 
         // return max(_h_gauss.dd.span[0], _h_gauss.inc.span[_h_gauss.required_filter_stages + 2]);
+
+        for(int i = 0; i <= _config.levels + 2; ++i)
+        {
+            std::printf("lvl = %d -- span = %d\n", i, _h_gauss.inc.span[i]);
+        }
+
         return _h_gauss.inc.span[_config.levels + 2];
     }
 #endif

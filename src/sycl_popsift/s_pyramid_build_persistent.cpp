@@ -412,8 +412,8 @@ namespace normalizedSource {
 // template<bool if_required>
 
 // For debugging remove!
-#define DO_HORIZ 1
-#define DO_VERT 0
+#define DO_HORIZ 0
+#define DO_VERT 1
 
 #define DEBUG 0
 

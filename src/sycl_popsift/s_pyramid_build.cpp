@@ -230,8 +230,8 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         // My own test case We do horiz normaly and then Vert with wave code
 
-                        // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
-                        sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+                        sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                        // sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
 
                         _input_horiz_event = horiz; // copy it for use later
 
@@ -247,12 +247,12 @@ void Pyramid::build_pyramid(const Config& conf,
                         //                                    _device_queue);
 
                         // Test if vert part works alone
-                        // oct_obj._level_complete_events[0] =
-                        //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+                        oct_obj._level_complete_events[0] =
+                          build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
 
                         // _input_horiz_event = oct_obj._level_complete_events[0]; // For one wave (both horiz and vert)
 
-                        oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                        // oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
 
                         // oct_obj._level_complete_events[0].wait();
 
