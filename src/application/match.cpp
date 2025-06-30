@@ -313,10 +313,11 @@ int main(int argc, char** argv)
     cout << "Number of features:    " << rFeatures->getFeatureCount() << endl;
     cout << "Number of descriptors: " << rFeatures->getDescriptorCount() << endl;
 
-    auto [match_matrix, matrix_wait, matrix_free] = lFeatures->matchAndReturn(rFeatures); // Default simple matching
+    // auto [match_matrix, matrix_wait, matrix_free] = lFeatures->matchAndReturn(rFeatures); // Default simple matching
     // auto [match_matirx, matrix_wait, matrix_free] = lFeatures->matrixMatchAndReturn(rFeatures); // Non-working matrix
+    // auto [match_matrix_2, matrix_wait_2, matrix_free_2] = lFeatures->preNormMatrixMatchAndReturn(rFeatures);
 
-    auto [match_matrix_2, matrix_wait_2, matrix_free_2] = lFeatures->preNormMatrixMatchAndReturn(rFeatures);
+    auto [match_matrix, matrix_wait, matrix_free] = lFeatures->preNormMatrixMatchAndReturn(rFeatures);
 
     matrix_wait(); // Wait for matrix compute to finish before use
 
@@ -340,10 +341,11 @@ int main(int argc, char** argv)
         // }
     }
     // cout << "Match count: " << count << endl << endl;
-    cout << "Match count : " << count << " --> Final vals: " << match_matrix[lFeatures->getDescriptorCount() - 16].x()
-         << " " << match_matrix[lFeatures->getDescriptorCount() - 16].y() << endl;
+    // cout << "Match count : " << count << " --> Final vals: " << match_matrix[lFeatures->getDescriptorCount() -
+    // 16].x()
+    //      << " " << match_matrix[lFeatures->getDescriptorCount() - 16].y() << endl;
 
-#if true
+#if false
     matrix_wait_2();
 
     count = 0;

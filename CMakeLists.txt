@@ -22,6 +22,8 @@ option(BindlessArray "Use bindless image array for pyramid" ON)
 # Set to off as default and should stay off until it has a working version
 option(JointMatrix "Use Joint Matrix for matching (specific funtion)" OFF)
 
+option(HalfDescriptors "Use fp16 for descriptor will affect accuracy mainly for direct comparison between simple matching and joint matrix mathinc" OFF)
+
 # option(JointMatrixBlur "Use Joint Matrix for building the image pyramid" OFF)
 
 # This option is only to attempt to get better performance for the most time
@@ -106,6 +108,16 @@ if(${PersistentThreads})
   add_compile_definitions(USE_PERSISTENT=1)
 endif()
 
+
+# Wheter or not to use fp16 descriptor
+# will affect accuracy and number of extrema due to different precision used in historgram
+# --> Only has an effect if JointMatrix is OFF otherwise half will be used nomatter what this is set to.
+if(HalfDescriptors)
+  add_compile_definitions(USE_HALF_DESC=1)
+else()
+  add_compile_definitions(USE_HALF_DESC=0)
+endif()
+
 #
 # list(APPEND SYCL_FLAGS -lineinfo) endif()
 
@@ -125,6 +137,8 @@ if(PopSift_EXPERIMENTAL AND ${ENABLE_CUDA})
   else()
     add_compile_definitions(USE_BINDLESS_ARRAY=0)
   endif()
+
+
 
   # Not cuda exclusive
   if(JointMatrix)

@@ -709,6 +709,7 @@ void Pyramid::orientation(const Config& conf)
     }
     _hct.ext_total = ext_ct_prefix_sum;
 
+    std::vector<sycl::event> ori_prefix_sum_prerequisites;
     // for( int octave=0; octave<_num_octaves; octave++ )
     for(int octave = _num_octaves - 1; octave >= 0; octave--)
     {
@@ -726,7 +727,8 @@ void Pyramid::orientation(const Config& conf)
             if(use_subgroup_ori_par)
             {
                 // Uses sub-group(warp) for synchronization and communication
-                _device_queue.submit([&](sycl::handler& cgh) {
+                // oct_obj._orientation_done_event =
+                ori_prefix_sum_prerequisites.push_back(_device_queue.submit([&](sycl::handler& cgh) {
                     cgh.depends_on({_dobuf_write, oct_obj._extrema_done_event});
                     // sycl::local_accessor<float, 1> -- is the type (using auto as it's so long)
                     auto hist = sycl::local_accessor<float, 1>(64, cgh);
@@ -746,12 +748,13 @@ void Pyramid::orientation(const Config& conf)
                                                                      yval,
                                                                      _dobuf,
                                                                      _dct));
-                });
+                }));
             }
             else
             {
                 // Uses work groip for synchronization and communication
-                _device_queue.submit([&](sycl::handler& cgh) {
+                // oct_obj._orientation_done_event =
+                ori_prefix_sum_prerequisites.push_back(_device_queue.submit([&](sycl::handler& cgh) {
                     cgh.depends_on({_dobuf_write, oct_obj._extrema_done_event});
                     // sycl::local_accessor<float, 1> -- is the type (using auto as it's so long)
                     auto hist = sycl::local_accessor<float, 1>(64, cgh);
@@ -772,13 +775,13 @@ void Pyramid::orientation(const Config& conf)
                                                              yval,
                                                              _dobuf,
                                                              _dct));
-                });
+                }));
             }
         }
     }
 
     // Should remove this and addd ependencies if htare are any
-    _device_queue.wait();
+    // _device_queue.wait();
     // Could just for sor range for this (unless I need work_grop/sub_group)
 
     // NOTE: We need num_orientation hence we need to wait for prev kernel could try to split up into octave but not
@@ -791,27 +794,31 @@ void Pyramid::orientation(const Config& conf)
     // if(!use_subgroup_prefix)    // to debugg work_group on GPU
     if(use_subgroup_prefix) // Normal
     {
-        _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
-            // sycl::local_accessor<int, 1> -- is the type
-            auto sum = sycl::local_accessor<int, 1>(32, cgh);
-            auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
+        _prefix_sum_done_event =
+          _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
+              cgh.depends_on(ori_prefix_sum_prerequisites);
+              // sycl::local_accessor<int, 1> -- is the type
+              auto sum = sycl::local_accessor<int, 1>(32, cgh);
+              auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
 
-            cgh.parallel_for<ori_prefix_sum_subgroup>(
-              sycl::nd_range{global_prefix, local_prefix},
-              ori_prefix_sum<true>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
-        });
+              cgh.parallel_for<ori_prefix_sum_subgroup>(
+                sycl::nd_range{global_prefix, local_prefix},
+                ori_prefix_sum<true>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
+          });
     }
     else
     {
-        _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
-            // sycl::local_accessor<int, 1> -- is the type
-            auto sum = sycl::local_accessor<int, 1>(32, cgh);
-            auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
+        _prefix_sum_done_event =
+          _device_queue.submit([&, dbuf = _dbuf, dobuf = _dobuf, d_consts = _d_consts, dct = _dct](sycl::handler& cgh) {
+              cgh.depends_on(ori_prefix_sum_prerequisites);
+              // sycl::local_accessor<int, 1> -- is the type
+              auto sum = sycl::local_accessor<int, 1>(32, cgh);
+              auto loop_total = sycl::local_accessor<int, 1>(1, cgh);
 
-            cgh.parallel_for(
-              sycl::nd_range{global_prefix, local_prefix},
-              ori_prefix_sum<false>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
-        });
+              cgh.parallel_for(
+                sycl::nd_range{global_prefix, local_prefix},
+                ori_prefix_sum<false>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
+          });
     }
     _device_queue.wait(); // Required for now first should replace with events
 }

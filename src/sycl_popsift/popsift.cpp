@@ -513,7 +513,8 @@ void PopSift::uploadImages()
 
         job->setImg(img, _config.getUpscaleFactor());
 
-        _device_queue.wait();
+        // _device_queue.wait(); // No need for this wait as we store event for transfer and that is waited on for first
+        // kernel in running loop
 
         _pipe._queue_stage2.push(job);
     }
@@ -540,7 +541,7 @@ void PopSift::extractDownloadLoop()
 
         p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
-        _device_queue.wait(); // SHould not be needed
+        // _device_queue.wait(); // SHould not be needed
 
 #if QUEUE_PROFILING
         double frame_start =

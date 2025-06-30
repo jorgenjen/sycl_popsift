@@ -12,3 +12,6 @@ build_no_experimental
 old_build
 build_non_wave
 root_gr_build
+build_matching_test_joint_matrix
+build_matching_test_normal_fp32
+build_matching_test

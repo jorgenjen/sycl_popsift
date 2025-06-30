@@ -42,6 +42,7 @@ class OctaveBase
     sycl::event* _level_complete_events{nullptr};
     sycl::event _dog_done_event;
     sycl::event _extrema_done_event;
+    sycl::event _orientation_done_event;
 
     friend class Pyramid; // Access to everything (can't restrict a friend :D)
 
@@ -70,6 +71,7 @@ class OctaveBase
     inline sycl::event getLevelCompleteEvent(const int level) const { return _level_complete_events[level]; }
     inline sycl::event getDogDoneEvent() const { return _dog_done_event; }
     inline sycl::event getExtremaDoneEvent() const { return _extrema_done_event; }
+    inline sycl::event getOrientationDoneEvent() const { return _extrema_done_event; }
 };
 
 class Octave : public OctaveBase

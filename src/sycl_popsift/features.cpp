@@ -314,15 +314,15 @@ class Compute_distance
             bool accept = ((match_1st_val / match_2nd_val) < 0.8f);
             match_matrix[it.get_group(0)] = sycl::vec<int, 3>(match_1st_idx, match_2nd_idx, accept);
 
-            if(accept)
-            {
-                syclexp::printf("match_matrix[%d] = (%d, %d) --> (%f, %f)\n",
-                                idx,
-                                match_1st_idx,
-                                match_2nd_idx,
-                                match_1st_val,
-                                match_2nd_val);
-            }
+            // if(accept)
+            // {
+            //     syclexp::printf("match_matrix[%d] = (%d, %d) --> (%f, %f)\n",
+            //                     idx,
+            //                     match_1st_idx,
+            //                     match_2nd_idx,
+            //                     match_1st_val,
+            //                     match_2nd_val);
+            // }
         }
     }
 };

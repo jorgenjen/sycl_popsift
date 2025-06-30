@@ -391,15 +391,18 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool
     sycl::range local{16, 1, 32};
 #endif
 
+    // Think they depend on prefix sum (verify that again)
     if(use_sub_group)
     {
         _device_queue.parallel_for<sub_group_desc_loop>(
           sycl::nd_range{global, local},
+          _prefix_sum_done_event,
           Ext_desc_loop(_dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
     }
     else
     {
         _device_queue.submit([&](sycl::handler& cgh) {
+            cgh.depends_on(_prefix_sum_done_event);
             // need 7 for storing the older result values final is stored in current work range idx 7
             auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
 
@@ -424,6 +427,8 @@ void popsift::Pyramid::descriptors(const Config& conf)
 
     readDesc.wait();
 
+    // I feel like this should be done ocave by octave  and not sure if I need t o check if orientaiton count is zero on
+    // host side As this sync step takes a long time 24 micro seconds and kernel to run for all takes
     for(int octave = _num_octaves - 1; octave >= 0; octave--)
     // for( int octave=0; octave<_num_octaves; octave++ )
     {
