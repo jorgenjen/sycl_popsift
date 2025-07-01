@@ -553,7 +553,7 @@ void PopSift::extractDownloadLoop()
 
         p._pyramid->step2(_config, _d_consts_write);
 
-        // Copy featrues to host -- step 3
+        // Copy featrues to host async -- step 3
         popsift::FeaturesHost* features = p._pyramid->get_descriptors(_config);
 
         bool log_to_file = (_config.getLogMode() == popsift::Config::All);

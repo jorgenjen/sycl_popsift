@@ -81,11 +81,4 @@ struct Descriptor
 {
     FeatureType features[128];
 };
-
-// Temporary will template
-struct DescriptorHalf
-{
-    sycl::half features[128];
-};
-
 } // namespace popsift

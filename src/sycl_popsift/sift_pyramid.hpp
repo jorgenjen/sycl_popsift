@@ -100,6 +100,7 @@ class Pyramid
     sycl::event _zero_dct;
     sycl::event _zero_extrema_num_blocks;
     sycl::event _prefix_sum_done_event;
+    sycl::event _histogram_done_event;
 
     /* the download of converted descriptors should be asynchronous */
     // cudaStream_t _download_stream;
@@ -199,9 +200,14 @@ class Pyramid
 
     void descriptors(const Config& conf);
 
-    inline void start_ext_desc_loop(const int octave, Octave& oct_obj, bool use_sub_group);
+    inline void start_ext_desc_loop(const int octave,
+                                    Octave& oct_obj,
+                                    bool use_sub_group,
+                                    std::vector<sycl::event>* histogram_prerequisites);
 
     sycl::event readDescCountersFromDevice();
+    sycl::event readDescCountersFromDevice(sycl::event prerequisite);
+    sycl::event readDescCountersFromDevice(std::vector<sycl::event> prerequisites);
 
     sycl::event getPrefixSumDoneEvent();
 

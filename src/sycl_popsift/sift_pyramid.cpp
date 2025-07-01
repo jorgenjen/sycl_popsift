@@ -277,9 +277,12 @@ FeaturesHost* Pyramid::get_descriptors(const Config& conf)
 {
     const float up_fac = conf.getUpscaleFactor();
 
-    readDescCountersFromDevice().wait(); // Should do this earlier right after orientation is done
-                                         // so that will be no wait here
-                                         // just wait on the event but should be done a long time ago
+    // This is already done in sift_desc.cpp before running ext_desc_loop which gets the dct state that is after
+    // prefix_sum kernel and dct have not been modified since that kernel and hence no need to copy again as we already
+    // have the data...
+    // readDescCountersFromDevice().wait(); // Should do this earlier right after orientation is done
+    //                                      // so that will be no wait here
+    //                                      // just wait on the event but should be done a long time ago
 
     // Need to get dct from device. We need the updated version to get access to ori_total
 
@@ -295,8 +298,10 @@ FeaturesHost* Pyramid::get_descriptors(const Config& conf)
     sycl::range global{static_cast<size_t>(grid_divide(_hct.ext_total, 32))};
     sycl::range local{32};
 
-    sycl::event getDescEvent = _device_queue.parallel_for(
-      sycl::nd_range(global, local), Prep_features(_dobuf, features->getDescriptors(), up_fac, _hct.ext_total));
+    sycl::event getDescEvent =
+      _device_queue.parallel_for(sycl::nd_range(global, local),
+                                 _histogram_done_event,
+                                 Prep_features(_dobuf, features->getDescriptors(), up_fac, _hct.ext_total));
 
     sycl::event featuresCopyEvent = _device_queue.memcpy(
       features->getFeatures(), _dobuf_host.features, _hct.ext_total * sizeof(Feature), getDescEvent);
@@ -314,8 +319,11 @@ FeaturesDev* Pyramid::clone_device_descriptors(const Config& conf)
 {
     const float up_fac = conf.getUpscaleFactor();
 
-    readDescCountersFromDevice().wait(); // should move to earlier
-                                         // god for clone and get descriptor code
+    // This is already done in sift_desc.cpp before running ext_desc_loop which gets the dct state that is after
+    // prefix_sum kernel and dct have not been modified since that kernel and hence no need to copy again as we already
+    // have the data...
+    // readDescCountersFromDevice(_final_desc_event).wait(); // should move to earlier
+    //                                                       // god for clone and get descriptor code
 
     FeaturesDev* features = new FeaturesDev(_device_queue, _hct.ext_total, _hct.ori_total);
 
@@ -367,5 +375,13 @@ void Pyramid::resetDimensions(const Config& conf, int width, int height)
 int* Pyramid::getNumberOfBlocks(int octave) { return &_d_extrema_num_blocks[octave]; }
 
 sycl::event Pyramid::readDescCountersFromDevice() { return _device_queue.memcpy(&_hct, _dct, sizeof(ExtremaCounters)); }
+sycl::event Pyramid::readDescCountersFromDevice(sycl::event prerequisite)
+{
+    return _device_queue.memcpy(&_hct, _dct, sizeof(ExtremaCounters), prerequisite);
+}
+sycl::event Pyramid::readDescCountersFromDevice(std::vector<sycl::event> prerequisites)
+{
+    return _device_queue.memcpy(&_hct, _dct, sizeof(ExtremaCounters), prerequisites);
+}
 
 } // namespace popsift

@@ -376,7 +376,10 @@ class Ext_desc_loop_local_mem
 
 class sub_group_desc_loop; // To check sub_group size for kernel
 
-inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool use_sub_group)
+inline void Pyramid::start_ext_desc_loop(const int octave,
+                                         Octave& oct_obj,
+                                         bool use_sub_group,
+                                         std::vector<sycl::event>* histogram_prerequisites)
 {
     if(_hct.ori_ct[octave] == 0)
         return;
@@ -394,14 +397,14 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool
     // Think they depend on prefix sum (verify that again)
     if(use_sub_group)
     {
-        _device_queue.parallel_for<sub_group_desc_loop>(
+        histogram_prerequisites->push_back(_device_queue.parallel_for<sub_group_desc_loop>(
           sycl::nd_range{global, local},
           _prefix_sum_done_event,
-          Ext_desc_loop(_dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
+          Ext_desc_loop(_dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight())));
     }
     else
     {
-        _device_queue.submit([&](sycl::handler& cgh) {
+        histogram_prerequisites->push_back(_device_queue.submit([&](sycl::handler& cgh) {
             cgh.depends_on(_prefix_sum_done_event);
             // need 7 for storing the older result values final is stored in current work range idx 7
             auto sum = sycl::local_accessor<float, 1>((local[2] + 7) * 16, cgh); // one per row in work-group
@@ -410,13 +413,13 @@ inline void Pyramid::start_ext_desc_loop(const int octave, Octave& oct_obj, bool
               sycl::nd_range{global, local},
               Ext_desc_loop_local_mem(
                 sum, _dct, _dbuf, _dobuf, oct_obj.getDataArray(), octave, oct_obj.getWidth(), oct_obj.getHeight()));
-        });
+        }));
     }
 }
 
 void popsift::Pyramid::descriptors(const Config& conf)
 {
-    sycl::event readDesc = readDescCountersFromDevice();
+    sycl::event readDesc = readDescCountersFromDevice(_prefix_sum_done_event);
 
     auto group_size = get_kernel_subgroup_size<sub_group_desc_loop>(_device_queue);
     bool use_sub_group = group_size >= 32;
@@ -426,6 +429,7 @@ void popsift::Pyramid::descriptors(const Config& conf)
     // const bool sub_group_normalize = normalize_size >= 32;
 
     readDesc.wait();
+    std::vector<sycl::event> ext_desc_loop_events;
 
     // I feel like this should be done ocave by octave  and not sure if I need t o check if orientaiton count is zero on
     // host side As this sync step takes a long time 24 micro seconds and kernel to run for all takes
@@ -439,7 +443,7 @@ void popsift::Pyramid::descriptors(const Config& conf)
             if(conf.getDescMode() == Config::Loop)
             {
                 // Default
-                start_ext_desc_loop(octave, oct_obj, use_sub_group);
+                start_ext_desc_loop(octave, oct_obj, use_sub_group, &ext_desc_loop_events);
             }
             else if(conf.getDescMode() == Config::VLFeat_Desc)
             {
@@ -465,34 +469,29 @@ void popsift::Pyramid::descriptors(const Config& conf)
     {
         // DEFAULT
 
-        _device_queue.wait(); // should use events instead
+        // _device_queue.wait(); // should use events instead
 
         if(use_sub_group) // basing decision on Ext_desc_loop (not the one I'm launching
                           // as I was not able to pass struct/class to parallel_for and use it as in last one
         {
-#if QUEUE_PROFILING // Conditionally stores the event
-            _final_desc_event =
-#endif
-              _device_queue.parallel_for(
-                sycl::nd_range{global, local},
-                Normalize_histogram<NormalizeRootSift, false>(_dbuf_host.desc, _d_consts, _hct.ori_total));
+            _histogram_done_event = _device_queue.parallel_for(
+              sycl::nd_range{global, local},
+              ext_desc_loop_events,
+              Normalize_histogram<NormalizeRootSift, false>(_dbuf_host.desc, _d_consts, _hct.ori_total));
         }
         else
         {
-#if QUEUE_PROFILING
-            _final_desc_event =
-#endif
-              // Template param is work_gropu scan
-              _device_queue.parallel_for(
-                sycl::nd_range{global, local},
-                Normalize_histogram<NormalizeRootSift, true>(_dbuf_host.desc, _d_consts, _hct.ori_total));
+            _histogram_done_event = _device_queue.parallel_for(
+              sycl::nd_range{global, local},
+              ext_desc_loop_events,
+              Normalize_histogram<NormalizeRootSift, true>(_dbuf_host.desc, _d_consts, _hct.ori_total));
         }
     }
     else
     {
         // Missing alternative VLfeat version
     }
-    _device_queue.wait(); // should use events
+    // _device_queue.wait(); // should use events
 }
 
 } // namespace popsift

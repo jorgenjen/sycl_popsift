@@ -672,12 +672,21 @@ void Pyramid::orientation(const Config& conf)
 
     // Wait so that the computation is done before the memcpy
     // Look for ways to make this part faster (less waits the better)
-    _device_queue.wait();
+
+    std::vector<sycl::event> all_extrema_events;
+    for(int octave = 0; octave < _num_octaves; octave++)
+    {
+        all_extrema_events.push_back(_octaves[octave].getExtremaDoneEvent());
+    }
+
+    // _device_queue.wait();
+
+    // for
 
     // Need to think about if this is really necessary?
     // As now we neet to wait for all octaes to do extrema before we can do orientation
     // Not sure if we actually need to do this...
-    readDescCountersFromDevice().wait();
+    readDescCountersFromDevice(all_extrema_events).wait();
 
     int ext_total = 0;
     for(int o : _hct.ext_ct)
@@ -820,6 +829,6 @@ void Pyramid::orientation(const Config& conf)
                 ori_prefix_sum<false>(ext_ct_prefix_sum, _num_octaves, dbuf, dobuf, d_consts, dct, sum, loop_total));
           });
     }
-    _device_queue.wait(); // Required for now first should replace with events
+    // _device_queue.wait(); // Required for now first should replace with events
 }
 } // namespace popsift
