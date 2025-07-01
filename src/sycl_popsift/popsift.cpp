@@ -712,3 +712,18 @@ void PopSift::Pipe::uninit()
         delete img;
     }
 }
+
+/*************************************************************
+ * PERFORMANCE TESTING FUNCTIONS
+ *************************************************************/
+#if PERF_TESTING_FUNCTIONS
+// This
+void PopSift::benchmarkMatchingPerformance(
+  bool matrix, int seed, const std::string& img_dir_l, const std::string& img_dir_r, const std::string& output_filename)
+{
+    // Semi syntetic benchmark using pool of descriptors and randomly selecting (based on seed for repetablility) the
+    // descriptors to include in the test. Then it's done many times for multiple test cases
+    printf("Hello monkey land\n");
+}
+
+#endif

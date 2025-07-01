@@ -261,31 +261,31 @@ class Vert
             idy = y - offset;
             val = idy < 0 ? intermediate[x] : intermediate[x + idy * width]; // clamp edge
             out += (val * g);
-            if(x == 0 && y == 97 && level == 0)
-            // if(x == 0 && y == 97)
-            {
-                syclexp::printf("offset = %d span =%d vals: Above=%.10f ", offset, span, val);
-            }
+            // if(x == 0 && y == 97 && level == 0)
+            // // if(x == 0 && y == 97)
+            // {
+            //     syclexp::printf("offset = %d span =%d vals: Above=%.10f ", offset, span, val);
+            // }
 
             idy = y + offset;
             val = idy >= height ? intermediate[x + (height - 1) * width] : intermediate[x + idy * width]; // clamp edge
             out += (val * g);
-            if(x == 0 && y == 97 && level == 0)
-            // if(x == 0 && y == 97)
-            {
-                // syclexp::printf("offset = %d vals: Above=%f Below=%f FILTER=%f\n", offset, val_1, val, g);
-                syclexp::printf("Below=%.10f FILTER=%.20f\n", val, g);
-            }
+            // if(x == 0 && y == 97 && level == 0)
+            // // if(x == 0 && y == 97)
+            // {
+            //     // syclexp::printf("offset = %d vals: Above=%f Below=%f FILTER=%f\n", offset, val_1, val, g);
+            //     syclexp::printf("Below=%.10f FILTER=%.20f\n", val, g);
+            // }
         }
 
         g = filter[0];
         val = intermediate[x + y * width];
         out += (val * g);
 
-        if(x == 0 && y == 97 && level == 0)
-        {
-            syclexp::printf("Val self = %.10f FILTER=%.20f\n Final out = %.10f\n", val, g, out);
-        }
+        // if(x == 0 && y == 97 && level == 0)
+        // {
+        //     syclexp::printf("Val self = %.10f FILTER=%.20f\n Final out = %.10f\n", val, g, out);
+        // }
 
         dst_data[x + y * width] = out;
     }

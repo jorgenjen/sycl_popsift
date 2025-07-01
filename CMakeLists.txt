@@ -40,6 +40,11 @@ option(
 # due to using sycl queue profiler)
 option(Profiling "Time certain parts of application" OFF)
 
+
+option(PerfTestingFunctions "Compiles different functions used for performance testing and data generation" OFF)
+
+
+
 # option(Profiling "For profiling mode (used for nsight)" ON)
 
 # To generate compile_commands.json -- useful for clangd LSP
@@ -72,6 +77,7 @@ include(cmake/ConfigureSYCL.cmake)
 # -fsanitize=address")
 
 # list(APPEND SYCL_FALGS -fsycl-device-code-split=per_kernel)
+
 
 # TODO: Make it like this for amd and intel gpu's too so you can toggle on and
 # off cpu only
@@ -172,6 +178,16 @@ else()
   # Not cuda exclusive
   add_compile_definitions(USE_JOINT_MATRIX=0)
 
+endif()
+
+
+
+if(PerfTestingFunctions)
+  add_compile_definitions(PERF_TESTING_FUNCTIONS=1)
+  message(STATUS "Performance Testing functions ${PerfTestingFunctions}")
+else()
+  add_compile_definitions(PERF_TESTING_FUNCTIONS=0)
+  message(STATUS "Performance Testing functions ${PerfTestingFunctions}")
 endif()
 
 # Need to figure out number of sub-groups per Compute Unit for GPU (this can be

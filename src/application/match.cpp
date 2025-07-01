@@ -12,6 +12,8 @@
 // #include <popsift/sift_config.h>
 // #include <popsift/version.hpp>
 
+#include "sycl_popsift/sift_extremum.h"
+
 #include <boost/filesystem.hpp>
 #include <boost/program_options.hpp>
 #include <sycl_popsift/features.hpp>
@@ -313,10 +315,12 @@ int main(int argc, char** argv)
     cout << "Number of features:    " << rFeatures->getFeatureCount() << endl;
     cout << "Number of descriptors: " << rFeatures->getDescriptorCount() << endl;
 
+    popsift::Descriptor* test = rFeatures->getDescriptors();
+
+    auto [match_matrix_2, matrix_wait_2, matrix_free_2] =
+      lFeatures->preNormMatrixMatchAndReturn(rFeatures);                                  // Test joint matrix first
     auto [match_matrix, matrix_wait, matrix_free] = lFeatures->matchAndReturn(rFeatures); // Default simple matching
     // auto [match_matirx, matrix_wait, matrix_free] = lFeatures->matrixMatchAndReturn(rFeatures); // Non-working matrix
-
-    auto [match_matrix_2, matrix_wait_2, matrix_free_2] = lFeatures->preNormMatrixMatchAndReturn(rFeatures);
 
     matrix_wait(); // Wait for matrix compute to finish before use
 
@@ -328,9 +332,9 @@ int main(int argc, char** argv)
         {
             const popsift::Feature* l_f = lFeatures->getFeatureForDescriptor(i);
             const popsift::Feature* r_f = rFeatures->getFeatureForDescriptor(match.x());
-            cout << setprecision(5) << showpoint << "point (" << l_f->xpos << "," << l_f->ypos << ") in l matches "
-                 << "point (" << r_f->xpos << "," << r_f->ypos << ") in r -- " << "i = " << i
-                 << " matc.x() = " << match.x() << endl;
+            // cout << setprecision(5) << showpoint << "point (" << l_f->xpos << "," << l_f->ypos << ") in l matches "
+            //      << "point (" << r_f->xpos << "," << r_f->ypos << ") in r -- " << "i = " << i
+            //      << " matc.x() = " << match.x() << endl;
             count++;
         }
 
@@ -339,9 +343,10 @@ int main(int argc, char** argv)
         //     fprintf(stderr, "Match matrix %d, %d, %d \n", match.x(), match.y(), match.z());
         // }
     }
-    // cout << "Match count: " << count << endl << endl;
-    cout << "Match count : " << count << " --> Final vals: " << match_matrix[lFeatures->getDescriptorCount() - 16].x()
-         << " " << match_matrix[lFeatures->getDescriptorCount() - 16].y() << endl;
+    cout << "Match count normal (fp16): " << count << endl << endl;
+    // cout << "Match count : " << count << " --> Final vals: " << match_matrix[lFeatures->getDescriptorCount() -
+    // 16].x()
+    //      << " " << match_matrix[lFeatures->getDescriptorCount() - 16].y() << endl;
 
 #if true
     matrix_wait_2();
@@ -354,9 +359,9 @@ int main(int argc, char** argv)
         {
             const popsift::Feature* l_f = lFeatures->getFeatureForDescriptor(i);
             const popsift::Feature* r_f = rFeatures->getFeatureForDescriptor(match.x());
-            cout << setprecision(5) << showpoint << "point (" << l_f->xpos << "," << l_f->ypos << ") in l matches "
-                 << "point (" << r_f->xpos << "," << r_f->ypos << ") in r -- " << "i = " << i
-                 << " matc.x() = " << match.x() << endl;
+            // cout << setprecision(5) << showpoint << "point (" << l_f->xpos << "," << l_f->ypos << ") in l matches "
+            //      << "point (" << r_f->xpos << "," << r_f->ypos << ") in r -- " << "i = " << i
+            //      << " matc.x() = " << match.x() << endl;
             count++;
         }
 

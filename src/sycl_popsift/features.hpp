@@ -92,6 +92,7 @@ class FeaturesHost : public FeaturesBase
     // void unpin();
 
     inline Feature* getFeatures() { return _ext; }
+
     inline Descriptor* getDescriptors() { return _ori; }
 
     void print(std::ostream& ostr, bool write_as_uchar) const;

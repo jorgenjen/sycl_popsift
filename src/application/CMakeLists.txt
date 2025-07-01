@@ -127,9 +127,24 @@ target_include_directories(popsift-match PUBLIC PopSift::popsift
 target_compile_definitions(popsift-match PRIVATE ${Boost_DEFINITIONS})
 target_link_libraries(popsift-match PUBLIC PopSift::popsift ${PD_LINK_LIBS})
 
+
+# ##############################################################################
+# popsift-perf-test --> Executables that sample data
+# ##############################################################################
+
+add_executable(popsift-perf-test matching_performance_test.cpp pgmread.cpp pgmread.h)
+
+target_compile_options(popsift-perf-test PRIVATE ${PD_COMPILE_OPTIONS})
+target_include_directories(popsift-perf-test PUBLIC PopSift::popsift
+                                                ${PD_INCLUDE_DIRS})
+target_compile_definitions(popsift-perf-test PRIVATE ${Boost_DEFINITIONS})
+target_link_libraries(popsift-perf-test PUBLIC PopSift::popsift ${PD_LINK_LIBS})
+
+
 # ##############################################################################
 # installation
 # ##############################################################################
 
 install(TARGETS popsift-demo DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS popsift-match DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS popsift-perf-test DESTINATION ${CMAKE_INSTALL_BINDIR})

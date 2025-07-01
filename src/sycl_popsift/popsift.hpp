@@ -135,6 +135,16 @@ class PopSift
 
     SiftJob* enqueue(int w, int h, const unsigned char* imageData);
 
+    // matrix is wheter or not to use matrix version if compiling with JointMatrix=ON when running cmake then
+    // matrix=false will run normal mode but with sycl::half/fp16 to get float results configure with JointMatrix off
+    // and set matrix to false
+    // ouput_file is a csv formatted file
+    void benchmarkMatchingPerformance(bool matrix,
+                                      int seed,
+                                      const std::string& img_dir_l,
+                                      const std::string& img_dir_r,
+                                      const std::string& output_filename);
+
     inline static bool matrixSupported = false;
     inline static int sg_per_cu = -1; // sub-group per execution-unit -- Start as not defined(-1)
     inline static int num_cu;

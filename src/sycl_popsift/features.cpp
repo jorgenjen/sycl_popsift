@@ -314,15 +314,15 @@ class Compute_distance
             bool accept = ((match_1st_val / match_2nd_val) < 0.8f);
             match_matrix[it.get_group(0)] = sycl::vec<int, 3>(match_1st_idx, match_2nd_idx, accept);
 
-            if(accept)
-            {
-                syclexp::printf("match_matrix[%d] = (%d, %d) --> (%f, %f)\n",
-                                idx,
-                                match_1st_idx,
-                                match_2nd_idx,
-                                match_1st_val,
-                                match_2nd_val);
-            }
+            // if(accept)
+            // {
+            //     syclexp::printf("match_matrix[%d] = (%d, %d) --> (%f, %f)\n",
+            //                     idx,
+            //                     match_1st_idx,
+            //                     match_2nd_idx,
+            //                     match_1st_val,
+            //                     match_2nd_val);
+            // }
         }
     }
 };
@@ -893,10 +893,12 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
 
     sycl::range remainderGlobal{static_cast<size_t>((l_len % 16) * 32)};
 
+// FROM INITIAL TEST NOT USING NORM IS FASTER (not huge (1.894ms vs 1.839))
+
 // DATA COLLECTION TO PERFORM:
 // SHOULD HAVE AN EXPERIMENT WHERE WE COMPARE USING PRECOMPUTED NORMS VS NOT FOR PERFORMANCE BOTH INCLUDING THE NORM
 // COMPUTE COST AND WITHOUT Could have all three in a plot and from that justify design decision
-#define USE_NORMS 1
+#define USE_NORMS 0
 #if USE_NORMS
     sycl::event remainderMatchEvent = _device_queue.parallel_for(
       sycl::nd_range{remainderGlobal, local},
