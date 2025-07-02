@@ -1,8 +1,121 @@
 #include "sycl_popsift/common/assist.h"
 
+#include "sycl_popsift/common/debug_macros.hpp" // For POP_FATAL
 #include "sycl_popsift/popsift.hpp"
 
 namespace popsift {
+
+sycl::queue initQueue()
+{
+#if QUEUE_PROFILING
+    sycl::property_list queue_proplist = sycl::property_list{sycl::property::queue::enable_profiling{}};
+#else
+    sycl::property_list queue_proplist = {};
+#endif
+
+#ifndef CPU_ONLY
+    // should probably also have a compile time flag --experimental to enable this feature
+    if constexpr(USE_BINDLESS_INPUT && USE_BINDLESS_ARRAY &&
+                 sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
+                 sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>() &&
+                 sycl::any_device_has<sycl::aspect::ext_oneapi_image_array>())
+    {
+        // Running with bindless image -- need to find gpu with that aspect (needed incase of multi gpu system)
+
+        for(sycl::device dev : sycl::device::get_devices(sycl::info::device_type::gpu))
+        {
+            // Find GPU with the aspect (incase of multigpu system)
+            if(dev.has(sycl::aspect::ext_oneapi_bindless_images) && dev.has(sycl::aspect::ext_oneapi_image_array) &&
+               dev.has(sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d))
+            {
+                std::cout << "Running on: " << dev.get_info<sycl::info::device::name>() << std::endl
+                          << "\t--> supports ext_oneapi_bindless_images: YES" << std::endl
+                          << "\t--> supports ext_oneapi_image_array: YES" << std::endl;
+
+                // We always select first gpu that had the aspect (might be a way to select the best one)
+                // but most systems will be single gpu anyways
+                return sycl::queue(sycl::context{dev}, dev, queue_proplist);
+            }
+        }
+        // Did not return hence we did not find a matching device to that was on the compiled system
+        POP_FATAL("Could not find device with support for  ext_oneapi_bindless_images and ext_oneapi_image_array "
+                  "Such a device was available at compile time... Please re-compile")
+    }
+    else if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
+                      sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
+    {
+        // In case it only supports bindless we can use it for upscaling still
+        for(sycl::device dev : sycl::device::get_devices(sycl::info::device_type::gpu))
+        {
+            // Find GPU with the aspect (incase of multigpu system)
+            if(dev.has(sycl::aspect::ext_oneapi_bindless_images) &&
+               dev.has(sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d))
+            {
+                std::cout << "Running on: " << dev.get_info<sycl::info::device::name>() << std::endl
+                          << "\t--> supports ext_oneapi_bindless_images: YES" << std::endl
+                          << "\t--> supports ext_oneapi_image_array: "
+                          << (dev.has(sycl::aspect::ext_oneapi_image_array)
+                                ? "YES... But not in use due to being NO at compile time..."
+                                : "NO")
+                          << std::endl
+                          << std::endl;
+
+                return sycl::queue(sycl::context{dev}, dev, queue_proplist);
+                // We always select first gpu that had the aspect (might be a way to select the best one)
+                // but most systems will be single gpu anyways
+            }
+        }
+
+        // Did not return hence we did not find a matching device to that was on the compiled system
+        POP_FATAL("Could not find device with ext_oneapi_bindless_images support... Such a device was  available "
+                  "at compile time... Please re-compile")
+    }
+    else
+    {
+        try
+        {
+            // Did not have bindless aspect during compile time so we just try to select any GPU
+            // If there is no GPU it will throw exception and use CPU in catch
+
+            sycl::device dev = sycl::device{sycl::gpu_selector_v};
+            return sycl::queue(sycl::context{dev}, dev, queue_proplist);
+        }
+        catch(sycl::exception const& ex)
+        {
+            std::cout << "No GPU found falling back to CPU... Exception thrown: " << ex.what() << std::endl;
+
+            // Could use defualt selector but not sure how would handle fpga... hence cpu selector
+            sycl::device dev = sycl::device{sycl::cpu_selector_v};
+            return sycl::queue(sycl::context{dev}, dev);
+        }
+    }
+
+    // Could go back to using runtime selection of bindless or not, but using compiletime for now. Makes it less
+    // portable but don't think it's that portable between systems anyways... (Without compiling on the system
+    // ofcourse)
+
+#else
+    fprintf(stderr, "Running in CPU_ONLY mode\n");
+    try
+    {
+        // For in order queue use this (usefull for debugging)
+        // sycl::device cpu_dev = sycl::device{sycl::cpu_selector_v};
+        // _device_queue = sycl::queue(
+        //   cpu_dev, sycl::property_list{sycl::property::queue::in_order{},
+        //   sycl::property::queue::enable_profiling{}});
+
+        sycl::device dev = sycl::device{sycl::cpu_selector_v};
+        _device_queue = sycl::queue(sycl::context{dev}, dev, queue_proplist);
+    }
+    catch(const sycl::exception& e)
+    {
+        std::cerr << "Failed to create CPU queue: " << e.what() << std::endl;
+        throw;
+    }
+
+    // _device_queue = std::make_shared<sycl::queue>(sycl::context{dev}, dev);
+#endif
+}
 
 #define DEBUGG_LOG 0
 // Computes regions that allows the compute to be done in one wave. Computes the smallest regions per sub-group that

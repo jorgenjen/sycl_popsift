@@ -8,6 +8,10 @@
 #include "sycl_popsift/sift_constants.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 
+#if PERF_TESTING_FUNCTIONS
+#include <sycl_popsift/sift_desc_config.hpp> // For FeatureType
+#endif
+
 #include <sycl/sycl.hpp>
 
 #include <future>
@@ -148,6 +152,10 @@ class PopSift
     inline static bool matrixSupported = false;
     inline static int sg_per_cu = -1; // sub-group per execution-unit -- Start as not defined(-1)
     inline static int num_cu;
+
+#if PERF_TESTING_FUNCTIONS
+    void benchmarkMatchingPerformance(bool matrix, int seed, std::vector<std::array<FeatureType, 128>> desc_pool);
+#endif
 
 #if USE_PERSISTENT
 

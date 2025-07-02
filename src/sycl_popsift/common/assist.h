@@ -2,6 +2,8 @@
 
 // #include "sycl/queue.hpp"
 
+#include "assist.h" // For POP_FATAL
+
 #include <sycl/device.hpp>
 #include <sycl/kernel.hpp>
 #include <sycl/kernel_bundle.hpp>
@@ -43,6 +45,32 @@ inline auto get_kernel_subgroup_size(sycl::queue& Q) // not sure if we want to i
     auto kernel_bundle = sycl::get_kernel_bundle<sycl::bundle_state::executable>(Q.get_context());
     auto kernel = kernel_bundle.get_kernel(kernel_id);
     return kernel.template get_info<sycl::info::kernel_device_specific::max_sub_group_size>(Q.get_device());
+}
+
+// Queue selection
+sycl::queue initQueue();
+// Matrix supported verification
+
+inline bool supportsJointMatrixMatch(sycl::queue& Q)
+{
+#if !USE_JOINT_MATRIX
+    return false; // As joint matrix is in thic case not compiled
+#endif
+    sycl::device dev = Q.get_device();
+    auto combinations = dev.get_info<sycl::ext::oneapi::experimental::info::device::matrix_combinations>();
+
+    for(const auto& combo : combinations)
+    {
+        if(combo.atype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp16 &&
+           combo.btype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp16 &&
+           combo.ctype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp32 &&
+           combo.dtype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp32 && combo.msize == 16 &&
+           combo.nsize == 16 && combo.ksize == 16)
+        {
+            return true; // Found it! And we support current JointMatrix matching
+        }
+    }
+    return false; // Not supoprting the used matrix type in matrix matching code
 }
 
 // struct sg_region_blocks

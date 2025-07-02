@@ -1,5 +1,7 @@
 
 // #include "sycl_popsift/features.hpp"
+#include "sycl_popsift/common/assist.h" // For initQueue;
+#include "sycl_popsift/features.hpp"
 #include "sycl_popsift/sift_extremum.h"
 
 #include <boost/program_options/options_description.hpp>
@@ -17,6 +19,7 @@
 #include <iostream>
 #include <list>
 #include <queue>
+#include <random> // For random number generation for slice of pool
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -202,6 +205,175 @@ void read_job(SiftJob* job)
     delete feature_list;
 }
 
+bool uniqueVal(std::vector<int> idx_sequence, int idx)
+{
+    // printf("size of existing sequence = %zu", idx_sequence.size());
+    for(int i = 0; i < static_cast<int>(idx_sequence.size()); ++i)
+    {
+        if(idx_sequence[i] == idx)
+            return false;
+    }
+    return true;
+}
+
+popsift::Descriptor* generateRandDescSequenceArray(int size,
+                                                   std::vector<std::array<FeatureType, 128>>& desc_pool,
+                                                   mt19937& gen,
+                                                   uniform_int_distribution<>& distrib)
+{
+    if(size > desc_pool.size())
+    {
+        std::cerr << "Need to use one descriptor multiple times in sequence due to sequence lenght being " << size
+                  << " which is more than the number of descriptors in pool(" << desc_pool.size()
+                  << ") \n\tHence we are exiting now without writing results.  Add more images to directory to have a "
+                     "large enough descriptor pool!... \n Exiting..."
+                  << std::endl;
+        exit(1);
+    }
+
+    // mt19937 gen(seed);
+    // uniform_int_distribution<> distrib(0, desc_pool.size());
+
+    // struct Descriptor
+    // {
+    //     FeatureType features[128];
+    // };
+    popsift::Descriptor* ptr = (popsift::Descriptor*)malloc(size * sizeof(popsift::Descriptor));
+
+    std::vector<int> idx_sequence;
+    for(int i = 0; i < size; ++i)
+    {
+        // printf("IDX seq size = %d\n", static_cast<int>(idx_sequence.size()));
+        int idx;
+        do
+        {
+            idx = distrib(gen);
+        } while(!uniqueVal(idx_sequence, idx));
+
+        idx_sequence.push_back(idx); // Stored to ensure no duplicate descriptors used
+
+        memcpy(ptr[i].features, &(desc_pool[idx]), sizeof(popsift::Descriptor));
+    }
+
+    // Store generated sequence to ptr
+
+    // free(ptr);
+    return ptr;
+}
+
+struct matrixMatchBenchInfo
+{
+    double l_norm_start;
+    double l_orm_end;
+
+    double r_norm_start;
+    double r_norm_end;
+
+    double match_start;
+    double match_end;
+};
+
+#if USE_JOINT_MATRIX
+void benchmarkMarixMatchingPerformance(std::vector<std::array<FeatureType, 128>>& desc_pool, int seed, sycl::queue& Q)
+{
+    //
+    popsift::FeaturesDev lFeatures(Q); // left
+    popsift::FeaturesDev rFeatures(Q); // right
+
+    int lSize = 8150;
+    int rSize = 7890;
+
+    lFeatures.reset(lSize, lSize); // Use same value we only care about descriptors in this case
+    rFeatures.reset(rSize, rSize);
+
+    mt19937 gen(seed);
+    uniform_int_distribution<> distrib(0, desc_pool.size());
+
+    // popsift::Descriptor* lSequenceArray = generateRandDescSequenceArray(20000, desc_pool, gen, distrib);
+    // popsift::Descriptor* rSequenceArray = generateRandDescSequenceArray(20000, desc_pool, gen, distrib);
+
+    popsift::Descriptor* lSequenceArray;
+    popsift::Descriptor* rSequenceArray;
+
+    // int lSize = 8150;
+    // int rSize = 7890;
+    for(int i = 0; i < rSize; ++i)
+    {
+        lSequenceArray = (popsift::Descriptor*)malloc(lSize * sizeof(popsift::Descriptor));
+
+        memcpy(lSequenceArray[i].features, &(desc_pool[i]), sizeof(popsift::Descriptor));
+    }
+
+    for(int i = 0; i < rSize; ++i)
+    {
+        rSequenceArray = (popsift::Descriptor*)malloc(rSize * sizeof(popsift::Descriptor));
+
+        // memcpy(desc_pool[i].features, &(desc_pool[idx]), sizeof(popsift::Descriptor));
+        memcpy(rSequenceArray[i].features, &(desc_pool[i + lSize]), sizeof(popsift::Descriptor));
+    }
+
+    // features.getDescriptors();
+
+    // Copy is not a part of the benchmark
+    // sycl::event lTransfer = Q.memcpy(lFeatures.getDescriptors(), lSequenceArray, 512 * sizeof(popsift::Descriptor));
+    // sycl::event rTransfer = Q.memcpy(rFeatures.getDescriptors(), rSequenceArray, 512 * sizeof(popsift::Descriptor));
+
+    sycl::event lTransfer = Q.memcpy(lFeatures.getDescriptors(), lSequenceArray, lSize * sizeof(popsift::Descriptor));
+    sycl::event rTransfer = Q.memcpy(rFeatures.getDescriptors(), rSequenceArray, rSize * sizeof(popsift::Descriptor));
+
+    lTransfer.wait();
+    rTransfer.wait();
+
+    lFeatures.compute_squared_norms();
+    rFeatures.compute_squared_norms();
+
+    // auto [match_matrix, matrix_wait, matrix_free] = lFeatures.preNormMatrixMatchAndReturn(&(rFeatures));
+    auto [match_matrix, matrix_wait, matrix_free] = lFeatures.matchAndReturn(&(rFeatures));
+
+    matrix_wait();
+
+    int count = 0;
+    for(int i = 0; i < lFeatures.getDescriptorCount(); i++)
+    {
+        sycl::vec<int, 3>& match = match_matrix[i];
+        if(match.z())
+        {
+            const popsift::Feature* l_f = lFeatures.getFeatureForDescriptor(i);
+            const popsift::Feature* r_f = rFeatures.getFeatureForDescriptor(match.x());
+            cout << setprecision(5) << showpoint << "point (" << l_f->xpos << "," << l_f->ypos << ") in l matches "
+                 << "point (" << r_f->xpos << "," << r_f->ypos << ") in r -- " << "i = " << i
+                 << " matc.x() = " << match.x() << endl;
+            count++;
+        }
+    }
+    cout << "Match matrix: " << count << endl << endl;
+
+    matrixMatchBenchInfo info{};
+
+    // double match_start = matrix_match_event;
+    // double match_end = matrix_match_e matrix_remainder_event;
+
+#if QUEUE_PROFILING
+    sycl::event evt = lFeatures.getNormsEvent();
+
+    // info
+    //   .l_norm_start
+
+    evt.wait();
+    double frame_start = evt.template get_profiling_info<sycl::info::event_profiling::command_start>();
+
+    double frame_end = evt.template get_profiling_info<sycl::info::event_profiling::command_end>();
+
+    double frame_time = frame_end - frame_start;
+
+    printf("Time to compute squared norms = %lf ns == %lf ms\n\n", frame_time, frame_time / 1000000);
+#endif
+
+    free(lSequenceArray);
+    free(rSequenceArray);
+}
+#endif
+
 int main(int argc, char** argv)
 {
     popsift::Config config; // Init with default parameters
@@ -262,8 +434,40 @@ int main(int argc, char** argv)
         jobs.push(job);
     }
 
-    std::vector<std::array<FeatureType, 128>> desc_pool;
+    // std::vector<std::array<FeatureType, 128>> desc_pool; // Pool to select from
+    // Vector for easy growth as performance does not matter here
+    std::vector<popsift::FeaturesDev*> featuresArray;
 
+    while(!jobs.empty())
+    {
+        SiftJob* job = jobs.front();
+        jobs.pop();
+        if(job)
+        {
+            featuresArray.push_back(job->getDev());
+        }
+    }
+
+    // Loop over each and match with each
+
+    for(int i = 0; i < featuresArray.size(); ++i)
+    {
+        for(int j = 0; j < featuresArray.size(); ++j)
+        {
+            if(i == j)
+                continue; // skip matching with self
+
+            auto [match_matrix, matrix_wait, matrix_free] =
+              featuresArray[i]->preNormMatrixMatchAndReturn(featuresArray[j]);
+            matrix_wait();
+
+            matrix_free();
+        }
+    }
+
+#if false
+
+    // I need to make this work to get the good scatter polot but sampling data using 
     while(!jobs.empty())
     {
         SiftJob* job = jobs.front();
@@ -282,6 +486,7 @@ int main(int argc, char** argv)
 
             for(int i = 0; i < num_descriptors; ++i)
             {
+                printf("descs[%d] --> %f\n", i, static_cast<float>(descs[i].features[0]));
                 std::array<FeatureType, 128> descriptor;
                 std::memcpy(descriptor.data(), descs[i].features, sizeof(FeatureType) * 128);
                 desc_pool.push_back(descriptor);
@@ -291,12 +496,43 @@ int main(int argc, char** argv)
             delete job;
         }
     }
+    for(int i = 0; i < 99; ++i)
+    {
+        printf("desc_pool[%d][0] -> %f\n", i, static_cast<float>(desc_pool[i][0]));
+    }
 
     // Now we have a full vecor of many descriptors that we can use to make our test of the matching we want to test
     // Make new memory segment (malloc) for each test so that we don't get any caching as that would not be real result
     // Ensure that left and right does not have any overlapping indecies as that would not happen much in reality that
     // you have two exactly same vecors which might give different performance as that would always win the lader
     // significatnly everytime( not sure if that affects much tbf)
+
+    sycl::queue Q = popsift::initQueue();
+    popsift::FeaturesDev features(Q);
+
+    bool matrixSupport = popsift::supportsJointMatrixMatch(Q);
+
+    if(matrixSupport)
+    {
+// Joint matrix matching benchmark
+#if USE_JOINT_MATRIX
+        benchmarkMarixMatchingPerformance(desc_pool, 42, Q);
+#else
+        fprintf(stderr,
+                "Joint matrix matcing is supported but the code was configured with -DJointMatrix=OFF hence cannot "
+                "bencmark it!\n");
+#endif
+    }
+    else
+    {
+        std::cerr
+          << "JointMatrix matching is not supported... This could be due to not cmake not setting -DJointMatrix=ON or "
+             "it coudl be that your device: "
+          << Q.get_device().get_info<sycl::info::device::name>()
+          << " Does not support the JointMatrix extension or that your sycl environment/compiler does not support it"
+          << std::endl;
+    }
+#endif
 
     return EXIT_SUCCESS;
 }

@@ -7,6 +7,7 @@
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
+#include "sycl_popsift/sift_extremum.h"
 #include "sycl_popsift/sift_pyramid.hpp"
 
 // #include <sycl/ext/oneapi/device_info.hpp> // For Num compute units extension
@@ -131,8 +132,8 @@ inline void PopSift::initQueue()
             if(dev.has(sycl::aspect::ext_oneapi_bindless_images) && dev.has(sycl::aspect::ext_oneapi_image_array) &&
                dev.has(sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d))
             {
-                std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>()
-                          << std::endl
+                // std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>()
+                std::cout << "Running on: " << dev.get_info<sycl::info::device::name>() << std::endl
                           << "\t--> supports ext_oneapi_bindless_images: YES" << std::endl
                           << "\t--> supports ext_oneapi_image_array: YES" << std::endl;
 
@@ -168,8 +169,8 @@ inline void PopSift::initQueue()
                           << std::endl;
 
                 _device_queue = sycl::queue(sycl::context{dev}, dev, queue_proplist);
-                break; // We always select first gpu that had the aspect (might be a way to select the best one)
-                       // but most systems will be single gpu anyways
+                return; // We always select first gpu that had the aspect (might be a way to select the best one)
+                        // but most systems will be single gpu anyways
             }
         }
 
@@ -717,13 +718,24 @@ void PopSift::Pipe::uninit()
  * PERFORMANCE TESTING FUNCTIONS
  *************************************************************/
 #if PERF_TESTING_FUNCTIONS
-// This
-void PopSift::benchmarkMatchingPerformance(
-  bool matrix, int seed, const std::string& img_dir_l, const std::string& img_dir_r, const std::string& output_filename)
-{
-    // Semi syntetic benchmark using pool of descriptors and randomly selecting (based on seed for repetablility) the
-    // descriptors to include in the test. Then it's done many times for multiple test cases
-    printf("Hello monkey land\n");
-}
+
+// Function exists essentially only to use the _device_queue so that we dont have to copy that selection process to
+// benchmark file
+// void PopSift::benchmarkMatchingPerformance(bool matrix, int seed, std::vector<std::array<FeatureType, 128>>
+// desc_pool)
+// {
+//     // Semi syntetic benchmark using pool of descriptors and randomly selecting (based on seed for repetablility) the
+//     // descriptors to include in the test. Then it's done many times for multiple test cases
+//     printf("Hello monkey land\n");
+//
+//     // Run 3 iterations to get rid of cold start behaviour (loading and such as the startup jitter is not that
+//     // important it's the real performance that is sustained that is most likely going to be used in real world
+//
+//     popsift::FeaturesDev features(_device_queue);
+//
+//     // popsift::Descriptor* descs = features.getDescriptors();
+//
+//     memcpy
+// }
 
 #endif

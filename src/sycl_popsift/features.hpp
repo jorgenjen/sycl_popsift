@@ -208,6 +208,11 @@ class FeaturesDev : public FeaturesBase
     sycl::event getNormsEvent() { return _norms_computed_event; }
 #endif
 
+#if PERF_TESTING_FUNCTIONS
+    sycl::event matrix_match_event;
+    sycl::event matrix_remainder_event;
+#endif
+
     Descriptor* getDescriptor(int descIndex);
     const Descriptor* getDescriptor(int descIndex) const;
     Feature* getFeatureForDescriptor(int descIndex);

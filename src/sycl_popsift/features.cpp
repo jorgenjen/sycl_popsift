@@ -863,7 +863,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     int l_len = getDescriptorCount();
     int r_len = other->getDescriptorCount();
 
-    // should swap around so that we use l as the longest for better occupancy
+    printf("l_len = %d -- r_len = %d\n", l_len, r_len);
 
     sycl::vec<int, 3>* match_matrix =
       popsift::sycl_common::malloc_sharedT<sycl::vec<int, 3>>(l_len, __FILE__, __LINE__, "", _device_queue);
@@ -948,6 +948,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
 
     sycl::event remainderMatchEvent = _device_queue.parallel_for(
       sycl::nd_range{remainderGlobal, local},
+      {getNormsEvent(), other->getNormsEvent()},
       [=,
        l = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(getDescriptors() + (l_len - (l_len % 16))),
        r = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(other->getDescriptors()),
@@ -986,6 +987,11 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
           const bool accept = ((leader.value.x() / leader.value.y()) < 0.8f);
           match_matrix[l_base + it.get_group(0)] = sycl::vec<int, 3>(leader.idx.x(), leader.idx.y(), accept);
       });
+#endif
+
+#if PERF_TESTING_FUNCTIONS
+    matrix_match_event = matchEvent;
+    matrix_remainder_event = remainderMatchEvent;
 #endif
 
     auto wait_for_matrix = [event = std::make_shared<sycl::event>(matchEvent),

@@ -216,13 +216,15 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         // Storing event to class only for profiling not needed for normal use
 
+                        sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
 #if QUEUE_PROFILING
-#if ONLY_HORIZ
-                        _input_horiz_event = horiz; // copy it for use later
-#else
-                        // _input_horiz_event = oct_obj._level_complete_events[0]; // When working as both horiz and
-                        // vert
-#endif
+                        input_horiz_event = horiz;
+// #if ONLY_HORIZ
+//                         // _input_horiz_event = horiz; // copy it for use later
+// #else
+//                         // _input_horiz_event = oct_obj._level_complete_events[0]; // When working as both horiz and
+//                         // vert
+// #endif
 #endif
 #if ONLY_HORIZ
                         oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
@@ -230,10 +232,22 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         // My own test case We do horiz normaly and then Vert with wave code
 
-                        sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                        // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
                         // sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
 
-                        _input_horiz_event = horiz; // copy it for use later
+                        // _input_horiz_event = horiz; // copy it for use later
+
+                        // horiz.wait();
+                        // double frame_start =
+                        //   horiz.template get_profiling_info<sycl::info::event_profiling::command_start>();
+                        //
+                        // double frame_end =
+                        //   horiz.template get_profiling_info<sycl::info::event_profiling::command_end>();
+                        //
+                        // double frame_time = frame_end - frame_start;
+                        //
+                        // std::printf(
+                        //   "Time to compute first horiz = %lf ns == %lf ms\n\n", frame_time, frame_time / 1000000);
 
                         // horiz.wait();
 
