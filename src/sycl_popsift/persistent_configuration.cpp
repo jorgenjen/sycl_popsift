@@ -221,12 +221,18 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     int vert_local_size = ((((largest_span << 1) + 1 + 1) * local[1]) * local[0] + local[0] * local[1]) * sizeof(float);
 #endif
 #endif
+
+    // Used when we don't have enough memory for a full window and must use prefetched rows instead
+    // -> Two rows for current work and four rows to prefetch next two (so we have two current async rows loading in)
+    // -> final part of sum is for DoG so we can load in prev level intermediate and do DoG on the fly and write that
+    // back in addition to intermediate
+    // --> For final level we don't even need to write back intermediate and can only write back DoG as once we have DoG
+    // we never use the Data Array again as we only use DoG aray
+    int vert_buffer_local_size = ((local[1] * 6) * local[0] + local[0] * local[1]) * sizeof(float);
+
     // The size of this one is quite constant with respect to image sizes so should work on most GPU's
     // Also quite constant with respect to number of Compute Units on the GPU as it's a sliding window
-    // Takes around 40k to 50k bytes
-
-    // Could  try a hybrid approach with a part for register storage and part for local mem to balance it out
-    // Could be difficult to implement need to know how many registers that I can use
+    // Takes around 150-180k bytes which is too much as max tends to be around 100k bytes
 
     // Should add minimal here aswell when I support that in the horiz part as I believe that the same is true there
     int horiz_local_size =
@@ -235,7 +241,7 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     // int horiz_local_isze = ((largest_span * 2) + local[1]) * 2) *local[]
 
     std::printf("w=%d h=%d largest_pan = %d wg_per_cu = %d --> Vert_local_size = %d ---- Horiz_local_size = %d "
-                "local(%zu, %zu) global(%zu, %zu)\n",
+                "local(%zu, %zu) global(%zu, %zu) -- vert_buffer_local_size = %d -- Local_mem_size = %d\n",
                 width,
                 height,
                 largest_span,
@@ -245,17 +251,27 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
                 local[0],
                 local[1],
                 global[0],
-                global[1]);
+                global[1],
+                vert_buffer_local_size,
+                device_local_mem_size);
     int max_mem_per_wg = device_local_mem_size / wg_per_cu; // Assumes local mem is per CU which it is for GPU's
 
     // local_mem_vert = (max_mem_per_wg >= vert_local_size) &&  ((largest_span << 1) + 1)   // If doing more complex
     // vert start for better cache we need more things to be true
 
     local_mem_vert = max_mem_per_wg >= vert_local_size;
+    local_mem_buffer_vert =
+      local_mem_vert ? false : max_mem_per_wg >= vert_buffer_local_size; // Set to false when window works
+
     local_mem_horiz = max_mem_per_wg >= horiz_local_size;
+
     if(local_mem_horiz && local_mem_vert)
     {
         local_mem_size = sycl::max(vert_local_size, horiz_local_size);
+    }
+    else if(!local_mem_vert && local_mem_buffer_vert)
+    {
+        local_mem_size = local_mem_horiz ? sycl::max(horiz_local_size, vert_buffer_local_size) : vert_buffer_local_size;
     }
     else if(local_mem_horiz)
     {
@@ -263,6 +279,7 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     }
     else if(local_mem_vert)
     {
+        // Unlikely to run
         local_mem_size = vert_local_size;
     }
     else

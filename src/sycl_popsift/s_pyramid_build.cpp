@@ -218,7 +218,7 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
 #if QUEUE_PROFILING
-                        input_horiz_event = horiz;
+                        _input_horiz_event = horiz;
 // #if ONLY_HORIZ
 //                         // _input_horiz_event = horiz; // copy it for use later
 // #else

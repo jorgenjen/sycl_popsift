@@ -43,9 +43,10 @@ struct persistent_pyramid_octave_config
 
     // If we can use local mem for horiz and vert
     // Depends on how much shared memory that is available
-    bool local_mem_horiz = false;
-    bool local_mem_vert = false;
-    int local_mem_size;
+    bool local_mem_horiz = false;       // Uses row prefetch should work on almost all GPU's
+    bool local_mem_vert = false;        // Can store full window span * 2 or span*2 + 2 (based on if we do span or not)
+    bool local_mem_buffer_vert = false; // When we can't store full vert window and hide latency by row prefetch
+    int local_mem_size;                 // The version that had the largest memory need
 
     int x_remainder;
     int y_remainder;
