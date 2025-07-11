@@ -228,7 +228,9 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     // back in addition to intermediate
     // --> For final level we don't even need to write back intermediate and can only write back DoG as once we have DoG
     // we never use the Data Array again as we only use DoG aray
-    int vert_buffer_local_size = ((local[1] * 6) * local[0] + local[0] * local[1]) * sizeof(float);
+    int vert_buffer_local_size =
+      ((local[1] * 6) * local[0]) * sizeof(float); // When loading the final self value we just use the
+    // Might need to increase the size if we want to do async writes...
 
     // The size of this one is quite constant with respect to image sizes so should work on most GPU's
     // Also quite constant with respect to number of Compute Units on the GPU as it's a sliding window

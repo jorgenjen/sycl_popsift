@@ -411,7 +411,6 @@ namespace normalizedSource {
 // This aspect is required to use sampled image need to add a check for that earlier in selection
 // template<bool if_required>
 
-// For debugging remove!
 #define DO_HORIZ 0
 #define DO_VERT 1
 
@@ -419,6 +418,8 @@ namespace normalizedSource {
 
 #define COMPUTE_ONE_BY_ONE 1 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
 #define USE_SHARED_MEM_FOR_INPUT 1
+
+// Uses prefetch of 2 rows for vert
 template<bool REMAINDER_COL, bool REMAINDER_ROW>
 class BuildOctave
 {
@@ -447,6 +448,388 @@ class BuildOctave
                 const int dst_h,
                 const float shift,
                 const int levels)
+
+      : src(src)
+      , data_array(data_array)
+      , dog_array(dog_array)
+      , intermediate(intermediate)
+      , d_gauss(d_gauss)
+      , buffer(buffer)
+      , sg_region(sg_region)
+      , dst_w(dst_w)
+      , dst_h(dst_h)
+      , shift(shift)
+      , levels(levels) {};
+
+    inline void operator()(sycl::nd_item<2> it) const
+    {
+        // const auto sg_width = it.get_sub_group().get_max_local_range()[0]; // 32 in cuda
+
+        const int write_x = it.get_global_id(1);
+        // int write_y = it.get_group(0) * sg_region.height; // Changes in normal block aswell
+        int write_y = it.get_global_id(0) * sg_region.height; // Changes in normal block
+
+#if DO_HORIZ
+        // Used for input only
+        const float* filter_input = &d_gauss->dd.filter[0];
+        const int span_input = d_gauss->dd.span[0];
+
+        const float read_x = (write_x + shift) / dst_w;
+        float read_y = (write_y + shift) / dst_h;
+
+        // Not sure if there is a point of using this for input level -- As we can't async load
+        const int base_pos =
+          (it.get_local_range(1) + (span_input << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1) + span_input;
+
+        // Second buffer row (there are two per row in the work-group)
+        const int base_pos_2 = (it.get_local_range(1) + (span_input << 1)) * ((it.get_local_id(0) << 1) + 1) +
+                               it.get_local_id(1) + span_input;
+
+        // const int rel_span = ((1 / dst_w) * span); // Relative span value used for offset
+        const float rel_span = float(span_input) / dst_w; // Relative span value used for offset
+
+        // for(int i = 0; i < sg_region.height; i++)
+
+        // const float read_y_increment = 1.0f / dst_h; // Does not result in the same as recompute due to
+        // accumulation of floating point error
+
+        int loop_end = write_y + sg_region.height;
+
+        if constexpr(REMAINDER_ROW)
+        {
+            if(loop_end >= dst_h)
+                loop_end = dst_h; // Limit to last pixel
+        }
+
+#if USE_ROOT_GROUP
+        auto root = it.ext_oneapi_get_root_group(); // Root group all work_items running kernel
+#endif
+        for(; write_y < loop_end; ++write_y) // Modifies write_y want that later
+        {
+            // read_y += read_y_increment; // Floating point error accumulation hence not using
+            read_y = (write_y + shift) / dst_h;
+
+#if USE_SHARED_MEM_FOR_INPUT
+            buffer[base_pos] = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y}); // every one does this
+
+            if(it.get_local_id(1) < span_input)
+            {
+                // load left side (lenght of span)
+                buffer[base_pos - span_input] =
+                  syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
+            }
+            else if(it.get_local_id(1) >= (it.get_local_range(1) - span_input))
+            {
+                buffer[base_pos + span_input] =
+                  syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
+            }
+
+            // Here would be good to do async load of next row but does not seem to be possible to do with bindless
+            // images But for remaining parts it will be not sure if we should use local mem for this part however
+            sycl::group_barrier(it.get_group()); // Ensure all is loaded before we do horiz
+
+            horiz_local_mem<REMAINDER_COL>(
+              intermediate, buffer, filter_input, span_input, dst_w, write_x, write_y, base_pos);
+
+#else
+            horiz_bindless_input<REMAINDER_COL>(
+              intermediate, src, filter, span, dst_w, write_x, write_y, read_x, read_y, base_pos);
+
+#endif
+
+            // Second row buffer in use: Same as above otherwise
+
+            write_y++;
+            if(write_y >= loop_end)
+                break;
+
+            // read_y += read_y_increment; // Floating point error accumulation hence not using
+            read_y = (write_y + shift) / dst_h;
+
+#if USE_SHARED_MEM_FOR_INPUT
+            buffer[base_pos_2] = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
+
+            if(it.get_local_id(1) < span_input)
+            {
+                buffer[base_pos_2 - span_input] =
+                  syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
+            }
+            else if(it.get_local_id(1) >= (it.get_local_range(1) - span_input))
+            {
+                buffer[base_pos_2 + span_input] =
+                  syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
+            }
+
+            sycl::group_barrier(it.get_group());
+
+            horiz_local_mem<REMAINDER_COL>(
+              intermediate, buffer, filter_input, span_input, dst_w, write_x, write_y, base_pos_2);
+#else
+            horiz_bindless_input<REMAINDER_COL>(
+              intermediate, src, filter_input, span_input, dst_w, write_x, write_y, read_x, read_y, base_pos);
+#endif
+        }
+        // At end of this loop write_y will be equal to loop_end or smaller but it wil always be one too large hence
+        // need to subtract one
+        write_y--;
+
+        // Synchronize and then do horiz
+#define USE_FULL_SYNC 0
+#if USE_FULL_SYNC
+        // Ensures all work groups have completed horiz before moving on to vert
+        full_sync(sg_region.wg_sync_state, it);
+
+        // if(it.get_local_linear_id() == 0)
+        // {
+        //     syclexp::printf("WG_ID %d --> Num_wg = %d\n",
+        //                     static_cast<int>(it.get_group_linear_id()),
+        //                     static_cast<int>(it.get_group_range(0) * it.get_group_range(1)));
+        // }
+        //
+        // horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
+#else
+        // Only necessary negbours (top and bottom) are waited on
+        horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
+#endif
+
+        // #if false
+        // Start doing Vert then later we do horiz on data_array so not using sampled image then we can use async
+        // load of next row Do vert for this one then make loop over the levels for the rest with horiz from prev
+        // and vert from intermediate
+
+        // Vert
+        sycl::group_barrier(it.get_group());
+
+#endif
+        // TODO:  Add tempalte and if constexpr to have different versions based on if horiz and vert are using shared
+        // meme solution need non shared mem solution aswell to support that (don't think any GPU would not support
+        // horiz as is now so only needed for vert I think)
+        // So it is the same it would have been if we were doing horiz
+        write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1);
+        // if(it.get_global_linear_id() == 0)
+        // {
+        //     syclexp::printf("write_y = %d intermediate_value = %f \n ", write_y, intermediate[write_y * dst_w]);
+        // }
+
+        const auto row_width = [&]() {
+            // could remove constexpr to avoid having so many templated classes which could increase load times
+            if constexpr(REMAINDER_ROW)
+            {
+                if(it.get_group(1) == (it.get_group_range(1) - 1))
+                {
+                    // final wg column
+                    // return (static_cast<int>(it.get_local_range(1) - it.get_global_range(1)) - dst_w);
+                    return it.get_local_range(1) - (it.get_global_range(1) - dst_w);
+                }
+                // Rest of columns
+                return it.get_local_range(1);
+            }
+            else
+            {
+                // There is no remainder hence all are full rows
+                return it.get_local_range(1);
+            }
+        }();
+
+        // need to ensure only it.get_local_id(1) < row_width is doing something but I think they also need to reach the
+        // async work group copy for that to work So need if protection on all else code to avoid it messing that up
+
+        // bottom of our region (safe as write_y has already been bounds checked for below)
+        int start_pos = write_y * dst_w + it.get_group(1) * it.get_local_range(1);
+        // Bottom row position
+        auto intermediate_ptr =
+          sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(
+            intermediate + start_pos);
+
+        // auto inter =
+        //   sycl::make_ptr<sycl::access::address_space::global_space, sycl::access::decorated::yes>(intermediate);
+        // auto intermeidate_ptr = inter.template get_multi_ptr<sycl::access::decorated::yes>();
+        auto buffer_ptr = buffer.template get_multi_ptr<sycl::access::decorated::yes>();
+
+// Changes with loop matching level -- initial is zero always
+#if MINIMAL_WINDOW
+        int span = d_gauss->inc.span[0] - 1; // As filter[span] is 0 hence no point computing that
+#else
+        int span = d_gauss->inc.span[0];
+#endif
+
+        float* filter = &d_gauss->inc.filter[0]; // For level 0
+        sycl::group group = it.get_group();
+
+        // NOTE:  Window is always as wide as wide as it.get_local_range(1) but we only load in row_widht wide data
+        // This still alows for no bank conflicts and the work-items outside of range can safely do the same as rest
+        // on the dono't care data in their location and we only need so safe guard the writes to global memory
+        // minimizing the number of if checks we need (and doing more in locstep does not really add performance
+        // overhead)
+
+        // Two async rows and one current row for both above and below (6 total)
+        std::optional<sycl::device_event> above_events[3]; // Avoids using deleted default constructor of device_event
+        std::optional<sycl::device_event> below_events[3]; // Avoids using deleted default constructor of device_event
+
+        // Above is always safe in this case as we are at the bottom of our region hence one above always exits
+
+        int end_pos = (it.get_global_id(0) * sg_region.height);
+        float out;
+
+        for(; write_y <= end_pos; --write_y)
+        {
+            int span_bottom_treshold =
+              dst_h - 1 - write_y; // How many pixels we can go down before we are beyond image bounds
+            // I'ts just wirte_y
+            // int span_top_treshold = write_y; // How many pixels we can go down before we are beyond image bounds
+
+            // Start prefetching around write_y the outer most rows then second then third before entering the loop and
+            // waiting on them
+
+            // NOTE: Assumes that span cannot be less than 3 (and in minimal case less than 4)
+
+            // if(write_y - span >= 0)
+            if(span <= write_y) // if greater we are out of bounds (above image)
+            {
+                // load outer most row pair
+                above_events[0] = group.async_work_group_copy(buffer_ptr, intermediate_ptr - (dst_w * span), row_width);
+            }
+            else
+            {
+                // load top row (clamp to edge)
+                above_events[0] =
+                  group.async_work_group_copy(buffer_ptr, intermediate_ptr - (dst_w * write_y), row_width);
+            }
+
+            // Second row of local memory (use full row even when we don't load full row for bank conflict avoidance and
+            // avoid branching)
+            if(span <= span_bottom_treshold)
+            {
+                below_events[0] = group.async_work_group_copy(
+                  buffer_ptr + it.get_local_range(1)), intermediate_ptr + (dst_w * span), row_width);
+            }
+            else
+            {
+                below_events[0] = group.async_work_group_copy(
+                  buffer_ptr + it.get_local_range(1)), intermediate_ptr + (dst_w * span_bottom_treshold), row_width);
+            }
+
+            // second outermost row pair
+            if((span - 1) <= write_y)
+            {
+                above_events[1] = group.async_work_group_copy(
+                  buffer_ptr + 2 * it.get_local_range(1), intermediate_ptr - (dst_w * (span - 1)), row_width);
+            }
+            else
+            {
+                above_events[1] = group.async_work_group_copy(
+                  buffer_ptr + 2 * it.get_local_range(1), intermediate_ptr - (dst_w * write_y), row_width);
+            }
+
+            // if(write_y + (span - 1) < dst_h)
+            if((span - 1) <= span_bottom_treshold)
+            {
+                below_events[1] = group.async_work_group_copy(
+                  buffer_ptr + 3 * it.get_local_range(1), intermediate_ptr + (dst_w * (span - 1)), row_width);
+            }
+            else
+            {
+                below_events[1] = group.async_work_group_copy(
+                  buffer_ptr + 3 * it.get_local_range(1), intermediate_ptr + (dst_w * span_bottom_treshold), row_width);
+            }
+
+            // Third outmost row pair
+            if((span - 2) <= write_y)
+            {
+                above_events[2] = group.async_work_group_copy(
+                  buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * (span - 2)), row_width);
+            }
+            else
+            {
+                above_events[2] = group.async_work_group_copy(
+                  buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * write_y), row_width);
+            }
+
+            if((span - 2) <= span_bottom_treshold)
+            {
+                below_events[2] = group.async_work_group_copy(
+                  buffer_ptr + 5 * it.get_local_range(1), intermediate_ptr + (dst_w * (span - 2)), row_width);
+            }
+            else
+            {
+                below_events[2] = group.async_work_group_copy(
+                  buffer_ptr + 5 * it.get_local_range(1), intermediate_ptr + (dst_w * span_bottom_treshold), row_width);
+            }
+
+#if COMPUTE_ONE_BY_ONE
+            above_events[0].wait();
+            out = buffer[it.get_local_id(1)] * filter[span];
+
+            below_events[0].wait();
+            out += buffer[it.get_local_rangel(0) + it.get_local_id(1)] * filter[span];
+#else
+            group.wait_for(above_events[0], below_events[0]);
+            float val_above = buffer[it.get_local_id(1)] * filter[span];
+            float val_below = buffer[it.get_local_range(0) + it.get_local_id(1)] * filter[span];
+            out = (val_above + val_below) * filter[span];
+#endif
+            above_events[0] = group.async_work_group_copy(buffer_ptr, intermediate_ptr - (dst_w * span), row_width);
+            below_events[0] = group.async_work_group_copy(
+              buffer_ptr + it.get_local_range(1)), intermediate_ptr + (dst_w * span), row_width);
+
+            for(int i = span - 1; i > 0; --i)
+            {
+                if(span <= write_y)
+                {
+                    above_events[2] = group.async_work_group_copy(
+                      buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * span), row_width);
+                }
+                else
+                {
+                    above_events[2] = group.async_work_group_copy(
+                      buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * write_y), row_width);
+                }
+
+                if(span <= span_bottom_treshold)
+                {
+                    below_events[2] = group.async_work_group_copy(
+                      buffer_ptr + 5 * it.get_local_range(1), intermediate_ptr + (dst_w * span), row_width);
+                }
+                else
+                {
+                    below_events[2] = group.async_work_group_copy(buffer_ptr + 5 * it.get_local_range(1),
+                                                                  intermediate_ptr + (dst_w * span_bottom_treshold),
+                                                                  row_width);
+                }
+            }
+        }
+    }
+};
+
+// For debugging remove!
+template<bool REMAINDER_COL, bool REMAINDER_ROW>
+class BuildOctaveSlidingWindow
+{
+  private:
+    syclexp::sampled_image_handle src;
+    float** data_array; // Need to be array of all dst data
+    float** dog_array;
+    float* intermediate;
+    popsift::GaussInfo* d_gauss;
+    sycl::local_accessor<float, 1> buffer;
+    const sg_region_blocks sg_region;
+    const int dst_w;
+    const int dst_h;
+    const float shift;
+    const int levels;
+
+  public:
+    BuildOctaveSlidingWindow(syclexp::sampled_image_handle src,
+                             float** data_array,
+                             float** dog_array,
+                             float* intermediate,
+                             popsift::GaussInfo* d_gauss,
+                             sycl::local_accessor<float, 1> buffer,
+                             const sg_region_blocks sg_region,
+                             const int dst_w,
+                             const int dst_h,
+                             const float shift,
+                             const int levels)
 
       : src(src)
       , data_array(data_array)
@@ -1901,17 +2284,17 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 #if USE_ROOT_GROUP
                                  props,
 #endif
-                                 normalizedSource::BuildOctave<true, true>(base->getInputImage(),
-                                                                           oct_obj.getDataArray(),
-                                                                           oct_obj.getDogArray(),
-                                                                           oct_obj.getIntermediate(),
-                                                                           _d_gauss,
-                                                                           buffer,
-                                                                           sg_region.sg_block,
-                                                                           width,
-                                                                           height,
-                                                                           shift,
-                                                                           _levels));
+                                 normalizedSource::BuildOctaveSlidingWindow<true, true>(base->getInputImage(),
+                                                                                        oct_obj.getDataArray(),
+                                                                                        oct_obj.getDogArray(),
+                                                                                        oct_obj.getIntermediate(),
+                                                                                        _d_gauss,
+                                                                                        buffer,
+                                                                                        sg_region.sg_block,
+                                                                                        width,
+                                                                                        height,
+                                                                                        shift,
+                                                                                        _levels));
             });
         }
         else if(col)
@@ -1929,17 +2312,17 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 #if USE_ROOT_GROUP
                                  props,
 #endif
-                                 normalizedSource::BuildOctave<true, false>(base->getInputImage(),
-                                                                            oct_obj.getDataArray(),
-                                                                            oct_obj.getDogArray(),
-                                                                            oct_obj.getIntermediate(),
-                                                                            _d_gauss,
-                                                                            buffer,
-                                                                            sg_region.sg_block,
-                                                                            width,
-                                                                            height,
-                                                                            shift,
-                                                                            _levels));
+                                 normalizedSource::BuildOctaveSlidingWindow<true, false>(base->getInputImage(),
+                                                                                         oct_obj.getDataArray(),
+                                                                                         oct_obj.getDogArray(),
+                                                                                         oct_obj.getIntermediate(),
+                                                                                         _d_gauss,
+                                                                                         buffer,
+                                                                                         sg_region.sg_block,
+                                                                                         width,
+                                                                                         height,
+                                                                                         shift,
+                                                                                         _levels));
             });
         }
         else if(row)
@@ -1957,17 +2340,17 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 #if USE_ROOT_GROUP
                                  props,
 #endif
-                                 normalizedSource::BuildOctave<false, true>(base->getInputImage(),
-                                                                            oct_obj.getDataArray(),
-                                                                            oct_obj.getDogArray(),
-                                                                            oct_obj.getIntermediate(),
-                                                                            _d_gauss,
-                                                                            buffer,
-                                                                            sg_region.sg_block,
-                                                                            width,
-                                                                            height,
-                                                                            shift,
-                                                                            _levels));
+                                 normalizedSource::BuildOctaveSlidingWindow<false, true>(base->getInputImage(),
+                                                                                         oct_obj.getDataArray(),
+                                                                                         oct_obj.getDogArray(),
+                                                                                         oct_obj.getIntermediate(),
+                                                                                         _d_gauss,
+                                                                                         buffer,
+                                                                                         sg_region.sg_block,
+                                                                                         width,
+                                                                                         height,
+                                                                                         shift,
+                                                                                         _levels));
             });
         }
         else
@@ -1985,17 +2368,17 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 #if USE_ROOT_GROUP
                                  props,
 #endif
-                                 normalizedSource::BuildOctave<false, false>(base->getInputImage(),
-                                                                             oct_obj.getDataArray(),
-                                                                             oct_obj.getDogArray(),
-                                                                             oct_obj.getIntermediate(),
-                                                                             _d_gauss,
-                                                                             buffer,
-                                                                             sg_region.sg_block,
-                                                                             width,
-                                                                             height,
-                                                                             shift,
-                                                                             _levels));
+                                 normalizedSource::BuildOctaveSlidingWindow<false, false>(base->getInputImage(),
+                                                                                          oct_obj.getDataArray(),
+                                                                                          oct_obj.getDogArray(),
+                                                                                          oct_obj.getIntermediate(),
+                                                                                          _d_gauss,
+                                                                                          buffer,
+                                                                                          sg_region.sg_block,
+                                                                                          width,
+                                                                                          height,
+                                                                                          shift,
+                                                                                          _levels));
             });
         }
 
