@@ -4,6 +4,9 @@
 #include "sycl_popsift/popsift.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 
+#include <iterator>
+#include <optional>
+
 namespace syclexp = sycl::ext::oneapi::experimental;
 
 namespace popsift {
@@ -416,7 +419,7 @@ namespace normalizedSource {
 
 #define DEBUG 0
 
-#define COMPUTE_ONE_BY_ONE 1 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
+#define COMPUTE_ONE_BY_ONE 0 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
 #define USE_SHARED_MEM_FOR_INPUT 1
 
 // Uses prefetch of 2 rows for vert
@@ -601,17 +604,25 @@ class BuildOctave
         sycl::group_barrier(it.get_group());
 
 #endif
+#if DO_VERT
+
+#if !DO_HORIZ
+        // So it is the same it would have been if we were doing horiz
+        write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1);
+#endif
         // TODO:  Add tempalte and if constexpr to have different versions based on if horiz and vert are using shared
         // meme solution need non shared mem solution aswell to support that (don't think any GPU would not support
         // horiz as is now so only needed for vert I think)
         // So it is the same it would have been if we were doing horiz
-        write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1);
+
+        // write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1);
         // if(it.get_global_linear_id() == 0)
         // {
         //     syclexp::printf("write_y = %d intermediate_value = %f \n ", write_y, intermediate[write_y * dst_w]);
         // }
 
-        const auto row_width = [&]() {
+        // const auto row_width = [&]() {
+        const int row_width = [&]() {
             // could remove constexpr to avoid having so many templated classes which could increase load times
             if constexpr(REMAINDER_ROW)
             {
@@ -631,6 +642,18 @@ class BuildOctave
             }
         }();
 
+        const bool live = [&]() {
+            if constexpr(REMAINDER_ROW)
+            {
+                return it.get_local_id(1) < row_width;
+            }
+            else
+            {
+                // There is no remainder hence all are full rows
+                return true;
+            }
+        }();
+
         // need to ensure only it.get_local_id(1) < row_width is doing something but I think they also need to reach the
         // async work group copy for that to work So need if protection on all else code to avoid it messing that up
 
@@ -646,13 +669,6 @@ class BuildOctave
         // auto intermeidate_ptr = inter.template get_multi_ptr<sycl::access::decorated::yes>();
         auto buffer_ptr = buffer.template get_multi_ptr<sycl::access::decorated::yes>();
 
-// Changes with loop matching level -- initial is zero always
-#if MINIMAL_WINDOW
-        int span = d_gauss->inc.span[0] - 1; // As filter[span] is 0 hence no point computing that
-#else
-        int span = d_gauss->inc.span[0];
-#endif
-
         float* filter = &d_gauss->inc.filter[0]; // For level 0
         sycl::group group = it.get_group();
 
@@ -666,89 +682,75 @@ class BuildOctave
         std::optional<sycl::device_event> above_events[3]; // Avoids using deleted default constructor of device_event
         std::optional<sycl::device_event> below_events[3]; // Avoids using deleted default constructor of device_event
 
+        std::optional<sycl::device_event> self; // Self center load
+
         // Above is always safe in this case as we are at the bottom of our region hence one above always exits
 
         int end_pos = (it.get_global_id(0) * sg_region.height);
         float out;
 
-        for(; write_y <= end_pos; --write_y)
+        if(it.get_global_linear_id() == 0)
         {
-            int span_bottom_treshold =
-              dst_h - 1 - write_y; // How many pixels we can go down before we are beyond image bounds
+            syclexp::printf("Write_y = %d - Row_width = %d -- live=%d -- start_pos=%d -- end_pos = %d -- write_y >= "
+                            "end_pos --> %d -- span = %d\n",
+                            write_y,
+                            row_width,
+                            live,
+                            start_pos,
+                            end_pos,
+                            write_y >= end_pos,
+                            d_gauss->inc.span[0] - 1);
+        }
+
+        // If not live it does everything besides write as it's comoputing non-sense
+
+#if MINIMAL_WINDOW
+        int span_width = d_gauss->inc.span[0] - 1;
+#else
+        int span_width = d_gauss->inc.span[0];
+#endif
+
+        for(; write_y >= end_pos; --write_y)
+        {
+            int span = span_width;
+
+            // Need to modify intermediate pointer
+            // How many pixels we can go down before we are beyond image bounds
+            int span_bottom_treshold = dst_h - 1 - write_y;
+
             // I'ts just wirte_y
             // int span_top_treshold = write_y; // How many pixels we can go down before we are beyond image bounds
 
             // Start prefetching around write_y the outer most rows then second then third before entering the loop and
             // waiting on them
 
-            // NOTE: Assumes that span cannot be less than 3 (and in minimal case less than 4)
+            // NOTE: Assumes that span cannot be less than 4
+            // -> if that is not the case it will do unnecessary loads but won't cause it to compute wrong value or fail
 
+            // out = 0.0f; // Just for testing this one
+
+#if true
             // if(write_y - span >= 0)
+            // Store initial in second for better mathing with loop
             if(span <= write_y) // if greater we are out of bounds (above image)
             {
                 // load outer most row pair
-                above_events[0] = group.async_work_group_copy(buffer_ptr, intermediate_ptr - (dst_w * span), row_width);
+                above_events[2] = group.async_work_group_copy(
+                  buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * span), row_width);
             }
             else
             {
                 // load top row (clamp to edge)
-                above_events[0] =
-                  group.async_work_group_copy(buffer_ptr, intermediate_ptr - (dst_w * write_y), row_width);
+                above_events[2] = group.async_work_group_copy(
+                  buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * write_y), row_width);
             }
 
             // Second row of local memory (use full row even when we don't load full row for bank conflict avoidance and
             // avoid branching)
             if(span <= span_bottom_treshold)
             {
-                below_events[0] = group.async_work_group_copy(
-                  buffer_ptr + it.get_local_range(1)), intermediate_ptr + (dst_w * span), row_width);
-            }
-            else
-            {
-                below_events[0] = group.async_work_group_copy(
-                  buffer_ptr + it.get_local_range(1)), intermediate_ptr + (dst_w * span_bottom_treshold), row_width);
-            }
-
-            // second outermost row pair
-            if((span - 1) <= write_y)
-            {
-                above_events[1] = group.async_work_group_copy(
-                  buffer_ptr + 2 * it.get_local_range(1), intermediate_ptr - (dst_w * (span - 1)), row_width);
-            }
-            else
-            {
-                above_events[1] = group.async_work_group_copy(
-                  buffer_ptr + 2 * it.get_local_range(1), intermediate_ptr - (dst_w * write_y), row_width);
-            }
-
-            // if(write_y + (span - 1) < dst_h)
-            if((span - 1) <= span_bottom_treshold)
-            {
-                below_events[1] = group.async_work_group_copy(
-                  buffer_ptr + 3 * it.get_local_range(1), intermediate_ptr + (dst_w * (span - 1)), row_width);
-            }
-            else
-            {
-                below_events[1] = group.async_work_group_copy(
-                  buffer_ptr + 3 * it.get_local_range(1), intermediate_ptr + (dst_w * span_bottom_treshold), row_width);
-            }
-
-            // Third outmost row pair
-            if((span - 2) <= write_y)
-            {
-                above_events[2] = group.async_work_group_copy(
-                  buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * (span - 2)), row_width);
-            }
-            else
-            {
-                above_events[2] = group.async_work_group_copy(
-                  buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * write_y), row_width);
-            }
-
-            if((span - 2) <= span_bottom_treshold)
-            {
                 below_events[2] = group.async_work_group_copy(
-                  buffer_ptr + 5 * it.get_local_range(1), intermediate_ptr + (dst_w * (span - 2)), row_width);
+                  buffer_ptr + 5 * it.get_local_range(1), intermediate_ptr + (dst_w * span), row_width);
             }
             else
             {
@@ -756,48 +758,258 @@ class BuildOctave
                   buffer_ptr + 5 * it.get_local_range(1), intermediate_ptr + (dst_w * span_bottom_treshold), row_width);
             }
 
-#if COMPUTE_ONE_BY_ONE
-            above_events[0].wait();
-            out = buffer[it.get_local_id(1)] * filter[span];
-
-            below_events[0].wait();
-            out += buffer[it.get_local_rangel(0) + it.get_local_id(1)] * filter[span];
-#else
-            group.wait_for(above_events[0], below_events[0]);
-            float val_above = buffer[it.get_local_id(1)] * filter[span];
-            float val_below = buffer[it.get_local_range(0) + it.get_local_id(1)] * filter[span];
-            out = (val_above + val_below) * filter[span];
-#endif
-            above_events[0] = group.async_work_group_copy(buffer_ptr, intermediate_ptr - (dst_w * span), row_width);
-            below_events[0] = group.async_work_group_copy(
-              buffer_ptr + it.get_local_range(1)), intermediate_ptr + (dst_w * span), row_width);
-
-            for(int i = span - 1; i > 0; --i)
+            // second outermost row pair
+            if((span - 1) <= write_y)
             {
-                if(span <= write_y)
-                {
-                    above_events[2] = group.async_work_group_copy(
-                      buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * span), row_width);
-                }
-                else
-                {
-                    above_events[2] = group.async_work_group_copy(
-                      buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * write_y), row_width);
-                }
+                above_events[0] =
+                  group.async_work_group_copy(buffer_ptr, intermediate_ptr - (dst_w * (span - 1)), row_width);
+            }
+            else
+            {
+                above_events[0] =
+                  group.async_work_group_copy(buffer_ptr, intermediate_ptr - (dst_w * write_y), row_width);
+            }
 
-                if(span <= span_bottom_treshold)
+            // if(write_y + (span - 1) < dst_h)
+            if((span - 1) <= span_bottom_treshold)
+            {
+                below_events[0] = group.async_work_group_copy(
+                  buffer_ptr + it.get_local_range(1), intermediate_ptr + (dst_w * (span - 1)), row_width);
+            }
+            else
+            {
+                below_events[0] = group.async_work_group_copy(
+                  buffer_ptr + it.get_local_range(1), intermediate_ptr + (dst_w * span_bottom_treshold), row_width);
+            }
+
+            // Third outmost row pair
+            if((span - 2) <= write_y)
+            {
+                above_events[1] = group.async_work_group_copy(
+                  buffer_ptr + 2 * it.get_local_range(1), intermediate_ptr - (dst_w * (span - 2)), row_width);
+            }
+            else
+            {
+                above_events[1] = group.async_work_group_copy(
+                  buffer_ptr + 2 * it.get_local_range(1), intermediate_ptr - (dst_w * write_y), row_width);
+            }
+
+            if((span - 2) <= span_bottom_treshold)
+            {
+                below_events[1] = group.async_work_group_copy(
+                  buffer_ptr + 3 * it.get_local_range(1), intermediate_ptr + (dst_w * (span - 2)), row_width);
+            }
+            else
+            {
+                below_events[1] = group.async_work_group_copy(
+                  buffer_ptr + 3 * it.get_local_range(1), intermediate_ptr + (dst_w * span_bottom_treshold), row_width);
+            }
+
+#if COMPUTE_ONE_BY_ONE
+            // if(it.get_global_linear_id() == 0)
+            // {
+            //     syclexp::printf("out pre reset = %f --> After Reset = ", out);
+            // }
+            above_events[2]->wait();
+            out = buffer[(4 * it.get_local_range(1)) + it.get_local_id(1)] * filter[span]; // Reset by setting
+
+            // if(it.get_global_linear_id() == 0)
+            // {
+            //     syclexp::printf("%f\n", out);
+            // }
+
+            below_events[2]->wait();
+            out += buffer[(5 * it.get_local_range(1)) + it.get_local_id(1)] * filter[span];
+
+            // if(it.get_global_linear_id() == 0)
+            // {
+            //     syclexp::printf("out += %f * %f --> %f\n",
+            //                     buffer[(5 * it.get_local_range(1)) + it.get_local_id(1)],
+            //                     filter[span],
+            //                     out);
+            // }
+
+#else
+            // group.wait_for(above_events[2], below_events[2]);
+            above_events[2]->wait();
+            below_events[2]->wait();
+
+            float val_above = buffer[(4 * it.get_local_range(1)) + it.get_local_id(1)];
+            float val_below = buffer[(5 * it.get_local_range(1)) + it.get_local_id(1)];
+            out = (val_above + val_below) * filter[span]; // reset by setting
+
+            if(it.get_global_linear_id() == 0)
+            {
+                syclexp::printf("out = %f <-- (val_above=%f + val_below=%f) * filter[%d] = %f INITIAL\n",
+                                out,
+                                val_above,
+                                val_below,
+                                span,
+                                filter[span]);
+            }
+#endif
+#endif
+
+#if true
+            if((span - 3) <= write_y)
+            {
+                above_events[2] = group.async_work_group_copy(
+                  buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * (span - 3)), row_width);
+            }
+            else
+            {
+                above_events[2] = group.async_work_group_copy(
+                  buffer_ptr + 4 * it.get_local_range(1), intermediate_ptr - (dst_w * write_y), row_width);
+            }
+
+            if((span - 3) <= span_bottom_treshold)
+            {
+                below_events[2] = group.async_work_group_copy(
+                  buffer_ptr + 5 * it.get_local_range(1), intermediate_ptr + (dst_w * (span - 3)), row_width);
+            }
+            else
+            {
+                below_events[2] = group.async_work_group_copy(
+                  buffer_ptr + 5 * it.get_local_range(1), intermediate_ptr + (dst_w * span_bottom_treshold), row_width);
+            }
+
+            // for(int i = span - 1; i > 0; --i)
+
+            // if(it.get_global_linear_id() == 0)
+            // {
+            //     syclexp::printf("SPAN = %d", span);
+            // }
+
+            while(span > 0) // loop over current to compute the out value // Could replace this one with shared memory
+            {
+#pragma unroll
+                for(int z = 0; z < 3; ++z)
                 {
-                    below_events[2] = group.async_work_group_copy(
-                      buffer_ptr + 5 * it.get_local_range(1), intermediate_ptr + (dst_w * span), row_width);
-                }
-                else
-                {
-                    below_events[2] = group.async_work_group_copy(buffer_ptr + 5 * it.get_local_range(1),
-                                                                  intermediate_ptr + (dst_w * span_bottom_treshold),
-                                                                  row_width);
+                    // Three iterations for the buffering
+                    span--;
+                    if(span < 1) // Level of which we process
+                    {
+                        break; // Break out to write the result
+                    }
+
+#if COMPUTE_ONE_BY_ONE
+                    above_events[z]->wait();
+                    out += buffer[it.get_local_range(1) * (z << 1) + it.get_local_id(1)] * filter[span];
+
+                    below_events[z]->wait();
+                    out += buffer[it.get_local_range(1) * ((z << 1) + 1) + it.get_local_id(1)] * filter[span];
+#else
+                    // group.wait_for(above_events[z], below_events[z]);
+                    above_events[z]->wait();
+                    below_events[z]->wait();
+
+                    float val_above = buffer[it.get_local_range(1) * (z << 1) + it.get_local_id(1)];
+                    float val_below = buffer[it.get_local_range(1) * ((z << 1) + 1) + it.get_local_id(1)];
+                    out += (val_above + val_below) * filter[span];
+
+                    if(it.get_global_linear_id() == 0)
+                    {
+                        syclexp::printf("out = %f <-- (val_above=%f + val_below=%f) * filter[%d] = %f NORMAL\n",
+                                        out,
+                                        val_above,
+                                        val_below,
+                                        span,
+                                        filter[span]);
+                    }
+#endif
+
+                    int prefetch_span = span - 3;
+                    if(prefetch_span > 0) // values we need
+                    {
+                        if(prefetch_span <= write_y)
+                        {
+                            above_events[z] = group.async_work_group_copy(buffer_ptr + z * it.get_local_range(1),
+                                                                          intermediate_ptr - (dst_w * prefetch_span),
+                                                                          row_width);
+                        }
+                        else
+                        {
+                            above_events[z] = group.async_work_group_copy(
+                              buffer_ptr + z * it.get_local_range(1), intermediate_ptr - (dst_w * write_y), row_width);
+                        }
+
+                        if(prefetch_span <= span_bottom_treshold)
+                        {
+                            below_events[z] = group.async_work_group_copy(buffer_ptr + (z + 1) * it.get_local_range(1),
+                                                                          intermediate_ptr + (dst_w * prefetch_span),
+                                                                          row_width);
+                        }
+                        else
+                        {
+                            below_events[z] =
+                              group.async_work_group_copy(buffer_ptr + (z + 1) * it.get_local_range(1),
+                                                          intermediate_ptr + (dst_w * span_bottom_treshold),
+                                                          row_width);
+                        }
+                    }
+                    else if(prefetch_span == 0)
+                    {
+                        // load self
+                        above_events[z] = group.async_work_group_copy(
+                          buffer_ptr + (z << 1) * it.get_local_range(1), intermediate_ptr, row_width);
+                        if(it.get_global_linear_id() == 0)
+                        {
+                            syclexp::printf("SELF STORED AT %d\n", z);
+                        }
+                    }
                 }
             }
+#endif
+// Store out value to correct position
+#if true
+            int self_pos = (span_width - 1) % 3;
+            above_events[self_pos]->wait(); // Wait on self
+
+            // Add self
+            out += buffer[it.get_local_range(1) * (self_pos << 1) + it.get_local_id(1)] * filter[span];
+
+            if(live)
+            {
+                data_array[0][write_y * dst_w + write_x] = out; // Store synchronously add asycn option for test later
+            }
+
+            if(it.get_global_linear_id() == 0)
+            {
+                auto raw_ptr = intermediate_ptr.get();
+                size_t distance_elems =
+                  (reinterpret_cast<std::uintptr_t>(raw_ptr) - reinterpret_cast<std::uintptr_t>(intermediate)) /
+                  sizeof(float);
+                syclexp::printf(
+                  "out = %f <-- val=%f * filter[%d] = %f FINAL -- Write_y = %d self_pos = %d -- inter_dist = %d\n\n",
+                  out,
+                  buffer[it.get_local_range(1) * (self_pos << 1) + it.get_local_id(1)],
+                  span,
+                  filter[span],
+                  write_y,
+                  self_pos,
+                  static_cast<int>(distance_elems));
+
+                syclexp::printf("Intermediate[0] = %f\n", intermediate[0]);
+                syclexp::printf("Intermediate[198800] = %f == %p --> POINTER WE USE %p\n\n",
+                                intermediate[198800],
+                                &intermediate[198800],
+                                raw_ptr);
+
+                for(int z = 0; z < 6; z++)
+                {
+                    for(int i = 0; i < 16; ++i)
+                    {
+                        syclexp::printf("%f ", buffer[z * it.get_local_range(1) + i]);
+                    }
+                    syclexp::printf("\n");
+                }
+            }
+#endif
+            // something wrong about the way we modify the intermeidaet_ptr
+            // GO up one row and do compute there
+            intermediate_ptr -= dst_w; // Move up center position that we fetch around
         }
+#endif // DO_VERT
     }
 };
 
@@ -1026,6 +1238,15 @@ class BuildOctaveSlidingWindow
           sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(
             intermediate + start_pos);
 
+        auto raw_ptr = intermediate_ptr.get();
+        size_t distance_elems =
+          (reinterpret_cast<std::uintptr_t>(raw_ptr) - reinterpret_cast<std::uintptr_t>(intermediate)) / sizeof(float);
+
+        if(it.get_global_linear_id() == 0)
+        {
+            syclexp::printf("START POS ELM DISTANCE = %d\n", static_cast<int>(distance_elems));
+        }
+
         // auto inter =
         //   sycl::make_ptr<sycl::access::address_space::global_space, sycl::access::decorated::yes>(intermediate);
         // auto intermeidate_ptr = inter.template get_multi_ptr<sycl::access::decorated::yes>();
@@ -1155,6 +1376,21 @@ class BuildOctaveSlidingWindow
             out += (val_below * g);
 #else
             out += ((val_above + val_below) * g);
+
+            // if(it.get_global_linear_id() == 0)
+            // {
+            //     syclexp::printf("out = %f -- INITIAL\n", out);
+            // }
+
+            if(it.get_global_linear_id() == 0)
+            {
+                syclexp::printf("out = %f <-- (val_above=%f + val_below=%f) * filter[%d] = %f NORMAL\n",
+                                out,
+                                val_above,
+                                val_below,
+                                i,
+                                filter[i]);
+            }
 #endif
 
             // ######################################################################################################
@@ -1221,6 +1457,20 @@ class BuildOctaveSlidingWindow
             out += (val_below * g);
 #else
             out += ((val_above + val_below) * g);
+            // if(it.get_global_linear_id() == 0)
+            // {
+            //     syclexp::printf("out = %f -- NORMAL\n", out);
+            // }
+
+            if(it.get_global_linear_id() == 0)
+            {
+                syclexp::printf("out = %f <-- (val_above=%f + val_below=%f) * filter[%d] = %f NORMAL\n",
+                                out,
+                                val_above,
+                                val_below,
+                                i,
+                                filter[i]);
+            }
 #endif
 
             // Now we have done second iteration and next to wait is above and below 1 and prefetch 2 so we iterate
@@ -1253,6 +1503,16 @@ class BuildOctaveSlidingWindow
 
         float val = buffer[span * it.get_local_range(1) + it.get_local_id(1)];
         out += (val * filter[0]);
+        // if(it.get_global_linear_id() == 0)
+        // {
+        //     syclexp::printf("out = %f -- FINAL -- write_y=%d\n\n", out, write_y);
+        // }
+
+        if(it.get_global_linear_id() == 0)
+        {
+            syclexp::printf(
+              "out = %f <-- val=%f * filter[%d] = %f FINAL -- write_y = %d \n\n", out, val, 0, filter[0], write_y);
+        }
 
         if(live)
         {
@@ -1264,6 +1524,11 @@ class BuildOctaveSlidingWindow
             }
 #endif
             data_array[0][write_y * dst_w + write_x] = out; // Store synchronously add asycn option for test later
+
+            // if(it.get_global_linear_id() == 0)
+            // {
+            //     syclexp::printf("out = %f\n", out);
+            // }
         }
 
         // ###########################################################################################################
@@ -1649,6 +1914,16 @@ class BuildOctaveSlidingWindow
 #else
 
                     out += ((val_above + val_below) * filter[offset]);
+                    if(it.get_global_linear_id() == 0)
+                    {
+                        syclexp::printf("out = %f <-- (val_above=%f + val_below=%f) * filter[%d] = %f NORMAL\n",
+                                        out,
+                                        val_above,
+                                        val_below,
+                                        offset,
+                                        filter[offset]);
+                    }
+
 #endif
 
 #if DEBUG
@@ -1688,7 +1963,17 @@ class BuildOctaveSlidingWindow
 #if COMPUTE_ONE_BY_ONE
                     out += (val_below * filter[offset]);
 #else
-                    // out += ((val_above + val_below) * filter[offset]);
+                    out += ((val_above + val_below) * filter[offset]);
+                    if(it.get_global_linear_id() == 0)
+                    {
+                        syclexp::printf("out = %f <-- (val_above=%f + val_below=%f) * filter[%d] = %f NORMAL\n",
+                                        out,
+                                        val_above,
+                                        val_below,
+                                        offset,
+                                        filter[offset]);
+                    }
+
 #endif
 
 #if DEBUG
@@ -1715,6 +2000,14 @@ class BuildOctaveSlidingWindow
 
                 // Compute self last to get same value as popsift
                 out += (buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)] * filter[0]);
+                if(it.get_global_linear_id() == 0)
+                {
+                    syclexp::printf("out = %f -- val = %f -- filter[%d] = %f NORMAL\n",
+                                    out,
+                                    buffer[row_pos * it.get_local_range(1) + it.get_local_id(1)],
+                                    0,
+                                    filter[0]);
+                }
 
                 // #########################################
                 // ############ NEW LOOP END ###############
@@ -1901,6 +2194,16 @@ class BuildOctaveSlidingWindow
 #endif
 
                     data_array[0][(write_y + 1) * dst_w + write_x] = out; // synchronous setting
+
+                    if(it.get_global_linear_id() == 0)
+                    {
+                        syclexp::printf("out = %f -- FINAL -- write_y = %d\n\n", out, write_y + 1);
+                    }
+
+                    // if(it.get_global_linear_id() == 0)
+                    // {
+                    //     syclexp::printf("out = %f   - p2\n", out);
+                    // }
                 }
 
                 if(write_y < end_pos) // next check is here we currently at write_y + 1
@@ -2270,7 +2573,7 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
         // sg_region.local_mem_size
         if(col && row)
         {
-            // printf("We doing col and row whop whop\n");
+            printf("We doing col and row whop whop\n");
             // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
             return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
                 cgh.depends_on({d_gauss_write, img_write, sg_region._zeroed_event});
@@ -2284,17 +2587,19 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 #if USE_ROOT_GROUP
                                  props,
 #endif
-                                 normalizedSource::BuildOctaveSlidingWindow<true, true>(base->getInputImage(),
-                                                                                        oct_obj.getDataArray(),
-                                                                                        oct_obj.getDogArray(),
-                                                                                        oct_obj.getIntermediate(),
-                                                                                        _d_gauss,
-                                                                                        buffer,
-                                                                                        sg_region.sg_block,
-                                                                                        width,
-                                                                                        height,
-                                                                                        shift,
-                                                                                        _levels));
+
+                                 // normalizedSource::BuildOctaveSlidingWindow<true, true>(base->getInputImage(),
+                                 normalizedSource::BuildOctave<true, true>(base->getInputImage(),
+                                                                           oct_obj.getDataArray(),
+                                                                           oct_obj.getDogArray(),
+                                                                           oct_obj.getIntermediate(),
+                                                                           _d_gauss,
+                                                                           buffer,
+                                                                           sg_region.sg_block,
+                                                                           width,
+                                                                           height,
+                                                                           shift,
+                                                                           _levels));
             });
         }
         else if(col)
@@ -2312,17 +2617,17 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 #if USE_ROOT_GROUP
                                  props,
 #endif
-                                 normalizedSource::BuildOctaveSlidingWindow<true, false>(base->getInputImage(),
-                                                                                         oct_obj.getDataArray(),
-                                                                                         oct_obj.getDogArray(),
-                                                                                         oct_obj.getIntermediate(),
-                                                                                         _d_gauss,
-                                                                                         buffer,
-                                                                                         sg_region.sg_block,
-                                                                                         width,
-                                                                                         height,
-                                                                                         shift,
-                                                                                         _levels));
+                                 normalizedSource::BuildOctave<true, false>(base->getInputImage(),
+                                                                            oct_obj.getDataArray(),
+                                                                            oct_obj.getDogArray(),
+                                                                            oct_obj.getIntermediate(),
+                                                                            _d_gauss,
+                                                                            buffer,
+                                                                            sg_region.sg_block,
+                                                                            width,
+                                                                            height,
+                                                                            shift,
+                                                                            _levels));
             });
         }
         else if(row)
@@ -2340,17 +2645,17 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 #if USE_ROOT_GROUP
                                  props,
 #endif
-                                 normalizedSource::BuildOctaveSlidingWindow<false, true>(base->getInputImage(),
-                                                                                         oct_obj.getDataArray(),
-                                                                                         oct_obj.getDogArray(),
-                                                                                         oct_obj.getIntermediate(),
-                                                                                         _d_gauss,
-                                                                                         buffer,
-                                                                                         sg_region.sg_block,
-                                                                                         width,
-                                                                                         height,
-                                                                                         shift,
-                                                                                         _levels));
+                                 normalizedSource::BuildOctave<false, true>(base->getInputImage(),
+                                                                            oct_obj.getDataArray(),
+                                                                            oct_obj.getDogArray(),
+                                                                            oct_obj.getIntermediate(),
+                                                                            _d_gauss,
+                                                                            buffer,
+                                                                            sg_region.sg_block,
+                                                                            width,
+                                                                            height,
+                                                                            shift,
+                                                                            _levels));
             });
         }
         else
@@ -2368,17 +2673,18 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 #if USE_ROOT_GROUP
                                  props,
 #endif
-                                 normalizedSource::BuildOctaveSlidingWindow<false, false>(base->getInputImage(),
-                                                                                          oct_obj.getDataArray(),
-                                                                                          oct_obj.getDogArray(),
-                                                                                          oct_obj.getIntermediate(),
-                                                                                          _d_gauss,
-                                                                                          buffer,
-                                                                                          sg_region.sg_block,
-                                                                                          width,
-                                                                                          height,
-                                                                                          shift,
-                                                                                          _levels));
+                                 // BuildOctaveSlidingWindow
+                                 normalizedSource::BuildOctave<false, false>(base->getInputImage(),
+                                                                             oct_obj.getDataArray(),
+                                                                             oct_obj.getDogArray(),
+                                                                             oct_obj.getIntermediate(),
+                                                                             _d_gauss,
+                                                                             buffer,
+                                                                             sg_region.sg_block,
+                                                                             width,
+                                                                             height,
+                                                                             shift,
+                                                                             _levels));
             });
         }
 
