@@ -206,20 +206,19 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     // loading of next. loca([0])*local[1]) final part is for async loading prev level for doing Difference of Gaussian
     // (DoG) on the fly to reuse data better
 
-#define SKIP_SPAN 1 // Skipping doing iteration where offset == span as filter[span] == 0 hence does not change result
-#if MINIMAL_WINDOW
+#if !MINIMAL_WINDOW
     // Remove part of window that is equal to sspan as filter[span] seems to always be zero
     // largest_span << 1 is for whole thing as dist around self is span - 1 and self is one and buffer row is 1
     // So same as ((largest_span - 1) << 1) + 1 + 1;
 
     int vert_local_size = ((largest_span << 1) * local[1]) * local[0] + local[0] * local[1];
 #else
-// +1 is for self; second + 1 is for free buffer row; largest_span * 2 is for span range around self
-#if SKIP_SPAN
-    int vert_local_size = (((largest_span << 1) * local[1]) * local[0] + local[0] * local[1]) * sizeof(float);
-#else
-    int vert_local_size = ((((largest_span << 1) + 1 + 1) * local[1]) * local[0] + local[0] * local[1]) * sizeof(float);
-#endif
+    // +1 is for self; second + 1 is for free buffer row; largest_span * 2 is for span range around self
+    // int vert_local_size = ((((largest_span << 1) + 1 + 1) * local[1]) * local[0] + local[0] * local[1]) *
+    // sizeof(float);
+
+    // local accessor is created by number of elements
+    int vert_local_size = ((((largest_span << 1) + 1 + 1) * local[1]) * local[0] + local[0] * local[1]);
 #endif
 
     // Used when we don't have enough memory for a full window and must use prefetched rows instead
@@ -228,17 +227,27 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     // back in addition to intermediate
     // --> For final level we don't even need to write back intermediate and can only write back DoG as once we have DoG
     // we never use the Data Array again as we only use DoG aray
-    int vert_buffer_local_size =
-      ((local[1] * 6) * local[0]) * sizeof(float); // When loading the final self value we just use the
-    // Might need to increase the size if we want to do async writes...
 
-    // The size of this one is quite constant with respect to image sizes so should work on most GPU's
-    // Also quite constant with respect to number of Compute Units on the GPU as it's a sliding window
-    // Takes around 150-180k bytes which is too much as max tends to be around 100k bytes
+#if ASYNC_WRITE
+    // Adding 2 rows for doing async write of Intermediate/data_array and DoG array
+    // Could do 4 if we want to use the memory to store partial results to reduce register pressure and avoid copy
+    // --> It might require copy every time from registers to shared memory if using 4 so not sure if it helps I don't
+    // think you can do operation with one operand being shared memory think they all need to be registers
+    int vert_buffer_local_size = ((local[1] * (6 + 2)) * local[0]); // +2 for async write
+#else
+    int vert_buffer_local_size = ((local[1] * 6) * local[0]); // When loading the final self value we just use the
+#endif
 
-    // Should add minimal here aswell when I support that in the horiz part as I believe that the same is true there
-    int horiz_local_size =
-      (((largest_span << 1) + local[1]) * (local[0] * 2)) * sizeof(float); // Buffering of horiz rows
+// The size of this one is quite constant with respect to image sizes so should work on most GPU's
+// Also quite constant with respect to number of Compute Units on the GPU as it's a sliding window
+// Takes around 150-180k bytes which is too much as max tends to be around 100k bytes
+
+// Should add minimal here aswell when I support that in the horiz part as I believe that the same is true there
+#if ASYNC_WRITE
+    int horiz_local_size = ((largest_span << 1) + local[1]) * (local[0] * 2) + local[1] * 2; // +2 rows for async write
+#else
+    int horiz_local_size = ((largest_span << 1) + local[1]) * (local[0] * 2);
+#endif
 
     // int horiz_local_isze = ((largest_span * 2) + local[1]) * 2) *local[]
 
@@ -256,7 +265,8 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
                 global[1],
                 vert_buffer_local_size,
                 device_local_mem_size);
-    int max_mem_per_wg = device_local_mem_size / wg_per_cu; // Assumes local mem is per CU which it is for GPU's
+    // Divide by 4 to get it as number of floats per wg and not bytes
+    int max_mem_per_wg = (device_local_mem_size >> 2) / wg_per_cu; // Assumes local mem is per CU which it is for GPU's
 
     // local_mem_vert = (max_mem_per_wg >= vert_local_size) &&  ((largest_span << 1) + 1)   // If doing more complex
     // vert start for better cache we need more things to be true
@@ -273,7 +283,12 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     }
     else if(!local_mem_vert && local_mem_buffer_vert)
     {
+#if true
+        // Just for octave window testing
+        local_mem_size = vert_local_size;
+#else
         local_mem_size = local_mem_horiz ? sycl::max(horiz_local_size, vert_buffer_local_size) : vert_buffer_local_size;
+#endif
     }
     else if(local_mem_horiz)
     {
