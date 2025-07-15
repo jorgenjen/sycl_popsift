@@ -283,7 +283,7 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     }
     else if(!local_mem_vert && local_mem_buffer_vert)
     {
-#if true
+#if false 
         // Just for octave window testing
         local_mem_size = vert_local_size;
 #else
