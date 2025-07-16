@@ -179,7 +179,8 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
 
     // This configuration results in larger vert memory usage per compute unit (should still work most cases)
     int lead_x = 0;
-    for(int x = 1; x <= 32; x++)
+    // for(int x = 1; x <= 32; x++)
+    for(int x = 1; x <= 4; x++)
     {
         if(total_x % x != 0)
             continue;
@@ -233,9 +234,9 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
     // Could do 4 if we want to use the memory to store partial results to reduce register pressure and avoid copy
     // --> It might require copy every time from registers to shared memory if using 4 so not sure if it helps I don't
     // think you can do operation with one operand being shared memory think they all need to be registers
-    int vert_buffer_local_size = ((local[1] * (6 + 2)) * local[0]); // +2 for async write
+    int vert_buffer_local_size = ((local[1] * (4 + 2)) * local[0]); // +2 for async write
 #else
-    int vert_buffer_local_size = ((local[1] * 6) * local[0]); // When loading the final self value we just use the
+    int vert_buffer_local_size = ((local[1] * 4) * local[0]); // When loading the final self value we just use the
 #endif
 
 // The size of this one is quite constant with respect to image sizes so should work on most GPU's

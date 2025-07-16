@@ -40,10 +40,10 @@ option(
 # due to using sycl queue profiler)
 option(Profiling "Time certain parts of application" OFF)
 
-
-option(PerfTestingFunctions "Compiles different functions used for performance testing and data generation" OFF)
-
-
+option(
+  PerfTestingFunctions
+  "Compiles different functions used for performance testing and data generation"
+  OFF)
 
 # option(Profiling "For profiling mode (used for nsight)" ON)
 
@@ -78,7 +78,6 @@ include(cmake/ConfigureSYCL.cmake)
 
 # list(APPEND SYCL_FALGS -fsycl-device-code-split=per_kernel)
 
-
 # TODO: Make it like this for amd and intel gpu's too so you can toggle on and
 # off cpu only
 if(${ENABLE_CUDA})
@@ -103,6 +102,7 @@ if(${Profiling})
       "Profiling -- Compiling with --lineinfo and -q with -O3, Also using sycl queue profiling for overall metrics"
   )
   list(APPEND SYCL_FLAGS -gline-tables-only -g -O3)
+  # list(APPEND SYCL_FLAGS -gline-tables-only)
 
   # For sycl queue profiling (for overall frame performance and such)
   add_compile_definitions(QUEUE_PROFILING=1)
@@ -179,8 +179,6 @@ else()
   add_compile_definitions(USE_JOINT_MATRIX=0)
 
 endif()
-
-
 
 if(PerfTestingFunctions)
   add_compile_definitions(PERF_TESTING_FUNCTIONS=1)
