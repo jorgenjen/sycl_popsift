@@ -406,6 +406,95 @@ static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it,
 
 namespace normalizedSource {
 
+// One by one results in two more registers being used...
+#define COMPUTE_ONE_BY_ONE 0 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
+
+class BuildOcaveSimple
+{
+  private:
+    syclexp::sampled_image_handle src;
+    float** data_array; // Need to be array of all dst data
+    float** dog_array;
+    float* intermediate;
+    popsift::GaussInfo* d_gauss;
+    // sycl::local_accessor<float, 1> buffer;
+    const sg_region_blocks sg_region;
+    const int dst_w;
+    const int dst_h;
+    const float shift;
+    const int levels;
+
+  public:
+    BuildOcaveSimple(syclexp::sampled_image_handle src,
+                     float** data_array,
+                     float** dog_array,
+                     float* intermediate,
+                     popsift::GaussInfo* d_gauss,
+                     // sycl::local_accessor<float, 1> buffer,
+                     const sg_region_blocks sg_region,
+                     const int dst_w,
+                     const int dst_h,
+                     const float shift,
+                     const int levels)
+
+      : src(src)
+      , data_array(data_array)
+      , dog_array(dog_array)
+      , intermediate(intermediate)
+      , d_gauss(d_gauss)
+      // , buffer(buffer)
+      , sg_region(sg_region)
+      , dst_w(dst_w)
+      , dst_h(dst_h)
+      , shift(shift)
+      , levels(levels) {};
+
+    inline void operator()(sycl::nd_item<2> it) const
+    {
+        const int write_x = it.get_global_id(1);
+        // int write_y = it.get_global_id(0) * sg_region.height; // Changes in normal block
+
+        int write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1); // Simulating horiz run with it's end
+
+#if MINIMAL_WINDOW
+        const int span_width = d_gauss->inc.span[0] - 1;
+#else
+        const int span_width = d_gauss->inc.span[0];
+#endif
+        int end_pos = (it.get_global_id(0) * sg_region.height);
+        const int pos_upper_limit = dst_w * dst_h; // First pixel outside of image bounds
+        int self_pos = write_y * dst_w + write_x;
+
+        if(write_x < dst_w)
+        {
+            for(; write_y >= end_pos; --write_y)
+            {
+                // float val_above, val_below;
+                float out;
+                int offset = span_width * dst_w;
+                out = 0.0f;
+                for(int span = span_width; span > 0; --span)
+                {
+                    int pos_above = self_pos - offset;
+
+                    float val_above = pos_above >= 0 ? intermediate[pos_above] : intermediate[write_x];
+
+                    int pos_below = self_pos + offset;
+                    float val_below = pos_below < pos_upper_limit ? intermediate[pos_below]
+                                                                  : intermediate[(dst_h - 1) * dst_w + write_x];
+
+                    out += (val_above + val_below) * d_gauss->inc.filter[span];
+
+                    offset -= dst_w;
+                }
+                data_array[0][self_pos] = out;
+
+                self_pos -= dst_w;
+            }
+        }
+    }
+};
+
 // Used for ImageBindless
 // Only used on input image (initial)
 // And only works for it due to  filter and span selection
@@ -419,8 +508,6 @@ namespace normalizedSource {
 
 #define DEBUG 0
 
-// One by one results in two more registers being used...
-#define COMPUTE_ONE_BY_ONE 0 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
 #define USE_SHARED_MEM_FOR_INPUT 1
 
 // Uses prefetch of 2 rows for vert
@@ -1879,7 +1966,42 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 
 #define normalOctave true
 
-        if(col && row)
+        if(true)
+        {
+            printf("DOING BUILD OCTAVE SIMPLE\n\n");
+            // return _device_queue.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
+            //                                   {d_gauss_write, img_write, sg_region._zeroed_event},
+            //                                   normalizedSource::BuildOcaveSimple(base->getInputImage(),
+            //                                                                      oct_obj.getDataArray(),
+            //                                                                      oct_obj.getDogArray(),
+            //                                                                      oct_obj.getIntermediate(),
+            //                                                                      _d_gauss,
+            //                                                                      sg_region.sg_block,
+            //                                                                      width,
+            //                                                                      height,
+            //                                                                      shift,
+            //                                                                      _levels));
+
+            return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
+                cgh.depends_on({d_gauss_write, img_write, sg_region._zeroed_event});
+
+                // auto buffer = sycl::local_accessor<float, 1>(sg_region.local_mem_size, cgh);
+
+                cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
+                                 normalizedSource::BuildOcaveSimple(base->getInputImage(),
+                                                                    oct_obj.getDataArray(),
+                                                                    oct_obj.getDogArray(),
+                                                                    oct_obj.getIntermediate(),
+                                                                    _d_gauss,
+                                                                    sg_region.sg_block,
+                                                                    width,
+                                                                    height,
+                                                                    shift,
+                                                                    _levels));
+            });
+        }
+
+        else if(col && row)
         {
             printf("We doing col and row whop whop\n");
             // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
