@@ -179,8 +179,8 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
 
     // This configuration results in larger vert memory usage per compute unit (should still work most cases)
     int lead_x = 0;
-    // for(int x = 1; x <= 32; x++)
-    for(int x = 1; x <= 4; x++)
+    for(int x = 1; x <= 32; x++)
+    // for(int x = 1; x <= 4; x++)
     {
         if(total_x % x != 0)
             continue;

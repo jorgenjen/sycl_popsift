@@ -452,9 +452,10 @@ class BuildOcaveSimple
     inline void operator()(sycl::nd_item<2> it) const
     {
         const int write_x = it.get_global_id(1);
-        // int write_y = it.get_global_id(0) * sg_region.height; // Changes in normal block
+        int write_y = it.get_global_id(0) * sg_region.height; // Changes in normal block
 
-        int write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1); // Simulating horiz run with it's end
+        // Simulate that we have done horiz before vert
+        write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1); // Simulating horiz run with it's end
 
 #if MINIMAL_WINDOW
         const int span_width = d_gauss->inc.span[0] - 1;
@@ -464,12 +465,23 @@ class BuildOcaveSimple
         int end_pos = (it.get_global_id(0) * sg_region.height);
         const int pos_upper_limit = dst_w * dst_h; // First pixel outside of image bounds
         int self_pos = write_y * dst_w + write_x;
+        // if(it.get_global_linear_id() == 0)
+        // {
+        //     syclexp::printf(
+        //       "Final pixel = %f, write_y = %d -- end_pos = %d\n", intermediate[pos_upper_limit - 1], write_y,
+        //       end_pos);
+        // }
 
         if(write_x < dst_w)
         {
             for(; write_y >= end_pos; --write_y)
             {
                 // float val_above, val_below;
+
+                // if(it.get_global_linear_id() == 0)
+                // {
+                //     syclexp::printf("self: intermediate[%d] = %f\n", self_pos, intermediate[self_pos]);
+                // }
                 float out;
                 int offset = span_width * dst_w;
                 out = 0.0f;
@@ -487,7 +499,14 @@ class BuildOcaveSimple
 
                     offset -= dst_w;
                 }
+                out += intermediate[self_pos] * d_gauss->inc.filter[0]; // Always safe
+
                 data_array[0][self_pos] = out;
+
+                // if(it.get_global_linear_id() == 0)
+                // {
+                //     syclexp::printf("out = %f -- write_y = %d\n", out, write_y);
+                // }
 
                 self_pos -= dst_w;
             }
