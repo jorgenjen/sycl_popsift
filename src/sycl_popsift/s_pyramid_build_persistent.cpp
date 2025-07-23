@@ -488,14 +488,21 @@ class BuildOcaveSimple
                 for(int span = span_width; span > 0; --span)
                 {
                     int pos_above = self_pos - offset;
-
                     float val_above = pos_above >= 0 ? intermediate[pos_above] : intermediate[write_x];
+#if COMPUTE_ONE_BY_ONE
+                    out += val_above * d_gauss->inc.filter[span];
+
+#endif
 
                     int pos_below = self_pos + offset;
                     float val_below = pos_below < pos_upper_limit ? intermediate[pos_below]
                                                                   : intermediate[(dst_h - 1) * dst_w + write_x];
+#if COMPUTE_ONE_BY_ONE
+                    out += val_below * d_gauss->inc.filter[span];
 
+#else
                     out += (val_above + val_below) * d_gauss->inc.filter[span];
+#endif
 
                     offset -= dst_w;
                 }
