@@ -1,4 +1,5 @@
 #include "sycl_popsift/common/assist.h"
+#include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/persistent_config_macros.h" // If we are using root group or handcrafted wg syncrinozation
 #include "sycl_popsift/persistent_configuration.hpp"
 #include "sycl_popsift/popsift.hpp"
@@ -170,18 +171,6 @@ static inline void horiz_local_mem(float* intermediate,
     // }
 
     intermediate[write_x + write_y * dst_w] = out * 255.0f;
-}
-
-static inline void vert_persistent(float* intermediate,
-                                   sycl::local_accessor<float, 1> buffer,
-                                   const float* filter,
-                                   const int span,
-                                   const int dst_w,
-                                   const int write_x,
-                                   int write_y,
-                                   int base_pos)
-{
-    // Vert kernel that resues registers
 }
 
 #define USE_ATOMIC_SYNC 1 // For using atomic ref on the work-group state used for synchronizatio
@@ -409,6 +398,66 @@ namespace normalizedSource {
 // One by one results in two more registers being used...
 #define COMPUTE_ONE_BY_ONE 0 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
 
+// template<bool LAST_LVL, bool LVL_ZERO>
+
+// MBY TEST ASYNC WRITE OF BOTH DOG AND DATA
+
+static inline void vert_persistent(float** data_array,
+                                   float** dog_array,
+                                   float* intermediate,
+                                   popsift::GaussInfo* d_gauss,
+                                   const int sg_region_height,
+                                   const int dst_w,
+                                   const int dst_h,
+                                   const int write_x,
+                                   int& write_y,
+                                   int level,
+                                   sycl::nd_item<2>& it)
+{
+#if MINIMAL_WINDOW
+    const int span_width = d_gauss->inc.span[0] - 1;
+#else
+    const int span_width = d_gauss->inc.span[0];
+#endif
+
+    int end_pos = (it.get_global_id(0) * sg_region_height);
+    const int pos_upper_limit = dst_w * dst_h; // First pixel outside of image bounds
+    int self_pos = write_y * dst_w + write_x;
+
+    if(write_x < dst_w)
+    {
+        for(; write_y >= end_pos; --write_y)
+        {
+            float out;
+            int offset = span_width * dst_w;
+            out = 0.0f;
+            for(int span = span_width; span > 0; --span)
+            {
+                int pos_above = self_pos - offset;
+                float val_above = pos_above >= 0 ? intermediate[pos_above] : intermediate[write_x];
+#if COMPUTE_ONE_BY_ONE
+                out += val_above * d_gauss->inc.filter[span];
+#endif
+                int pos_below = self_pos + offset;
+                float val_below =
+                  pos_below < pos_upper_limit ? intermediate[pos_below] : intermediate[(dst_h - 1) * dst_w + write_x];
+#if COMPUTE_ONE_BY_ONE
+                out += val_below * d_gauss->inc.filter[span];
+#else
+                out += (val_above + val_below) * d_gauss->inc.filter[span];
+#endif
+
+                offset -= dst_w;
+            }
+            out += intermediate[self_pos] * d_gauss->inc.filter[0]; // Always safe
+
+            data_array[0][self_pos] = out;
+
+            self_pos -= dst_w;
+        }
+    }
+}
+
 class BuildOcaveSimple
 {
   private:
@@ -457,67 +506,8 @@ class BuildOcaveSimple
         // Simulate that we have done horiz before vert
         write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1); // Simulating horiz run with it's end
 
-#if MINIMAL_WINDOW
-        const int span_width = d_gauss->inc.span[0] - 1;
-#else
-        const int span_width = d_gauss->inc.span[0];
-#endif
-        int end_pos = (it.get_global_id(0) * sg_region.height);
-        const int pos_upper_limit = dst_w * dst_h; // First pixel outside of image bounds
-        int self_pos = write_y * dst_w + write_x;
-        // if(it.get_global_linear_id() == 0)
-        // {
-        //     syclexp::printf(
-        //       "Final pixel = %f, write_y = %d -- end_pos = %d\n", intermediate[pos_upper_limit - 1], write_y,
-        //       end_pos);
-        // }
-
-        if(write_x < dst_w)
-        {
-            for(; write_y >= end_pos; --write_y)
-            {
-                // float val_above, val_below;
-
-                // if(it.get_global_linear_id() == 0)
-                // {
-                //     syclexp::printf("self: intermediate[%d] = %f\n", self_pos, intermediate[self_pos]);
-                // }
-                float out;
-                int offset = span_width * dst_w;
-                out = 0.0f;
-                for(int span = span_width; span > 0; --span)
-                {
-                    int pos_above = self_pos - offset;
-                    float val_above = pos_above >= 0 ? intermediate[pos_above] : intermediate[write_x];
-#if COMPUTE_ONE_BY_ONE
-                    out += val_above * d_gauss->inc.filter[span];
-
-#endif
-
-                    int pos_below = self_pos + offset;
-                    float val_below = pos_below < pos_upper_limit ? intermediate[pos_below]
-                                                                  : intermediate[(dst_h - 1) * dst_w + write_x];
-#if COMPUTE_ONE_BY_ONE
-                    out += val_below * d_gauss->inc.filter[span];
-
-#else
-                    out += (val_above + val_below) * d_gauss->inc.filter[span];
-#endif
-
-                    offset -= dst_w;
-                }
-                out += intermediate[self_pos] * d_gauss->inc.filter[0]; // Always safe
-
-                data_array[0][self_pos] = out;
-
-                // if(it.get_global_linear_id() == 0)
-                // {
-                //     syclexp::printf("out = %f -- write_y = %d\n", out, write_y);
-                // }
-
-                self_pos -= dst_w;
-            }
-        }
+        vert_persistent(
+          data_array, dog_array, intermediate, d_gauss, sg_region.height, dst_w, dst_h, write_x, write_y, 0, it);
     }
 };
 
