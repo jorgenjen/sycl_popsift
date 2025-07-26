@@ -8,6 +8,8 @@
 #include <iterator>
 #include <optional>
 
+#define USE_SHARED_MEM_FOR_INPUT 0
+
 namespace syclexp = sycl::ext::oneapi::experimental;
 
 namespace popsift {
@@ -21,8 +23,7 @@ static inline void horiz_bindless_input(float* intermediate,
                                         const int write_x,
                                         int write_y,
                                         float read_x,
-                                        float read_y,
-                                        int base_pos)
+                                        float read_y)
 {
     if constexpr(REMAINDER_COL)
     {
@@ -32,35 +33,6 @@ static inline void horiz_bindless_input(float* intermediate,
 
     float out = 0.0f;
 
-    // #pragma unroll
-    //     for(int offset = span; offset > 0; offset--)
-    //     {
-    //         const float g = filter[offset];
-    //         const float offrel = float(offset) / dst_w; // relative offset
-    //         const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
-    //         const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
-    //         out += ((v1 + v2) * g);
-    //     }
-    //
-    //     const float& g = filter[0];
-    //     const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
-    //     out += (v3 * g);
-    //
-    //     // if(write_x < 120 && write_x > 110 && write_y < 120 && write_y > 110)
-    //     if(write_x < 900 && write_x > 890 && write_y < 500 && write_y > 490)
-    //     {
-    //         syclexp::printf("write(%d, %d) --> out = %f -- read_x = %f - read_y = %f -- wave bindless\n",
-    //                         write_x,
-    //                         write_y,
-    //                         out,
-    //                         read_x,
-    //                         read_y);
-    //     }
-    //
-    //     intermediate[write_x + write_y * dst_w] = out * 255.0f;
-
-#if true
-
 #pragma unroll
     for(int offset = span; offset > 0; offset--)
     {
@@ -69,62 +41,13 @@ static inline void horiz_bindless_input(float* intermediate,
         const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
         const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
         out += ((v1 + v2) * g);
-
-        // const float v1 = buffer[base_pos - offset];
-        // const float v2 = buffer[base_pos + offset];
-        // out += ((v1 + v2) * g);
     }
 
     const float& g = filter[0];
     const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
     out += (v3 * g);
-    // out += (buffer[base_pos] * filter[0]);
-
-    // if(write_x < 120 && write_x > 110 && write_y < 120 && write_y > 110)
-    // if(write_x < 900 && write_x > 890 && write_y < 500 && write_y > 490)
-    // {
-    //     syclexp::printf("write(%d, %d) --> out = %f -- read_x = %f - read_y = %f wave bindless\n",
-    //                     write_x,
-    //                     write_y,
-    //                     out,
-    //                     read_x,
-    //                     read_y);
-    // }
 
     intermediate[write_x + write_y * dst_w] = out * 255.0f;
-#endif
-
-    // #pragma unroll
-    //     for(int offset = span; offset > 1; offset--)
-    //     {
-    //         const float g = filter[offset];
-    //         const float offrel = float(offset) / dst_w; // relative offset
-    //         const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
-    //         const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
-    //         out += ((v1 + v2) * g);
-    //
-    //         // const float v1 = buffer[base_pos - offset];
-    //         // const float v2 = buffer[base_pos + offset];
-    //         // out += ((v1 + v2) * g);
-    //     }
-    //
-    //     const float& g = filter[0];
-    //     const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
-    //     out += (v3 * g);
-    //     // out += (buffer[base_pos] * filter[0]);
-    //
-    //     // if(write_x < 120 && write_x > 110 && write_y < 120 && write_y > 110)
-    //     if(write_x < 900 && write_x > 890 && write_y < 500 && write_y > 490)
-    //     {
-    //         syclexp::printf("write(%d, %d) --> out = %f -- read_x = %f - read_y = %f wave bindless\n",
-    //                         write_x,
-    //                         write_y,
-    //                         out,
-    //                         read_x,
-    //                         read_y);
-    //     }
-    //
-    //     intermediate[write_x + write_y * dst_w] = out * 255.0f;
 }
 
 template<bool REMAINDER_COL>
@@ -149,26 +72,13 @@ static inline void horiz_local_mem(float* intermediate,
     for(int offset = span; offset > 0; offset--)
     {
         const float g = filter[offset];
-        // const float offrel = float(offset) / dst_w; // relative offset
-        // const float v1 = syclexp::sample_image<float>(src, sycl::float2{read_x - offrel, read_y});
-        // const float v2 = syclexp::sample_image<float>(src, sycl::float2{read_x + offrel, read_y});
-        // out += ((v1 + v2) * g);
 
         const float v1 = buffer[base_pos - offset];
         const float v2 = buffer[base_pos + offset];
         out += ((v1 + v2) * g);
     }
 
-    // const float& g = filter[0];
-    // const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
-    // out += (v3 * g);
     out += (buffer[base_pos] * filter[0]);
-
-    // if(write_x < 120 && write_x > 110 && write_y < 120 && write_y > 110)
-    // if(write_x < 900 && write_x > 890 && write_y < 500 && write_y > 490)
-    // {
-    //     syclexp::printf("write(%d, %d) --> out = %f -- wave local mem\n", write_x, write_y, out);
-    // }
 
     intermediate[write_x + write_y * dst_w] = out * 255.0f;
 }
@@ -398,10 +308,194 @@ namespace normalizedSource {
 // One by one results in two more registers being used...
 #define COMPUTE_ONE_BY_ONE 0 // If true we do out += (above * g); out += (below * g); else out += ((above + below) * g);
 
+template<bool REMAINDER_COL, bool REMAINDER_ROW>
+static inline void horiz_persistent_bindless(syclexp::sampled_image_handle src,
+                                             float* intermediate,
+                                             // sycl::local_accessor<float, 1> buffer,
+                                             // popsift::GaussInfo* d_gauss,
+                                             const float* filter,
+                                             const int span,
+                                             const float shift,
+                                             const int sg_region_height,
+                                             const int dst_w,
+                                             const int dst_h,
+                                             const int write_x,
+                                             int& write_y,
+                                             // int level,
+                                             sycl::nd_item<2>& it)
+// (float* intermediate,
+//                                     sycl::local_accessor<float, 1> buffer,
+//                                     const float* filter,
+//                                     const int span,
+//                                     const int dst_w,
+//                                     const int write_x,
+//                                     int write_y,
+//                                     int base_pos)
+{
+    // #if REMAINDER_COL
+    //     if(write_x >= dst_w)
+    //         return;
+    // #endif
+    //
+    //     float out = 0.0f;
+    //
+    // #pragma unroll
+    //     for(int offset = span; offset > 0; offset--)
+    //     {
+    //         const float g = filter[offset];
+    //
+    //         const float v1 = buffer[base_pos - offset];
+    //         const float v2 = buffer[base_pos + offset];
+    //         out += ((v1 + v2) * g);
+    //     }
+    //
+    //     out += (buffer[base_pos] * filter[0]);
+    //
+    //     intermediate[write_x + write_y * dst_w] = out * 255.0f;
+
+    // #####################################################
+    // End of simple vert function
+    // #####################################################
+
+    // #if INITIAL // ALWAYS IS
+    //     const float* filter_input = &d_gauss->dd.filter[0];
+    //     const int span_input = d_gauss->dd.span[0];
+    // #else
+    //
+    //     const float* filter = &d_gauss->inc.filter[level * GAUSS_ALIGN];
+    //     const int span = d_gauss->inc.span[level];
+    //
+    // #if MINIMAL_WINDOW
+    //     const int span_width = d_gauss->inc.span[0] - 1;
+    // #else
+    //     const int span_width = d_gauss->inc.span[0];
+    // #endif
+
+    // #endif
+
+    const float read_x = (write_x + shift) / dst_w;
+    float read_y = (write_y + shift) / dst_h;
+
+    // Not sure if there is a point of using this for input level -- As we can't async load
+    const int base_pos = (it.get_local_range(1) + (span << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1) + span;
+
+    // Second buffer row (there are two per row in the work-group)
+    const int base_pos_2 =
+      (it.get_local_range(1) + (span << 1)) * ((it.get_local_id(0) << 1) + 1) + it.get_local_id(1) + span;
+
+    // const int rel_span = ((1 / dst_w) * span); // Relative span value used for offset
+    const float rel_span = float(span) / dst_w; // Relative span value used for offset
+
+    // for(int i = 0; i < sg_region.height; i++)
+
+    // const float read_y_increment = 1.0f / dst_h; // Does not result in the same as recompute due to
+    // accumulation of floating point error
+
+    int loop_end = write_y + sg_region_height;
+
+    if constexpr(REMAINDER_ROW)
+    {
+        if(loop_end >= dst_h)
+            loop_end = dst_h; // Limit to last pixel
+    }
+
+#if USE_ROOT_GROUP
+    auto root = it.ext_oneapi_get_root_group(); // Root group all work_items running kernel
+#endif
+    for(; write_y < loop_end; ++write_y) // Modifies write_y want that later
+    {
+        // read_y += read_y_increment; // Floating point error accumulation hence not using
+        read_y = (write_y + shift) / dst_h;
+
+#if USE_SHARED_MEM_FOR_INPUT
+        buffer[base_pos] = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y}); // every one does this
+
+        if(it.get_local_id(1) < span)
+        {
+            // load left side (lenght of span)
+            buffer[base_pos - span] = syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
+        }
+        else if(it.get_local_id(1) >= (it.get_local_range(1) - span))
+        {
+            buffer[base_pos + span] = syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
+        }
+
+        // Here would be good to do async load of next row but does not seem to be possible to do with bindless
+        // images But for remaining parts it will be not sure if we should use local mem for this part however
+        sycl::group_barrier(it.get_group()); // Ensure all is loaded before we do horiz
+
+        horiz_local_mem<REMAINDER_COL>(intermediate, buffer, filter, span, dst_w, write_x, write_y, base_pos);
+
+#else
+        horiz_bindless_input<REMAINDER_COL>(intermediate, src, filter, span, dst_w, write_x, write_y, read_x, read_y);
+#endif
+        // Second row buffer in use: Same as above otherwise
+
+        write_y++;
+        if(write_y >= loop_end)
+            break;
+
+        // read_y += read_y_increment; // Floating point error accumulation hence not using
+        read_y = (write_y + shift) / dst_h;
+
+#if USE_SHARED_MEM_FOR_INPUT
+        buffer[base_pos_2] = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
+
+        if(it.get_local_id(1) < span)
+        {
+            buffer[base_pos_2 - span] = syclexp::sample_image<float>(src, sycl::float2{read_x - rel_span, read_y});
+        }
+        else if(it.get_local_id(1) >= (it.get_local_range(1) - span))
+        {
+            buffer[base_pos_2 + span] = syclexp::sample_image<float>(src, sycl::float2{read_x + rel_span, read_y});
+        }
+
+        sycl::group_barrier(it.get_group());
+
+        horiz_local_mem<REMAINDER_COL>(intermediate, buffer, filter, span, dst_w, write_x, write_y, base_pos_2);
+#else
+        horiz_bindless_input<REMAINDER_COL>(intermediate, src, filter, span, dst_w, write_x, write_y, read_x, read_y);
+#endif
+    }
+    // At end of this loop write_y will be equal to loop_end or smaller but it wil always be one too large hence
+    // need to subtract one
+    write_y--;
+
+    // DONE WITH INITIAL HORIZ
+
+    //     // Synchronize and then do horiz
+    // #define USE_FULL_SYNC 0
+    // #if USE_FULL_SYNC
+    //     // Ensures all work groups have completed horiz before moving on to vert
+    //     full_sync(sg_region.wg_sync_state, it);
+    //
+    //     // if(it.get_local_linear_id() == 0)
+    //     // {
+    //     //     syclexp::printf("WG_ID %d --> Num_wg = %d\n",
+    //     //                     static_cast<int>(it.get_group_linear_id()),
+    //     //                     static_cast<int>(it.get_group_range(0) * it.get_group_range(1)));
+    //     // }
+    //     //
+    //     // horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
+    // #else
+    //     // Only necessary negbours (top and bottom) are waited on
+    //     horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
+    // #endif
+    //
+    //     // #if false
+    //     // Start doing Vert then later we do horiz on data_array so not using sampled image then we can use async
+    //     // load of next row Do vert for this one then make loop over the levels for the rest with horiz from prev
+    //     // and vert from intermediate
+    //
+    //     // Vert
+    //     sycl::group_barrier(it.get_group());
+}
+
 // template<bool LAST_LVL, bool LVL_ZERO>
 
 // MBY TEST ASYNC WRITE OF BOTH DOG AND DATA
 
+template<bool DO_DOG, bool FINAL_LVL>
 static inline void vert_persistent(float** data_array,
                                    float** dog_array,
                                    float* intermediate,
@@ -451,13 +545,20 @@ static inline void vert_persistent(float** data_array,
             }
             out += intermediate[self_pos] * d_gauss->inc.filter[0]; // Always safe
 
-            data_array[0][self_pos] = out;
+#if !FINAL_LVL
+            data_array[level][self_pos] = out;
+#endif
 
+#if DO_DOG
+            prev_val = data_array[level - 1][self_pos];
+            dog_array[level - 1][self_pos] = out - prev_val;
+#endif
             self_pos -= dst_w;
         }
     }
 }
 
+// template<bool REMAINDER_COL, bool REMAINDER_ROW>
 class BuildOcaveSimple
 {
   private:
@@ -480,7 +581,7 @@ class BuildOcaveSimple
                      float* intermediate,
                      popsift::GaussInfo* d_gauss,
                      // sycl::local_accessor<float, 1> buffer,
-                     const sg_region_blocks sg_region,
+                     const sg_region_blocks sg_region, // THINK WE ONLY NEED THE HEIGHT
                      const int dst_w,
                      const int dst_h,
                      const float shift,
@@ -503,11 +604,23 @@ class BuildOcaveSimple
         const int write_x = it.get_global_id(1);
         int write_y = it.get_global_id(0) * sg_region.height; // Changes in normal block
 
-        // Simulate that we have done horiz before vert
-        write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1); // Simulating horiz run with it's end
+        const float* filter_input = &d_gauss->dd.filter[0];
 
-        vert_persistent(
-          data_array, dog_array, intermediate, d_gauss, sg_region.height, dst_w, dst_h, write_x, write_y, 0, it);
+#if MINIMAL_WINDOW
+        const int span_input = d_gauss->inc.span[0] - 1;
+#else
+        const int span_input = d_gauss->inc.span[0];
+#endif
+
+        // horiz_persistent_bindless<REMAINDER_COL, REMAINDER_ROW>(
+        horiz_persistent_bindless<true, true>(
+          src, intermediate, filter_input, span_input, shift, sg_region.height, dst_w, dst_h, write_x, write_y, it);
+
+        // Simulate that we have done horiz before vert
+        // write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1); // Simulating horiz run with it's end
+
+        // vert_persistent<false, false>(
+        //   data_array, dog_array, intermediate, d_gauss, sg_region.height, dst_w, dst_h, write_x, write_y, 0, it);
     }
 };
 
@@ -523,8 +636,6 @@ class BuildOcaveSimple
 #define DO_VERT 1
 
 #define DEBUG 0
-
-#define USE_SHARED_MEM_FOR_INPUT 1
 
 // Uses prefetch of 2 rows for vert
 template<bool REMAINDER_COL, bool REMAINDER_ROW>
