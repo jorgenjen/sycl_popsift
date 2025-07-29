@@ -2304,7 +2304,8 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
             // BUG: DOES NOT WORK ON SECOND RUN(IMAGE) DUE TO NOT RESETING THE sg_region memory used to do atomic
             // counting hence counter is reached instantly on second go and does not do shit
 
-            return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
+            sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
+                // return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
                 cgh.depends_on({d_gauss_write, img_write, sg_region._zeroed_event});
 
                 // auto buffer = sycl::local_accessor<float, 1>(sg_region.local_mem_size, cgh);
@@ -2321,11 +2322,13 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
                                                                      shift,
                                                                      _levels));
             });
+
+            sg_region.zero_sync_state();
+            return e;
         }
 
         else if(col && row)
         {
-            printf("We doing col and row whop whop\n");
             // sycl::event e = _device_queue.submit([&](sycl::handler& cgh) {
             return _device_queue.submit([&](sycl::handler& cgh) { // for TEST
                 cgh.depends_on({d_gauss_write, img_write, sg_region._zeroed_event});

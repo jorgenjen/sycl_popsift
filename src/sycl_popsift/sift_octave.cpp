@@ -152,7 +152,6 @@ void Octave::free_arrays()
 
 void Octave::resetDimensions(const Config& conf, int w, int h)
 {
-    // Config changes need's to be responded to I think during runtime
     if(_levels - 3 != conf.levels) // conf.levels is searchable levels so there are 3 more octave levels
     {
         free_arrays();

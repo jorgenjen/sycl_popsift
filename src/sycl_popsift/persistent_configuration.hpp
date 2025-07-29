@@ -53,6 +53,7 @@ struct persistent_pyramid_octave_config
 
     sycl::queue _device_queue; // for array when we have that and device info (mem size)
     // To make it self contained
+
     void reconfigure(int width, int height, int largest_span);
 
     persistent_pyramid_octave_config(sycl::queue Q);
@@ -62,6 +63,11 @@ struct persistent_pyramid_octave_config
     // unsigned char* wg_sync_state; // work group status flags for synchronization
     int persistent_sync_size;
     sycl::event _zeroed_event; // To ensure the memset is done before we start incrementing
+
+    inline void zero_sync_state()
+    {
+        _zeroed_event = _device_queue.memset(sg_block.wg_sync_state, 0, sizeof(int) * persistent_sync_size);
+    }
 
     ~persistent_pyramid_octave_config();
 #endif

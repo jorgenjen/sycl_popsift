@@ -356,11 +356,35 @@ void persistent_pyramid_octave_config::reconfigure(int width, int height, int la
 #if !USE_ROOT_GROUP
     if(use_persistent_block)
     {
+#if FULL_SYNC
+        int new_sync_size = largest_span << 1; // Need two sync positions per
+        if(new_sync_size > persistent_sync_size)
+        {
+            if(persistent_sync_size != 0)
+            {
+                sycl::free(sg_block.wg_sync_state, _device_queue);
+            }
+
+            sg_block.wg_sync_state =
+              sycl_common::malloc_devT<int>(new_sync_size,
+                                            __FILE__,
+                                            __LINE__,
+                                            "Failed to allocate persistent blocks synchronization array",
+                                            _device_queue);
+            _zeroed_event = _device_queue.memset(sg_block.wg_sync_state, 0, sizeof(int) * new_sync_size);
+
+            persistent_sync_size = new_sync_size; // Update value
+        }
+
+#else
         sycl::range<2> work_group_grid = global / local;
         size_t wg_grid_size = work_group_grid.size();
         if(wg_grid_size > persistent_sync_size)
         {
-            sycl::free(sg_block.wg_sync_state, _device_queue);
+            if(persistent_sync_size != 0)
+            {
+                sycl::free(sg_block.wg_sync_state, _device_queue);
+            }
             sg_block.wg_sync_state =
               sycl_common::malloc_devT<int>(work_group_grid.size(),
                                             __FILE__,
@@ -371,6 +395,7 @@ void persistent_pyramid_octave_config::reconfigure(int width, int height, int la
 
             persistent_sync_size = wg_grid_size; // Update value
         }
+#endif
     }
 #endif
 }
