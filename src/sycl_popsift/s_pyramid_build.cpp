@@ -233,8 +233,21 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         //
 
-                        // oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
+                        oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
                         //
+
+                        for(int i = 0; i < _levels - 1; ++i)
+                        {
+                            printf("level %d -- ", i);
+                            popsift::sycl_common::print_region(oct_obj.getDogArrayHost()[i],
+                                                               "DoG PERSISTENT\n",
+                                                               0,
+                                                               8,
+                                                               0,
+                                                               16,
+                                                               oct_obj.getWidth(),
+                                                               _device_queue);
+                        }
 
                         // build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer).wait();
 
@@ -392,12 +405,23 @@ void Pyramid::build_pyramid(const Config& conf,
 #endif
     {
         _device_queue.wait(); // REMOVE
-        for(int octave = 0; octave < _num_octaves; octave++)
-        // for(int octave = 1; octave < _num_octaves; octave++) // Skip first one for this test
+        // for(int octave = 0; octave < _num_octaves; octave++)
+        for(int octave = 1; octave < _num_octaves; octave++) // Skip first one for this test
         {
             Octave& oct_obj = _octaves[octave];
 
             oct_obj._dog_done_event = dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]);
+
+            if(octave == 0)
+            {
+                _device_queue.wait();
+                for(int i = 0; i < _levels - 1; ++i)
+                {
+                    printf("level %d -- ", i);
+                    popsift::sycl_common::print_region(
+                      oct_obj.getDogArrayHost()[i], "DoG NORMAL\n", 0, 8, 0, 16, oct_obj.getWidth(), _device_queue);
+                }
+            }
         }
     }
 }

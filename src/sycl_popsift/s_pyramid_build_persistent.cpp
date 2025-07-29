@@ -619,14 +619,23 @@ static inline void vert_persistent(float** data_array,
             // out += intermediate[self_pos] * d_gauss->inc.filter[0]; // Always safe
             out += intermediate[self_pos] * filter[0]; // Always safe
 
-#if !FINAL_LVL
-            data_array[level][self_pos] = out; // guarded by outer if
-#endif
+            // BUG: Not doing this for final level results in the results to be wrong... (FIX) Should not be needed
+            // this is due to currently we are not using the DoG that we store here and rely on DoG normal
 
-#if DO_DOG
-            prev_val = data_array[level - 1][self_pos];
-            dog_array[level - 1][self_pos] = out - prev_val;
-#endif
+            // if constexpr(!FINAL_LVL)
+            // {
+            data_array[level][self_pos] = out; // guarded by outer if
+            // }
+
+            if constexpr(DO_DOG)
+            {
+                float prev_val = data_array[level - 1][self_pos];
+                // if(it.get_global_linear_id() == 0)
+                // {
+                //     syclexp::printf("Running boys prev = %f -- cur = %f ", prev_val, out);
+                // }
+                dog_array[level - 1][self_pos] = out - prev_val;
+            }
             self_pos -= dst_w;
         }
     }
