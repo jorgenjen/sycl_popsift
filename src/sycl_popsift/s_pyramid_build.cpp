@@ -226,8 +226,30 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         // Store event in the level that is the dependency for downscale from prev octave for next
                         // octave so it works with normal building mode
+                        //
+                        //
                         oct_obj._level_complete_events[_levels - PREV_LEVEL] =
                           build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+                        //
+
+                        // oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
+                        //
+
+                        // build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer).wait();
+
+                        // for(int i = 0; i < _levels; ++i)
+                        // {
+                        //     printf("Level %d/%d -- ", i, _levels);
+                        //     popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[i],
+                        //                                        "persistent\n",
+                        //                                        0,
+                        //                                        8,
+                        //                                        0,
+                        //                                        16,
+                        //                                        oct_obj.getWidth(),
+                        //                                        _device_queue);
+                        // }
 
 #if QUEUE_PROFILING
                         _input_horiz_event = horiz;
@@ -287,6 +309,29 @@ void Pyramid::build_pyramid(const Config& conf,
                         // _input_horiz_event = oct_obj._level_complete_events[0]; // For one wave (both horiz and vert)
 
                         // oct_obj._level_complete_events[0].wait(); // Just for testing
+
+                        //
+
+                        // ########################################## HERERE RERERERERER
+
+                        // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+
+                        // oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+
+                        // _device_queue.wait();
+                        // popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[0],
+                        //                                    "NORMAL -- Level 0\n",
+                        //                                    0,
+                        //                                    8,
+                        //                                    0,
+                        //                                    16,
+                        //                                    oct_obj.getWidth(),
+                        //                                    _device_queue);
+
+                        // ########################################## DONE DONE DONE
+
+                        //
+
                         // oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
 
                         // oct_obj._level_complete_events[0].wait();
@@ -308,7 +353,6 @@ void Pyramid::build_pyramid(const Config& conf,
                 else
                 {
                     // Depends on set level event from prev level
-                    // sycl::event horiz;
 
                     if(octave == 0)
                     {
@@ -322,17 +366,21 @@ void Pyramid::build_pyramid(const Config& conf,
                         sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
 
                         oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
+
+                        // if(octave == 0)
+                        // {
+                        //     _device_queue.wait();
+                        //     printf("level %d -- ", level);
+                        //     popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[level],
+                        //                                        "NORMAL\n",
+                        //                                        0,
+                        //                                        8,
+                        //                                        0,
+                        //                                        16,
+                        //                                        oct_obj.getWidth(),
+                        //                                        _device_queue);
+                        // }
                     }
-                    // if(octave != 0 || level != 1)
-                    // {
-                    //     // Not do for first octave level one for test
-                    //     printf("Running for octave %d and level = %d\n", octave, level);
-                    //     horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
-                    // }
-
-                    // sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
-
-                    // oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
                 }
             }
         }
@@ -343,8 +391,9 @@ void Pyramid::build_pyramid(const Config& conf,
     // if(!use_persistent_block) // Don't need DoG kernel if using persistent block as it's embedded
 #endif
     {
-        // for(int octave = 0; octave < _num_octaves; octave++)
-        for(int octave = 1; octave < _num_octaves; octave++) // Skip first one for this test
+        _device_queue.wait(); // REMOVE
+        for(int octave = 0; octave < _num_octaves; octave++)
+        // for(int octave = 1; octave < _num_octaves; octave++) // Skip first one for this test
         {
             Octave& oct_obj = _octaves[octave];
 

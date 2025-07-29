@@ -633,7 +633,7 @@ static inline void vert_persistent(float** data_array,
 }
 
 // template<bool REMAINDER_COL, bool REMAINDER_ROW>
-class BuildOcaveSimple
+class BuildOctaveSimple
 {
   private:
     syclexp::sampled_image_handle src;
@@ -649,17 +649,17 @@ class BuildOcaveSimple
     const int levels;
 
   public:
-    BuildOcaveSimple(syclexp::sampled_image_handle src,
-                     float** data_array,
-                     float** dog_array,
-                     float* intermediate,
-                     popsift::GaussInfo* d_gauss,
-                     // sycl::local_accessor<float, 1> buffer,
-                     const sg_region_blocks sg_region, // THINK WE ONLY NEED THE HEIGHT
-                     const int dst_w,
-                     const int dst_h,
-                     const float shift,
-                     const int levels)
+    BuildOctaveSimple(syclexp::sampled_image_handle src,
+                      float** data_array,
+                      float** dog_array,
+                      float* intermediate,
+                      popsift::GaussInfo* d_gauss,
+                      // sycl::local_accessor<float, 1> buffer,
+                      const sg_region_blocks sg_region, // THINK WE ONLY NEED THE HEIGHT
+                      const int dst_w,
+                      const int dst_h,
+                      const float shift,
+                      const int levels)
 
       : src(src)
       , data_array(data_array)
@@ -724,6 +724,7 @@ class BuildOcaveSimple
         full_sync(sg_region.wg_sync_state, it, 1);
 
         for(int lvl = 1; lvl < (levels - 1); ++lvl) // Stop before final level
+        // for(int lvl = 1; lvl < levels; ++lvl)
         {
             filter += GAUSS_ALIGN; // Move to next level (same as level * GAUSS_ALIGN)
             horiz_persistent<true>(intermediate,
@@ -739,7 +740,7 @@ class BuildOcaveSimple
                                    dst_h,
                                    write_x,
                                    write_y,
-                                   0);
+                                   lvl - 1);
             full_sync(sg_region.wg_sync_state, it, lvl << 1);
 
             vert_persistent<true, false>(data_array,
@@ -756,12 +757,14 @@ class BuildOcaveSimple
                                          dst_h,
                                          write_x,
                                          write_y,
-                                         0,
+                                         lvl,
                                          it);
             full_sync(sg_region.wg_sync_state, it, (lvl << 1) + 1);
         }
 
         // Do the final level
+
+        filter += GAUSS_ALIGN; // Move to next level (same as level * GAUSS_ALIGN)
 
         horiz_persistent<true>(intermediate,
                                data_array,
@@ -776,7 +779,8 @@ class BuildOcaveSimple
                                dst_h,
                                write_x,
                                write_y,
-                               0);
+                               levels - 2);
+
         full_sync(sg_region.wg_sync_state, it, (levels - 1) << 1);
 
         vert_persistent<true, true>(data_array,
@@ -793,7 +797,7 @@ class BuildOcaveSimple
                                     dst_h,
                                     write_x,
                                     write_y,
-                                    0,
+                                    levels - 1,
                                     it);
     }
 };
@@ -2297,16 +2301,16 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
                 // auto buffer = sycl::local_accessor<float, 1>(sg_region.local_mem_size, cgh);
 
                 cgh.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
-                                 normalizedSource::BuildOcaveSimple(base->getInputImage(),
-                                                                    oct_obj.getDataArray(),
-                                                                    oct_obj.getDogArray(),
-                                                                    oct_obj.getIntermediate(),
-                                                                    _d_gauss,
-                                                                    sg_region.sg_block,
-                                                                    width,
-                                                                    height,
-                                                                    shift,
-                                                                    _levels));
+                                 normalizedSource::BuildOctaveSimple(base->getInputImage(),
+                                                                     oct_obj.getDataArray(),
+                                                                     oct_obj.getDogArray(),
+                                                                     oct_obj.getIntermediate(),
+                                                                     _d_gauss,
+                                                                     sg_region.sg_block,
+                                                                     width,
+                                                                     height,
+                                                                     shift,
+                                                                     _levels));
             });
         }
 
