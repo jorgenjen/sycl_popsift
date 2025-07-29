@@ -1,7 +1,7 @@
 #define USE_ROOT_GROUP 0 // If we use root_group for synchonization betweeen horiz and vert
 
 // Wheter to use full sync or partial sync (From experiments partiall sync requires too many registers to work)
-#define FULL_SYNC 0
+#define FULL_SYNC 1
 
 #define MULTI_ROW_WG 0 // NOT IN USE
 

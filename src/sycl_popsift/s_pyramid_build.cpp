@@ -238,8 +238,8 @@ void Pyramid::build_pyramid(const Config& conf,
                         //
 
                         // oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
+                        // //
                         //
-
                         // for(int i = 0; i < _levels - 1; ++i)
                         // {
                         //     printf("level %d -- ", i);

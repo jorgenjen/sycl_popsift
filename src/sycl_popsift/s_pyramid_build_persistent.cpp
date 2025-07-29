@@ -87,7 +87,8 @@ static inline void horiz_local_mem(float* intermediate,
 #define USE_ATOMIC_SYNC 1 // For using atomic ref on the work-group state used for synchronizatio
 
 // synchronizes vert execution so that ll data needed to do horiz is available and correct
-static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it, int wait_on_state)
+// static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it, int wait_on_state)
+static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it)
 {
 #if USE_ROOT_GROUP
     sycl::group_barrier(root);
@@ -96,19 +97,32 @@ static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it,
     sycl::group group = it.get_group();
     sycl::group_barrier(group); // Ensure all have done horiz
 
+    // Ensure those writes are visible to all work-groups
+    sycl::atomic_fence(sycl::memory_order_seq_cst, sycl::memory_scope_device);
+
     if(it.get_local_linear_id() == 0) // only one per work_group
     {
         // Convert to int to use less registers (might help)
         int group_pos = it.get_group(1);
         int group_final_index = it.get_group_range(1) - 1;
         int group_linear_pos = it.get_group_linear_id();
+
+        // int my_index = it.get_group_linear_id();
 #if USE_ATOMIC_SYNC
         // Need to be a 4 byte wide data type like int or unsigned int for this to work...
+        // sycl::atomic_ref<int,
+        //                  // sycl::memory_order_relaxed,
+        //                  sycl::memory_order_seq_cst,
+        //                  sycl::memory_scope_device,
+        //                  sycl::access::address_space::global_space>(wg_sync_state[group_linear_pos])++;
+
         sycl::atomic_ref<int,
-                         // sycl::memory_order_relaxed,
                          sycl::memory_order_seq_cst,
                          sycl::memory_scope_device,
-                         sycl::access::address_space::global_space>(wg_sync_state[group_linear_pos])++;
+                         sycl::access::address_space::global_space>
+          my_counter(wg_sync_state[group_linear_pos]);
+        int tresh = my_counter.fetch_add(1);
+        tresh++; // This is the border value
 
         // Active wait-- spin lock
         if(group_pos == 0)
@@ -122,7 +136,7 @@ static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it,
                              sycl::access::address_space::global_space>
               right(wg_sync_state[group_linear_pos + 1]);
 
-            while(right < wait_on_state) {}
+            while(right.load() < tresh) {}
         }
         else if(group_pos == group_final_index)
         {
@@ -134,7 +148,7 @@ static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it,
                              sycl::memory_scope_device,
                              sycl::access::address_space::global_space>
               left(wg_sync_state[group_linear_pos - 1]);
-            while(left < wait_on_state) {}
+            while(left.load() < tresh) {}
         }
         else
         {
@@ -146,6 +160,7 @@ static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it,
                              sycl::access::address_space::global_space>
               left(wg_sync_state[group_linear_pos - 1]);
 
+            while(left.load() < tresh) {} // Spin wait for left
             sycl::atomic_ref<int,
                              // sycl::memory_order_relaxed,
                              sycl::memory_order_seq_cst,
@@ -153,7 +168,8 @@ static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it,
                              sycl::access::address_space::global_space>
               right(wg_sync_state[group_linear_pos + 1]);
 
-            while(left < wait_on_state && right < wait_on_state) {}
+            while(right.load() < tresh) {} // Spin wait for right
+            // while(left < wait_on_state && right < wait_on_state) {}
         }
 
 #else
@@ -192,6 +208,56 @@ static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it,
     sycl::group_barrier(group); // Wait for wg leader to finish spin lock ensuring dependencies are done
 #endif
 }
+
+// static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it, int wait_on_state)
+// {
+// #if USE_ROOT_GROUP
+//     auto root = it.ext_oneapi_get_root_group(); // Root group all work_items running kernel
+//     sycl::group_barrier(root);
+// #else
+//     sycl::group group = it.get_group();
+//     sycl::group_barrier(group); // all threads in WG finish horiz step
+//
+//     // Ensure those writes are visible to all work-groups
+//     // sycl::atomic_fence(sycl::memory_order_seq_cst, sycl::memory_scope_device);
+//
+//     if(it.get_local_linear_id() == 0)
+//     {
+//         int gy = it.get_group(0); // vertical group index
+//         int gx = it.get_group(1); // horizontal group index
+//         // int gy_max = it.get_group_range(0) - 1;
+//         int gx_max = it.get_group_range(1) - 1;
+//
+//         int my_index = it.get_group_linear_id();
+//
+//         // Signal this WG is ready
+//         sycl::atomic_ref<int,
+//                          sycl::memory_order_seq_cst,
+//                          sycl::memory_scope_device,
+//                          sycl::access::address_space::global_space>
+//           my_counter(wg_sync_state[my_index]);
+//         my_counter.fetch_add(1);
+//
+//         auto wait_for = [&](int idx) {
+//             sycl::atomic_ref<int,
+//                              sycl::memory_order_seq_cst,
+//                              sycl::memory_scope_device,
+//                              sycl::access::address_space::global_space>
+//               counter(wg_sync_state[idx]);
+//             while(counter.load() < wait_on_state) { /* spin */ }
+//         };
+//
+//         // Wait on required neighbors
+//         if(gx > 0)
+//             wait_for(gy * it.get_group_range(1) + gx - 1); // left
+//         if(gx < gx_max)
+//             wait_for(gy * it.get_group_range(1) + gx + 1); // right
+//     }
+//
+//     sycl::group_barrier(group); // ensure WG leader waited before others continue
+// #endif
+// }
+
 static inline void full_sync(int* wg_sync_state, sycl::nd_item<2>& it, int level)
 {
 #if USE_ROOT_GROUP
@@ -207,7 +273,8 @@ static inline void full_sync(int* wg_sync_state, sycl::nd_item<2>& it, int level
         // Need to be a 4 byte wide data type like int or unsigned int for this to work...
         sycl::atomic_ref<int,
                          // sycl::memory_order_relaxed,
-                         sycl::memory_order_seq_cst,
+                         sycl::memory_order_acq_rel,
+                         // sycl::memory_order_seq_cst,
                          sycl::memory_scope_device,
                          sycl::access::address_space::global_space>(wg_sync_state[level])++;
         // All use zero so that we count everyone and once all have reached we continue
@@ -218,12 +285,11 @@ static inline void full_sync(int* wg_sync_state, sycl::nd_item<2>& it, int level
 
         sycl::atomic_ref<int,
                          // sycl::memory_order_relaxed,
-                         sycl::memory_order_seq_cst,
+                         sycl::memory_order_acq_rel,
+                         // sycl::memory_order_seq_cst,
                          sycl::memory_scope_device,
                          sycl::access::address_space::global_space>
           state(wg_sync_state[level]);
-
-        int copy_state = state;
 
         // Active wait -- spin lock (waits for everyone to have done horiz before moving on (SLOW))
         while(state < num_work_groups) {}
@@ -232,7 +298,8 @@ static inline void full_sync(int* wg_sync_state, sycl::nd_item<2>& it, int level
 #endif
 }
 // synchronizes horiz execution so that all data needed to do vert is available and correct
-static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it, int wait_on_state)
+// static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it, int wait_on_state)
+static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it)
 {
 #if USE_ROOT_GROUP
     auto root = it.ext_oneapi_get_root_group(); // Root group all work_items running kernel
@@ -241,6 +308,9 @@ static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it,
     // Use local hand crafted sychronization -- Volatile requires it all to be scheduled in one wave
     sycl::group group = it.get_group();
     sycl::group_barrier(group); // Ensure all have done horiz
+
+    // Ensure those writes are visible to all work-groups
+    sycl::atomic_fence(sycl::memory_order_seq_cst, sycl::memory_scope_device);
 
     if(it.get_local_linear_id() == 0) // only one per work_group
     {
@@ -251,11 +321,19 @@ static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it,
         int group_range_1 = it.get_group_range(1);
         // int group_linear_pos = it.get_group_linear_id();
         // Need to be a 4 byte wide data type like int or unsigned int for this to work...
+        // sycl::atomic_ref<int,
+        //                  // sycl::memory_order_relaxed,
+        //                  sycl::memory_order_seq_cst,
+        //                  sycl::memory_scope_device,
+        //                  sycl::access::address_space::global_space>(wg_sync_state[it.get_group_linear_id()])++;
+
         sycl::atomic_ref<int,
-                         // sycl::memory_order_relaxed,
                          sycl::memory_order_seq_cst,
                          sycl::memory_scope_device,
-                         sycl::access::address_space::global_space>(wg_sync_state[it.get_group_linear_id()])++;
+                         sycl::access::address_space::global_space>
+          my_counter(wg_sync_state[it.get_group_linear_id()]);
+        int tresh = my_counter.fetch_add(1);
+        tresh++; // This is the border value
 
         // Active wait-- spin lock
         if(group_pos_0 == 0)
@@ -269,11 +347,12 @@ static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it,
                              sycl::access::address_space::global_space>
               below(wg_sync_state[(group_pos_0 + 1) * group_range_1 + group_pos_1]);
 
-            while(below < wait_on_state) {}
+            // while(below.load() < wait_on_state) {}
+            while(below.load() < tresh) {}
         }
         else if(group_pos_0 == group_range_0 - 1)
         {
-            // right most border -- only depends on left
+            // bottom border -- only depends on above
 
             sycl::atomic_ref<int,
                              // sycl::memory_order_relaxed,
@@ -281,17 +360,20 @@ static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it,
                              sycl::memory_scope_device,
                              sycl::access::address_space::global_space>
               above(wg_sync_state[(group_pos_0 - 1) * group_range_1 + group_pos_1]);
-            while(above < wait_on_state) {}
+            // while(above.load() < wait_on_state) {}
+            while(above.load() < tresh) {}
         }
         else
         {
-            // Normal in the middle  -- depends on left and right
+            // Normal in the middle  -- depends on top; and bottom
             sycl::atomic_ref<int,
                              // sycl::memory_order_relaxed,
                              sycl::memory_order_seq_cst,
                              sycl::memory_scope_device,
                              sycl::access::address_space::global_space>
               above(wg_sync_state[(group_pos_0 - 1) * group_range_1 + group_pos_1]);
+
+            while(above.load() < tresh) {} // Spin for above
 
             sycl::atomic_ref<int,
                              // sycl::memory_order_relaxed,
@@ -300,12 +382,62 @@ static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it,
                              sycl::access::address_space::global_space>
               below(wg_sync_state[(group_pos_0 + 1) * group_range_1 + group_pos_1]);
 
-            while(above < wait_on_state && below < wait_on_state) {}
+            while(below.load() < tresh) {} // Spin for below
+            // while(above < wait_on_state && below < wait_on_state) {}
         }
     }
     sycl::group_barrier(group); // Wait for wg leader to finish spin lock ensuring dependencies are done
 #endif
 }
+
+// static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it, int wait_on_state)
+// {
+// #if USE_ROOT_GROUP
+//     auto root = it.ext_oneapi_get_root_group(); // Root group all work_items running kernel
+//     sycl::group_barrier(root);
+// #else
+//     sycl::group group = it.get_group();
+//     sycl::group_barrier(group); // all threads in WG finish horiz step
+//
+//     // Ensure those writes are visible to all work-groups
+//     // sycl::atomic_fence(sycl::memory_order_seq_cst, sycl::memory_scope_device);
+//
+//     if(it.get_local_linear_id() == 0)
+//     {
+//         int gy = it.get_group(0); // vertical group index
+//         int gx = it.get_group(1); // horizontal group index
+//         int gy_max = it.get_group_range(0) - 1;
+//         int gx_max = it.get_group_range(1) - 1;
+//
+//         int my_index = it.get_group_linear_id();
+//
+//         // Signal this WG is ready
+//         sycl::atomic_ref<int,
+//                          sycl::memory_order_seq_cst,
+//                          sycl::memory_scope_device,
+//                          sycl::access::address_space::global_space>
+//           my_counter(wg_sync_state[my_index]);
+//         my_counter.fetch_add(1);
+//
+//         auto wait_for = [&](int idx) {
+//             sycl::atomic_ref<int,
+//                              sycl::memory_order_seq_cst,
+//                              sycl::memory_scope_device,
+//                              sycl::access::address_space::global_space>
+//               counter(wg_sync_state[idx]);
+//             while(counter.load() < wait_on_state) { /* spin */ }
+//         };
+//
+//         // Wait on required neighbors
+//         if(gy > 0)
+//             wait_for((gy - 1) * it.get_group_range(1) + gx); // above
+//         if(gy < gy_max)
+//             wait_for((gy + 1) * it.get_group_range(1) + gx); // below
+//     }
+//
+//     sycl::group_barrier(group); // ensure WG leader waited before others continue
+// #endif
+// }
 
 namespace normalizedSource {
 
@@ -708,7 +840,8 @@ class BuildOctaveSimple
         full_sync(sg_region.wg_sync_state, it, 0);
 #else
 
-        horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
+        // horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
+        horiz_sync_for_vert(sg_region.wg_sync_state, it);
 #endif
 
 #if MINIMAL_WINDOW
@@ -737,7 +870,8 @@ class BuildOctaveSimple
         full_sync(sg_region.wg_sync_state, it, 1);
 #else
 
-        vert_sync_for_horiz(sg_region.wg_sync_state, it, 1);
+        // vert_sync_for_horiz(sg_region.wg_sync_state, it, 2);
+        vert_sync_for_horiz(sg_region.wg_sync_state, it);
 #endif
 
         for(int lvl = 1; lvl < (levels - 1); ++lvl) // Stop before final level
@@ -762,7 +896,8 @@ class BuildOctaveSimple
 #if FULL_SYNC
             full_sync(sg_region.wg_sync_state, it, lvl << 1);
 #else
-            horiz_sync_for_vert(sg_region.wg_sync_state, it, lvl << 1);
+            // horiz_sync_for_vert(sg_region.wg_sync_state, it, (lvl << 1) + 1);
+            horiz_sync_for_vert(sg_region.wg_sync_state, it);
 
 #endif
 
@@ -788,7 +923,8 @@ class BuildOctaveSimple
             full_sync(sg_region.wg_sync_state, it, (lvl << 1) + 1);
 #else
 
-            vert_sync_for_horiz(sg_region.wg_sync_state, it, (lvl << 1) + 1);
+            // vert_sync_for_horiz(sg_region.wg_sync_state, it, (lvl << 1) + 2);
+            vert_sync_for_horiz(sg_region.wg_sync_state, it);
 #endif
         }
 
@@ -816,7 +952,8 @@ class BuildOctaveSimple
         full_sync(sg_region.wg_sync_state, it, (levels - 1) << 1);
 #else
 
-        horiz_sync_for_vert(sg_region.wg_sync_state, it, (levels - 1) << 1);
+        // horiz_sync_for_vert(sg_region.wg_sync_state, it, (levels - 1) << 1);
+        horiz_sync_for_vert(sg_region.wg_sync_state, it);
 #endif
 
         vert_persistent<true, true>(data_array,
