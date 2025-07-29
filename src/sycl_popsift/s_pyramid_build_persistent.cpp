@@ -704,9 +704,12 @@ class BuildOctaveSimple
         // Simulate that we have done horiz before vert
         // write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1); // Simulating horiz run with it's end
 
-        // horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
-
+#if FULL_SYNC
         full_sync(sg_region.wg_sync_state, it, 0);
+#else
+
+        horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
+#endif
 
 #if MINIMAL_WINDOW
         const int span_initial = d_gauss->inc.span[0] - 1;
@@ -730,7 +733,12 @@ class BuildOctaveSimple
                                       0,
                                       it);
 
+#if FULL_SYNC
         full_sync(sg_region.wg_sync_state, it, 1);
+#else
+
+        vert_sync_for_horiz(sg_region.wg_sync_state, it, 1);
+#endif
 
         for(int lvl = 1; lvl < (levels - 1); ++lvl) // Stop before final level
         // for(int lvl = 1; lvl < levels; ++lvl)
@@ -750,7 +758,13 @@ class BuildOctaveSimple
                                    write_x,
                                    write_y,
                                    lvl - 1);
+
+#if FULL_SYNC
             full_sync(sg_region.wg_sync_state, it, lvl << 1);
+#else
+            horiz_sync_for_vert(sg_region.wg_sync_state, it, lvl << 1);
+
+#endif
 
             vert_persistent<true, false>(data_array,
                                          dog_array,
@@ -768,7 +782,14 @@ class BuildOctaveSimple
                                          write_y,
                                          lvl,
                                          it);
+            // full_sync(sg_region.wg_sync_state, it, (lvl << 1) + 1);
+
+#if FULL_SYNC
             full_sync(sg_region.wg_sync_state, it, (lvl << 1) + 1);
+#else
+
+            vert_sync_for_horiz(sg_region.wg_sync_state, it, (lvl << 1) + 1);
+#endif
         }
 
         // Do the final level
@@ -790,7 +811,13 @@ class BuildOctaveSimple
                                write_y,
                                levels - 2);
 
+        // full_sync(sg_region.wg_sync_state, it, (levels - 1) << 1);
+#if FULL_SYNC
         full_sync(sg_region.wg_sync_state, it, (levels - 1) << 1);
+#else
+
+        horiz_sync_for_vert(sg_region.wg_sync_state, it, (levels - 1) << 1);
+#endif
 
         vert_persistent<true, true>(data_array,
                                     dog_array,

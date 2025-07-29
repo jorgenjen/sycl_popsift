@@ -231,6 +231,10 @@ void Pyramid::build_pyramid(const Config& conf,
                         oct_obj._level_complete_events[_levels - PREV_LEVEL] =
                           build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
 
+                        // Copy so that it can be used for DoG kernel as well
+                        // oct_obj._level_complete_events[_levels - 1] =
+                        //   oct_obj._level_complete_events[_levels - PREV_LEVEL];
+
                         //
 
                         // oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
