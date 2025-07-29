@@ -222,7 +222,13 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
 
-                        sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+                        // sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+                        // Store event in the level that is the dependency for downscale from prev octave for next
+                        // octave so it works with normal building mode
+                        oct_obj._level_complete_events[_levels - PREV_LEVEL] =
+                          build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
 #if QUEUE_PROFILING
                         _input_horiz_event = horiz;
 // #if ONLY_HORIZ
@@ -273,7 +279,7 @@ void Pyramid::build_pyramid(const Config& conf,
                         // oct_obj._level_complete_events[0] =
                         //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
 
-                        oct_obj._level_complete_events[0] = horiz;
+                        // oct_obj._level_complete_events[0] = horiz;
 
                         // ##
                         //
@@ -302,9 +308,31 @@ void Pyramid::build_pyramid(const Config& conf,
                 else
                 {
                     // Depends on set level event from prev level
-                    sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
+                    // sycl::event horiz;
 
-                    oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
+                    if(octave == 0)
+                    {
+                        printf("Not running for Octave 0\n");
+                    }
+                    else
+                    {
+                        // printf("Running for octave %d and level = %d\n", octave, level);
+                        // horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
+
+                        sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
+
+                        oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
+                    }
+                    // if(octave != 0 || level != 1)
+                    // {
+                    //     // Not do for first octave level one for test
+                    //     printf("Running for octave %d and level = %d\n", octave, level);
+                    //     horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
+                    // }
+
+                    // sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
+
+                    // oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
                 }
             }
         }
@@ -315,7 +343,8 @@ void Pyramid::build_pyramid(const Config& conf,
     // if(!use_persistent_block) // Don't need DoG kernel if using persistent block as it's embedded
 #endif
     {
-        for(int octave = 0; octave < _num_octaves; octave++)
+        // for(int octave = 0; octave < _num_octaves; octave++)
+        for(int octave = 1; octave < _num_octaves; octave++) // Skip first one for this test
         {
             Octave& oct_obj = _octaves[octave];
 

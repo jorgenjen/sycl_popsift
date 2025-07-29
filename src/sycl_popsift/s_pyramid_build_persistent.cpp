@@ -3,6 +3,7 @@
 #include "sycl_popsift/persistent_config_macros.h" // If we are using root group or handcrafted wg syncrinozation
 #include "sycl_popsift/persistent_configuration.hpp"
 #include "sycl_popsift/popsift.hpp"
+#include "sycl_popsift/sift_constants.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 
 #include <iterator>
@@ -191,9 +192,12 @@ static inline void vert_sync_for_horiz(int* wg_sync_state, sycl::nd_item<2>& it,
     sycl::group_barrier(group); // Wait for wg leader to finish spin lock ensuring dependencies are done
 #endif
 }
-static inline void full_sync(int* wg_sync_state, sycl::nd_item<2>& it)
+static inline void full_sync(int* wg_sync_state, sycl::nd_item<2>& it, int level)
 {
-    // Just for testing waiting for all to do their thing
+#if USE_ROOT_GROUP
+    auto root = it.ext_oneapi_get_root_group(); // Root group all work_items running kernel
+    sycl::group_barrier(root);
+#else
 
     sycl::group group = it.get_group();
     sycl::group_barrier(group); // Ensure all have done horiz
@@ -205,7 +209,7 @@ static inline void full_sync(int* wg_sync_state, sycl::nd_item<2>& it)
                          // sycl::memory_order_relaxed,
                          sycl::memory_order_seq_cst,
                          sycl::memory_scope_device,
-                         sycl::access::address_space::global_space>(wg_sync_state[0])++;
+                         sycl::access::address_space::global_space>(wg_sync_state[level])++;
         // All use zero so that we count everyone and once all have reached we continue
 
         // Active wait-- spin lock
@@ -217,7 +221,7 @@ static inline void full_sync(int* wg_sync_state, sycl::nd_item<2>& it)
                          sycl::memory_order_seq_cst,
                          sycl::memory_scope_device,
                          sycl::access::address_space::global_space>
-          state(wg_sync_state[0]);
+          state(wg_sync_state[level]);
 
         int copy_state = state;
 
@@ -225,11 +229,13 @@ static inline void full_sync(int* wg_sync_state, sycl::nd_item<2>& it)
         while(state < num_work_groups) {}
     }
     sycl::group_barrier(group); // Wait for wg leader to finish spin lock ensuring dependencies are done
+#endif
 }
 // synchronizes horiz execution so that all data needed to do vert is available and correct
 static inline void horiz_sync_for_vert(int* wg_sync_state, sycl::nd_item<2>& it, int wait_on_state)
 {
 #if USE_ROOT_GROUP
+    auto root = it.ext_oneapi_get_root_group(); // Root group all work_items running kernel
     sycl::group_barrier(root);
 #else
     // Use local hand crafted sychronization -- Volatile requires it all to be scheduled in one wave
@@ -374,6 +380,7 @@ static inline void horiz_persistent_bindless(syclexp::sampled_image_handle src,
     const float read_x = (write_x + shift) / dst_w;
     float read_y = (write_y + shift) / dst_h;
 
+#if USE_SHARED_MEM_FOR_INPUT
     // Not sure if there is a point of using this for input level -- As we can't async load
     const int base_pos = (it.get_local_range(1) + (span << 1)) * (it.get_local_id(0) << 1) + it.get_local_id(1) + span;
 
@@ -383,6 +390,7 @@ static inline void horiz_persistent_bindless(syclexp::sampled_image_handle src,
 
     // const int rel_span = ((1 / dst_w) * span); // Relative span value used for offset
     const float rel_span = float(span) / dst_w; // Relative span value used for offset
+#endif
 
     // for(int i = 0; i < sg_region.height; i++)
 
@@ -489,6 +497,68 @@ static inline void horiz_persistent_bindless(syclexp::sampled_image_handle src,
     //     sycl::group_barrier(it.get_group());
 }
 
+template<bool REMAINDER_ROW>
+static inline void horiz_persistent(float* intermediate,
+                                    float** data_array,
+                                    // sycl::local_accessor<float, 1> buffer,
+                                    // popsift::GaussInfo* d_gauss,
+                                    float* filter,
+                                    const int span_width,
+                                    const int sg_region_height,
+                                    const int dst_w,
+                                    const int dst_h,
+                                    const int write_x,
+                                    int& write_y,
+                                    int prev_lvl)
+// ,sycl::nd_item<2>& it)
+{
+    int loop_end = write_y + sg_region_height;
+
+    if constexpr(REMAINDER_ROW)
+    {
+        if(loop_end >= dst_h)
+            loop_end = dst_h; // Limit to last pixel
+    }
+
+    int self_pos = write_y * dst_w + write_x;
+
+    if(write_x < dst_w) // to ensure no out of bounds reads and writes
+    {
+        for(; write_y < loop_end; ++write_y) // Modifies write_y want that later
+        {
+            float out = 0.0f;
+            int idx;
+            for(int span = span_width; span > 0; --span)
+            {
+                // int pos_left = self_pos - span;
+                idx = write_x - span;
+                float val_left =
+                  idx >= 0 ? data_array[prev_lvl][self_pos - span] : data_array[prev_lvl][write_y * dst_w];
+#if COMPUTE_ONE_BY_ONE
+                out += val_left * filter[span];
+#endif
+                // int pos_right = self_pos + span;
+
+                idx = write_x + span;
+                float val_right =
+                  idx < dst_w ? data_array[prev_lvl][self_pos + span] : data_array[prev_lvl][(write_y + 1) * dst_w - 1];
+#if COMPUTE_ONE_BY_ONE
+                out += val_right * filter[span];
+#else
+                // out += (val_above + val_below) * d_gauss->inc.filter[span];
+                out += (val_left + val_right) * filter[span];
+#endif
+            }
+
+            out += data_array[prev_lvl][self_pos] * filter[0];
+
+            intermediate[self_pos] = out;
+
+            self_pos += dst_w; // Move down to next row
+        }
+    }
+}
+
 // template<bool LAST_LVL, bool LVL_ZERO>
 
 // MBY TEST ASYNC WRITE OF BOTH DOG AND DATA
@@ -497,7 +567,9 @@ template<bool DO_DOG, bool FINAL_LVL>
 static inline void vert_persistent(float** data_array,
                                    float** dog_array,
                                    float* intermediate,
-                                   popsift::GaussInfo* d_gauss,
+                                   // popsift::GaussInfo* d_gauss,
+                                   float* filter,
+                                   const int span_width,
                                    const int sg_region_height,
                                    const int dst_w,
                                    const int dst_h,
@@ -506,11 +578,11 @@ static inline void vert_persistent(float** data_array,
                                    int level,
                                    sycl::nd_item<2>& it)
 {
-#if MINIMAL_WINDOW
-    const int span_width = d_gauss->inc.span[0] - 1;
-#else
-    const int span_width = d_gauss->inc.span[0];
-#endif
+    // #if MINIMAL_WINDOW
+    //     const int span_width = d_gauss->inc.span[level] - 1;
+    // #else
+    //     const int span_width = d_gauss->inc.span[level];
+    // #endif
 
     int end_pos = (it.get_global_id(0) * sg_region_height);
     const int pos_upper_limit = dst_w * dst_h; // First pixel outside of image bounds
@@ -528,23 +600,27 @@ static inline void vert_persistent(float** data_array,
                 int pos_above = self_pos - offset;
                 float val_above = pos_above >= 0 ? intermediate[pos_above] : intermediate[write_x];
 #if COMPUTE_ONE_BY_ONE
-                out += val_above * d_gauss->inc.filter[span];
+                // out += val_above * d_gauss->inc.filter[span];
+                out += val_above * filter[span];
 #endif
                 int pos_below = self_pos + offset;
                 float val_below =
                   pos_below < pos_upper_limit ? intermediate[pos_below] : intermediate[(dst_h - 1) * dst_w + write_x];
 #if COMPUTE_ONE_BY_ONE
-                out += val_below * d_gauss->inc.filter[span];
+                // out += val_below * d_gauss->inc.filter[span];
+                out += val_below * filter[span];
 #else
-                out += (val_above + val_below) * d_gauss->inc.filter[span];
+                // out += (val_above + val_below) * d_gauss->inc.filter[span];
+                out += (val_above + val_below) * filter[span];
 #endif
 
                 offset -= dst_w;
             }
-            out += intermediate[self_pos] * d_gauss->inc.filter[0]; // Always safe
+            // out += intermediate[self_pos] * d_gauss->inc.filter[0]; // Always safe
+            out += intermediate[self_pos] * filter[0]; // Always safe
 
 #if !FINAL_LVL
-            data_array[level][self_pos] = out;
+            data_array[level][self_pos] = out; // guarded by outer if
 #endif
 
 #if DO_DOG
@@ -619,29 +695,106 @@ class BuildOcaveSimple
         // Simulate that we have done horiz before vert
         // write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1); // Simulating horiz run with it's end
 
-        // if(sim_write_y != write_y)
-        // {
-        //     syclexp::printf("MR %d has a problem\n", static_cast<int>(it.get_global_linear_id()));
-        // }
-        // else
-        // {
-        //     if(it.get_global_linear_id() == 0)
-        //     {
-        //         syclexp::printf("All goood in the hood atleast on the first one\n");
-        //     }
-        // }
+        // horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
 
-        // horiz_sync_for_vert(, sycl::nd_item<2>& it, int wait_on_state)
+        full_sync(sg_region.wg_sync_state, it, 0);
 
-        horiz_sync_for_vert(sg_region.wg_sync_state, it, 1);
+#if MINIMAL_WINDOW
+        const int span_initial = d_gauss->inc.span[0] - 1;
+#else
+        const int span_initial = d_gauss->inc.span[0];
+#endif
+        float* filter = &d_gauss->inc.filter[0];
+        // vert_persistent<false, false>(
+        //   data_array, dog_array, intermediate, d_gauss, sg_region.height, dst_w, dst_h, write_x, write_y, 0, it);
 
-        // full_sync(sg_region.wg_sync_state, it);
+        vert_persistent<false, false>(data_array,
+                                      dog_array,
+                                      intermediate,
+                                      filter,
+                                      span_initial,
+                                      sg_region.height,
+                                      dst_w,
+                                      dst_h,
+                                      write_x,
+                                      write_y,
+                                      0,
+                                      it);
 
-        // sycl::barrier(group);
-        // sycl::group_barrier(it.get_group());
+        full_sync(sg_region.wg_sync_state, it, 1);
 
-        vert_persistent<false, false>(
-          data_array, dog_array, intermediate, d_gauss, sg_region.height, dst_w, dst_h, write_x, write_y, 0, it);
+        for(int lvl = 1; lvl < (levels - 1); ++lvl) // Stop before final level
+        {
+            filter += GAUSS_ALIGN; // Move to next level (same as level * GAUSS_ALIGN)
+            horiz_persistent<true>(intermediate,
+                                   data_array,
+                                   filter,
+#if MINIMAL_WINDOW
+                                   d_gauss->inc.span[lvl] - 1,
+#else
+                                   d_gauss->inc.span[lvl],
+#endif
+                                   sg_region.height,
+                                   dst_w,
+                                   dst_h,
+                                   write_x,
+                                   write_y,
+                                   0);
+            full_sync(sg_region.wg_sync_state, it, lvl << 1);
+
+            vert_persistent<true, false>(data_array,
+                                         dog_array,
+                                         intermediate,
+                                         filter,
+#if MINIMAL_WINDOW
+                                         d_gauss->inc.span[lvl] - 1,
+#else
+                                         d_gauss->inc.span[lvl],
+#endif
+                                         sg_region.height,
+                                         dst_w,
+                                         dst_h,
+                                         write_x,
+                                         write_y,
+                                         0,
+                                         it);
+            full_sync(sg_region.wg_sync_state, it, (lvl << 1) + 1);
+        }
+
+        // Do the final level
+
+        horiz_persistent<true>(intermediate,
+                               data_array,
+                               filter,
+#if MINIMAL_WINDOW
+                               d_gauss->inc.span[levels - 1] - 1,
+#else
+                               d_gauss->inc.span[levels - 1],
+#endif
+                               sg_region.height,
+                               dst_w,
+                               dst_h,
+                               write_x,
+                               write_y,
+                               0);
+        full_sync(sg_region.wg_sync_state, it, (levels - 1) << 1);
+
+        vert_persistent<true, true>(data_array,
+                                    dog_array,
+                                    intermediate,
+                                    filter,
+#if MINIMAL_WINDOW
+                                    d_gauss->inc.span[levels - 1] - 1,
+#else
+                                    d_gauss->inc.span[levels - 1],
+#endif
+                                    sg_region.height,
+                                    dst_w,
+                                    dst_h,
+                                    write_x,
+                                    write_y,
+                                    0,
+                                    it);
     }
 };
 
@@ -1429,7 +1582,6 @@ class BuildOctaveSlidingWindow
 #else
             out += ((val_above + val_below) * g);
 #endif
-
             // ######################################################################################################
             // Second iteration of the same just using different variables for events could do the same with array
             // of events and do mod to figoure out which one to use but this should be less expensive than doing mod
@@ -2133,6 +2285,8 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
             // TODO: MAKE IT USE ONE VARIABLE THAT WE NNED TO RESET TO ZERO. THAT IS THE REASON WHY IT IS NOT WORKING
             // NOT MOST LIKELY SO SEEMS TO WORK WEHN WAVE IS 1 AS EXPECTED... NEED TO REDUCE REGISTER USAGE SO THAT WE
             // HAVE ENOUGHT TO DO THE SMALLER SYNCRONIZATION BUT MYB GLOBAL IS GOOD ENOUGH
+            // --> Test using weaker than the current strongest atomic ref for the full_sync and try to find way to
+            // reduce register usage
 
             // BUG: DOES NOT WORK ON SECOND RUN(IMAGE) DUE TO NOT RESETING THE sg_region memory used to do atomic
             // counting hence counter is reached instantly on second go and does not do shit
