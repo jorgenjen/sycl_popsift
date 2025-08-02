@@ -828,7 +828,7 @@ class BuildOctaveSimple
 #endif
 
         // horiz_persistent_bindless<REMAINDER_COL, REMAINDER_ROW>(
-        int sim_write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1); // Simulating horiz run with it's end
+        // int sim_write_y = sycl::min(write_y + sg_region.height - 1, dst_h - 1); // Simulating horiz run with it's end
 
         horiz_persistent_bindless<true, true>(
           src, intermediate, filter_input, span_input, shift, sg_region.height, dst_w, dst_h, write_x, write_y, it);
@@ -2338,33 +2338,33 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
     const int height = oct_obj.getHeight();
     // persistent_pyramid_octave_config sg_region = compute_persistent_sg_region_block(width, height);
 
-    fprintf(stderr,
-            "Local(%zu, %zu) -- global (%zu, %zu) -- sg_region --  width = %d - height = %d -- x_remainder = %d --"
-            " y_remainder = % d\n\n ",
-            sg_region.local[0],
-            sg_region.local[1],
-            sg_region.global[0],
-            sg_region.global[1],
-            sg_region.sg_block.width,
-            sg_region.sg_block.height,
-            sg_region.x_remainder,
-            sg_region.y_remainder);
+    // fprintf(stderr,
+    //         "Local(%zu, %zu) -- global (%zu, %zu) -- sg_region --  width = %d - height = %d -- x_remainder = %d --"
+    //         " y_remainder = % d\n\n ",
+    //         sg_region.local[0],
+    //         sg_region.local[1],
+    //         sg_region.global[0],
+    //         sg_region.global[1],
+    //         sg_region.sg_block.width,
+    //         sg_region.sg_block.height,
+    //         sg_region.x_remainder,
+    //         sg_region.y_remainder);
 
     // if(!sg_region.use_persistent_block)
     //     return false; // Could not use persistent block
 
-#if true
+#if false
     for(auto& plat : sycl::platform::get_platforms())
     {
         std::cout << "CUDA‐SYCL platform name: " << plat.get_info<sycl::info::platform::name>() << "\n"
                   << "Reported version:     " << plat.get_info<sycl::info::platform::version>() << "\n";
     }
 
-#if SYCL_EXT_ONEAPI_ROOT_GROUP == 1
-    printf("ROOT GPOUP SUPPPOERTED\n");
-#else
-    printf("ROOT GROUP NOT SUPPORTED\n");
-#endif
+    // #if SYCL_EXT_ONEAPI_ROOT_GROUP == 1
+    //     printf("ROOT GPOUP SUPPPOERTED\n");
+    // #else
+    //     printf("ROOT GROUP NOT SUPPORTED\n");
+    // #endif
 
 #endif
 
@@ -2415,9 +2415,9 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
         // size_t local_mem_size = device.get_info<sycl::info::device::local_mem_size>();
         //
         const int buffer_size = (sg_region.local[1] + (Pyramid::largest_span << 2)) * (sg_region.local[0] << 2);
-        std::printf("Buffer_size = %d -- sg_region.local_mem_size = %d\n", buffer_size, sg_region.local_mem_size);
+        // std::printf("Buffer_size = %d -- sg_region.local_mem_size = %d\n", buffer_size, sg_region.local_mem_size);
 
-        printf("\tSG_REGION_HEIGHT = %d\n\n", sg_region.sg_block.height);
+        // printf("\tSG_REGION_HEIGHT = %d\n\n", sg_region.sg_block.height);
         // const int vert_buffer_size =
         //   ((sg_region.local[1] * 13) * sg_region.local[0]); // might be better to store the 13 values in
         //   registers
@@ -2445,7 +2445,7 @@ sycl::event Pyramid::build_octave_one_wave_input(const Config& conf,
 
         if(true)
         {
-            printf("DOING BUILD OCTAVE SIMPLE\n\n");
+            // printf("DOING BUILD OCTAVE SIMPLE\n\n");
             // return _device_queue.parallel_for(sycl::nd_range{sg_region.global, sg_region.local},
             //                                   {d_gauss_write, img_write, sg_region._zeroed_event},
             //                                   normalizedSource::BuildOcaveSimple(base->getInputImage(),

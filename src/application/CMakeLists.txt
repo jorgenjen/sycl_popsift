@@ -127,19 +127,33 @@ target_include_directories(popsift-match PUBLIC PopSift::popsift
 target_compile_definitions(popsift-match PRIVATE ${Boost_DEFINITIONS})
 target_link_libraries(popsift-match PUBLIC PopSift::popsift ${PD_LINK_LIBS})
 
-
 # ##############################################################################
 # popsift-perf-test --> Executables that sample data
 # ##############################################################################
 
-add_executable(popsift-perf-test matching_performance_test.cpp pgmread.cpp pgmread.h)
+add_executable(popsift-perf-test matching_performance_test.cpp pgmread.cpp
+                                 pgmread.h)
 
 target_compile_options(popsift-perf-test PRIVATE ${PD_COMPILE_OPTIONS})
 target_include_directories(popsift-perf-test PUBLIC PopSift::popsift
-                                                ${PD_INCLUDE_DIRS})
+                                                    ${PD_INCLUDE_DIRS})
 target_compile_definitions(popsift-perf-test PRIVATE ${Boost_DEFINITIONS})
 target_link_libraries(popsift-perf-test PUBLIC PopSift::popsift ${PD_LINK_LIBS})
 
+# ##############################################################################
+# Running a whole dataset with warmup
+# ##############################################################################
+
+add_executable(popsift-frametime-test frame_time_perf_test.cpp pgmread.cpp
+                                      pgmread.h)
+
+target_compile_options(popsift-frametime-test PRIVATE ${PD_COMPILE_OPTIONS})
+target_include_directories(popsift-frametime-test PUBLIC PopSift::popsift
+                                                         ${PD_INCLUDE_DIRS})
+
+target_compile_definitions(popsift-frametime-test PRIVATE ${Boost_DEFINITIONS})
+target_link_libraries(popsift-frametime-test PUBLIC PopSift::popsift
+                                                    ${PD_LINK_LIBS})
 
 # ##############################################################################
 # installation

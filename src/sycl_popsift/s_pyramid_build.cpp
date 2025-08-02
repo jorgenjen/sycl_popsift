@@ -212,7 +212,7 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         // fprintf(stderr, "AFTER ONE WAVE \n");
 
-                        // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                        sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
 
                         // Storing event to class only for profiling not needed for normal use
 
@@ -228,8 +228,13 @@ void Pyramid::build_pyramid(const Config& conf,
                         // octave so it works with normal building mode
                         //
                         //
-                        oct_obj._level_complete_events[_levels - PREV_LEVEL] =
-                          build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+                        // ##################################################################################
+                        // # FOR FULL OCTAVE BUILD SIMPLE
+                        // oct_obj._level_complete_events[_levels - PREV_LEVEL] =
+                        //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+                        // FOR FULL OCTAVE END
+                        // ##################################################################################
 
                         // Copy so that it can be used for DoG kernel as well
                         // oct_obj._level_complete_events[_levels - 1] =
@@ -278,7 +283,7 @@ void Pyramid::build_pyramid(const Config& conf,
 // #endif
 #endif
 #if ONLY_HORIZ
-                        oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                        // oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
 #endif
 
                         // My own test case We do horiz normaly and then Vert with wave code
@@ -333,7 +338,7 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
 
-                        // oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                        oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
 
                         // _device_queue.wait();
                         // popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[0],
@@ -371,11 +376,11 @@ void Pyramid::build_pyramid(const Config& conf,
                 {
                     // Depends on set level event from prev level
 
-                    if(octave == 0)
-                    {
-                        printf("Not running for Octave 0\n");
-                    }
-                    else
+                    // if(octave == 0)
+                    // {
+                    //     // printf("Not running for Octave 0\n");
+                    // }
+                    // else
                     {
                         // printf("Running for octave %d and level = %d\n", octave, level);
                         // horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
@@ -409,8 +414,8 @@ void Pyramid::build_pyramid(const Config& conf,
 #endif
     {
         // _device_queue.wait(); // REMOVE
-        // for(int octave = 0; octave < _num_octaves; octave++)
-        for(int octave = 1; octave < _num_octaves; octave++) // Skip first one for this test
+        for(int octave = 0; octave < _num_octaves; octave++)
+        // for(int octave = 1; octave < _num_octaves; octave++) // Skip first one for this test
         {
             Octave& oct_obj = _octaves[octave];
 

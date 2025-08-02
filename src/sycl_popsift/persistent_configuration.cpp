@@ -305,7 +305,7 @@ inline void persistent_pyramid_octave_config::compute_size(int width, int height
         local_mem_size = 0; // No shared memory used in this case
     }
 
-    std::printf("Final local mem size = %d -- local(%zu, %zu)\n", local_mem_size, local[0], local[1]);
+    // std::printf("Final local mem size = %d -- local(%zu, %zu)\n", local_mem_size, local[0], local[1]);
 
     // }
 }
@@ -336,20 +336,20 @@ void persistent_pyramid_octave_config::reconfigure(int width, int height, int la
     // printf("REconfigurint this persistent config!! \n\n");
     compute_size(width, height, largest_span);
 
-    // fprintf(stderr,
-    //         "w=%d h=%d -->Local(%zu, %zu) -- global (%zu, %zu) -- sg_region --  width = %d - height = %d -- "
-    //         "x_remainder = %d -- "
-    //         "y_remainder = %d\n\n",
-    //         width,
-    //         height,
-    //         local[0],
-    //         local[1],
-    //         global[0],
-    //         global[1],
-    //         sg_block.width,
-    //         sg_block.height,
-    //         x_remainder,
-    // y_remainder);
+    fprintf(stderr,
+            "w=%d h=%d -->Local(%zu, %zu) -- global (%zu, %zu) -- sg_region --  width = %d - height = %d -- "
+            "x_remainder = %d -- "
+            "y_remainder = %d\n\n",
+            width,
+            height,
+            local[0],
+            local[1],
+            global[0],
+            global[1],
+            sg_block.width,
+            sg_block.height,
+            x_remainder,
+            y_remainder);
 
     // Figure out the maximum shared memory size per work_group
 
