@@ -209,7 +209,7 @@ void schedule_jobs(popsift::SyncQueue<SiftJob*>& jobs,
                    list<string>& inputFiles,
                    PopSift& PopSift)
 {
-#define MAX_FRAMES_IN_FLIGHT 15
+#define MAX_FRAMES_IN_FLIGHT 20
 
 #define DO_WARMUP 1
 #if DO_WARMUP
@@ -228,11 +228,12 @@ void schedule_jobs(popsift::SyncQueue<SiftJob*>& jobs,
 
     // The actuall test
 
-#define TEST_ITERATIONS 2
+#define TEST_ITERATIONS 15
     for(int i = 0; i < TEST_ITERATIONS; ++i)
     {
         for(const auto& currFile : inputFiles)
         {
+            // printf("Scheduling %s\n", currFile.c_str());
             std::unique_lock<std::mutex> lock(mtx);
             // frames_in_flight.wait(0, std::memory_order_relaxed, [](int val) { return val >= 5; });
             job_sender.wait(lock, [&] { return frames_in_flight < MAX_FRAMES_IN_FLIGHT; });
@@ -243,6 +244,7 @@ void schedule_jobs(popsift::SyncQueue<SiftJob*>& jobs,
         }
     }
 
+    // fprintf(stderr, "\n\tDone sheduling \n");
     jobs.push(nullptr); // To signal that we are done
 }
 
@@ -272,15 +274,15 @@ void retrive_jobs(popsift::SyncQueue<SiftJob*>& jobs,
 
                 oss << feature_list->getFeatureCount() << "," << feature_list->getDescriptorCount();
                 metadata.push_back(oss.str());
-                fprintf(stderr,
-                        "\nNumbmer of features points: %d  number of feature descriptors: %d\n",
-                        feature_list->getFeatureCount(),
-                        feature_list->getDescriptorCount());
+                // fprintf(stderr,
+                //         "\nNumbmer of features points: %d  number of feature descriptors: %d\n",
+                //         feature_list->getFeatureCount(),
+                //         feature_list->getDescriptorCount());
             }
-            else
-            {
-                fprintf(stderr, "Water fuck\n");
-            }
+            // else
+            // {
+            //     fprintf(stderr, "Water fuck\n");
+            // }
 
             delete feature_list;
             delete job;
@@ -288,13 +290,15 @@ void retrive_jobs(popsift::SyncQueue<SiftJob*>& jobs,
                 std::lock_guard<std::mutex> lock(mtx);
                 frames_in_flight--;
             }
+            job_sender.notify_one();
         }
-        else
-        {
-            fprintf(stderr, "Not a job somehow... \n");
-        }
+        // else
+        // {
+        //     fprintf(stderr, "Not a job somehow... \n");
+        // }
 
         count++; // Just to ensure we don't write for warmup data
+        // fprintf(stderr, "We roling around! \n");
     }
 
     // Write results
@@ -302,7 +306,7 @@ void retrive_jobs(popsift::SyncQueue<SiftJob*>& jobs,
     of << metadata[0] << std::endl;
     for(int i = 1; i < metadata.size(); ++i)
     {
-        of << imgNames[i % imgNames.size()] << "," << metadata[i] << std::endl;
+        of << imgNames[(i - 1) % imgNames.size()] << "," << metadata[i] << std::endl;
     }
 }
 
