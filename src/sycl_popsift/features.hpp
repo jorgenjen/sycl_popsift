@@ -9,6 +9,7 @@
 
 #include "sift_constants.hpp"
 #include "sycl/queue.hpp"
+#include "sycl_popsift/sift_desc_config.hpp"
 
 #include <iostream>
 #include <vector>
@@ -122,6 +123,9 @@ class FeaturesDev : public FeaturesBase
     FeaturesDev() = delete;
     FeaturesDev(sycl::queue Q);
     FeaturesDev(sycl::queue Q, int num_ext, int num_ori);
+
+    // Constructor where you load in your features from external file/code
+    FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::Descriptor>& features);
     ~FeaturesDev() override;
 
     void reset(int num_ext, int num_ori);

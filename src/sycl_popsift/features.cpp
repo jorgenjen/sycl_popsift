@@ -133,6 +133,27 @@ FeaturesDev::FeaturesDev(sycl::queue Q, int num_ext, int num_ori)
     reset(num_ext, num_ori);
 }
 
+// Load from external file
+FeaturesDev::FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::Descriptor>& features)
+  : _device_queue(Q)
+  , _ext(nullptr)
+  , _ori(nullptr)
+  , _rev(nullptr)
+#if USE_JOINT_MATRIX
+  , _squared_norms(nullptr)
+#endif
+{
+    _ori = popsift::sycl_common::malloc_sharedT<Descriptor>(
+      num_ori, __FILE__, __LINE__, "Could not allocate shared memory for orientation Descriptors", _device_queue);
+
+    _device_queue.memcpy(_ori, features.data(), num_ori * sizeof(popsift::Descriptor));
+
+    // Slow should return the event but fine for mathinc benchmarking but not real world
+    _device_queue.wait();
+
+    setDescriptorCount(num_ori);
+}
+
 FeaturesDev::~FeaturesDev()
 {
     sycl::free(_ext, _device_queue);
@@ -843,12 +864,14 @@ void FeaturesDev::compute_squared_norms()
 }
 #endif
 
+#define VERIFY_MATRIX_SUPPORT false
 std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> FeaturesDev::preNormMatrixMatchAndReturn(
   FeaturesDev* other)
 {
 #if !USE_JOINT_MATRIX
     return matchAndReturn(other);
 #else
+#if VERIFY_MATRIX_SUPPORT
     if(!PopSift::matrixSupported)
     {
         // Could have gotten here before we have found supported matrix layout or matrix layout not supported
@@ -860,6 +883,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
                 "condition of setting the flag\n");
         return matchAndReturn(other);
     }
+#endif
     int l_len = getDescriptorCount();
     int r_len = other->getDescriptorCount();
 
