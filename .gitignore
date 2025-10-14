@@ -17,3 +17,5 @@ build_matching_test_joint_matrix
 build_matching_test_normal_fp32
 new_build
 .ipynb_checkpoints
+build_normal
+build_normal_fp32

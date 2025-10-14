@@ -151,6 +151,16 @@ FeaturesDev::FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::
     // Slow should return the event but fine for mathinc benchmarking but not real world
     _device_queue.wait();
 
+#if USE_JOINT_MATRIX
+    if(_squared_norms != nullptr)
+    {
+        sycl::free(_squared_norms, _device_queue);
+        _squared_norms = nullptr;
+    }
+    _squared_norms = popsift::sycl_common::malloc_devT<float>(
+      num_ori, __FILE__, __LINE__, "Failed to allocate squared norms array", _device_queue);
+#endif
+
     setDescriptorCount(num_ori);
 }
 
