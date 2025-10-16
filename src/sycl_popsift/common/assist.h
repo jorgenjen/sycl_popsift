@@ -54,7 +54,7 @@ sycl::queue initQueue();
 inline bool supportsJointMatrixMatch(sycl::queue& Q)
 {
 #if !USE_JOINT_MATRIX
-    return false; // As joint matrix is in thic case not compiled
+    return false; // As joint matrix is in this case not compiled
 #endif
     sycl::device dev = Q.get_device();
     auto combinations = dev.get_info<sycl::ext::oneapi::experimental::info::device::matrix_combinations>();

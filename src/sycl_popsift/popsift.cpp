@@ -617,6 +617,8 @@ void PopSift::matchPrepareLoop()
             // There are wait's in step2 descriptor hence this works TODO: Replace with events
 
             features = p._pyramid->clone_device_descriptors(_config);
+            // WARNING: Truly need to remove this wait a huge bottleneck to wait for a mem transfer there is no more
+            // work to be done here... This is probably why there is such a gap between running kernels
             _device_queue.wait(); // Should be removed and only depend on dependencies events
         }
         catch(const std::exception& e)
