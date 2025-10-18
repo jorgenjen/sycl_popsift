@@ -10,9 +10,12 @@
 #include "sift_constants.hpp"
 #include "sycl/queue.hpp"
 #include "sycl_popsift/sift_desc_config.hpp"
+#include "sycl_popsift/sift_extremum.h"
 
 #include <iostream>
 #include <vector>
+
+#define TRANSFORM_TO_HALF true
 
 namespace popsift {
 
@@ -117,6 +120,10 @@ class FeaturesDev : public FeaturesBase
 #if USE_JOINT_MATRIX
     float* _squared_norms;
     sycl::event _norms_computed_event;
+#if TRANSFORM_TO_HALF
+    DescriptorHalf* _ori_half; // array of desciptors
+#endif
+
 #endif
 
   public:
@@ -209,6 +216,7 @@ class FeaturesDev : public FeaturesBase
     inline int* getReverseMap() { return _rev; }
 #if USE_JOINT_MATRIX
     inline float* getSquaredNorms() { return _squared_norms; }
+    inline DescriptorHalf* getDescriptorsHalf() { return _ori_half; }
     sycl::event getNormsEvent() { return _norms_computed_event; }
 #endif
 

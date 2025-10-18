@@ -165,12 +165,13 @@ int main(int argc, char** argv)
 #define WARMUP_RUNS 5
 
 #define TEST_JOINT_MATRIX true
-#define MAX_DESC_SIZE 5000 // Was 50000
+#define MAX_DESC_SIZE 50000 // Was 50000
 #define STEP 1000
 
     bool doing_warmup = false;
     int warmup_count = 0;
-    for(int i = STEP; i <= MAX_DESC_SIZE; i += STEP)
+    // for(int i = STEP; i <= MAX_DESC_SIZE; i += STEP)
+    for(int i = STEP; i <= 2000; i += STEP)
     {
         for(int j = STEP; j <= MAX_DESC_SIZE; j += STEP)
         {
@@ -218,9 +219,7 @@ int main(int argc, char** argv)
             l_dev.compute_squared_norms();
             r_dev.compute_squared_norms();
 
-            // fprintf(stderr, "Computing norm is guuchi!\n");
             auto [match_matrix, matrix_wait, matrix_free] = l_dev.preNormMatrixMatchAndReturn(&r_dev);
-            // fprintf(stderr, " Now we have started the matrix compute");
 #else
             auto [match_matrix, matrix_wait, matrix_free] = l_dev.matchAndReturn(&r_dev);
 #endif
