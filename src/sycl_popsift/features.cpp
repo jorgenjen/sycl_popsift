@@ -965,13 +965,9 @@ void FeaturesDev::compute_squared_norms()
     sycl::range local{32};
 
 #if TRANSFORM_TO_HALF
-    fprintf(stderr, "Dong fp16_transfor\n");
     _norms_computed_event = _device_queue.parallel_for(
       sycl::nd_range{global, local},
       Compute_squared_norm_fp16_transform(getDescriptors(), getDescriptorsHalf(), getSquaredNorms()));
-
-    _device_queue.wait();
-    fprintf(stderr, "Done with that shit fp16 transform stufus");
 
 #else
     fprintf(stderr,
@@ -981,8 +977,6 @@ void FeaturesDev::compute_squared_norms()
     _norms_computed_event = _device_queue.parallel_for(sycl::nd_range{global, local},
                                                        Compute_squared_norm(getDescriptors(), getSquaredNorms()));
 
-    _device_queue.wait();
-    fprintf(stderr, "Done with that shit fp16 transform stufus");
 #endif
 
     // Compute_distance(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));

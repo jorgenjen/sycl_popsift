@@ -162,16 +162,17 @@ int main(int argc, char** argv)
     std::vector<std::string> metadata;
     metadata.push_back("l_desc_size,r_desc_size,matches");
 
-#define WARMUP_RUNS 5
+#define WARMUP_RUNS 11 // 10 warmup runs
 
 #define TEST_JOINT_MATRIX true
 #define MAX_DESC_SIZE 50000 // Was 50000
 #define STEP 1000
 
+#if true
     bool doing_warmup = false;
     int warmup_count = 0;
-    // for(int i = STEP; i <= MAX_DESC_SIZE; i += STEP)
-    for(int i = STEP; i <= 2000; i += STEP)
+    for(int i = STEP; i <= MAX_DESC_SIZE; i += STEP)
+    // for(int i = STEP; i <= 2000; i += STEP)
     {
         for(int j = STEP; j <= MAX_DESC_SIZE; j += STEP)
         {
@@ -241,6 +242,79 @@ int main(int argc, char** argv)
             matrix_free();
         }
     }
+#else
+
+    int warmup_count = 0;
+#define NEW_MAX 80000
+#define NEW_STEP 1000
+#define RUNS 20
+
+    for(int idx = 0; idx < RUNS; ++idx)
+    {
+        for(int i = NEW_STEP; i <= NEW_MAX; i += NEW_STEP)
+        {
+            if(warmup_count < WARMUP_RUNS)
+            {
+                warmup_count++;
+            }
+            if(warmup_count == WARMUP_RUNS)
+            {
+                // start the actual test warmup is done
+                warmup_count++;
+                i = STEP;
+                printf("NOW WE START FOR REAL\n\n\n");
+            }
+
+            printf("(%d) -- iter %d/%d\n", i, (i / NEW_STEP) + idx * (NEW_MAX / NEW_STEP), (NEW_MAX / NEW_STEP) * RUNS);
+
+            std::unordered_set<int> l_index_set;
+            std::unordered_set<int> r_index_set;
+
+            while(l_index_set.size() < i)
+            {
+                int a = dist(rng);
+                l_index_set.insert(a); // Only inserts if not already present
+            }
+
+            while(r_index_set.size() < i)
+            {
+                int a = dist(rng);
+                if(l_index_set.count(a) != 0)
+                    continue;
+                r_index_set.insert(a); // Only insert if unique to both sets
+            }
+
+            popsift::FeaturesDev l_dev(dev_q, l_index_set.size(), build_descriptor(l_index_set, desc_pool));
+            popsift::FeaturesDev r_dev(dev_q, r_index_set.size(), build_descriptor(r_index_set, desc_pool));
+
+#if TEST_JOINT_MATRIX
+            l_dev.compute_squared_norms();
+            r_dev.compute_squared_norms();
+
+            auto [match_matrix, matrix_wait, matrix_free] = l_dev.preNormMatrixMatchAndReturn(&r_dev);
+#else
+            auto [match_matrix, matrix_wait, matrix_free] = l_dev.matchAndReturn(&r_dev);
+#endif
+            matrix_wait();
+
+            int count = 0;
+            for(int idx = 0; idx < l_dev.getDescriptorCount(); ++idx)
+            {
+                sycl::vec<int, 3>& match = match_matrix[idx];
+                if(match.z())
+                {
+                    count++;
+                }
+            }
+            std::ostringstream oss;
+            oss << i << "," << i << "," << count;
+            metadata.push_back(oss.str());
+
+            matrix_free();
+        }
+    }
+
+#endif
 
     std::ofstream of(outputFile);
     of << metadata[0] << std::endl;
