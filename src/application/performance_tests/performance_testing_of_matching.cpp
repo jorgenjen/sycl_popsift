@@ -168,7 +168,7 @@ int main(int argc, char** argv)
 #define MAX_DESC_SIZE 50000 // Was 50000
 #define STEP 1000
 
-#if true
+#if false
     bool doing_warmup = false;
     int warmup_count = 0;
     for(int i = STEP; i <= MAX_DESC_SIZE; i += STEP)
