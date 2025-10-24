@@ -128,8 +128,74 @@ target_compile_definitions(popsift-match PRIVATE ${Boost_DEFINITIONS})
 target_link_libraries(popsift-match PUBLIC PopSift::popsift ${PD_LINK_LIBS})
 
 # ##############################################################################
+# popsift-perf-test --> Executables that sample data
+# ##############################################################################
+
+add_executable(popsift-perf-test matching_performance_test.cpp pgmread.cpp
+                                 pgmread.h)
+
+target_compile_options(popsift-perf-test PRIVATE ${PD_COMPILE_OPTIONS})
+target_include_directories(popsift-perf-test PUBLIC PopSift::popsift
+                                                    ${PD_INCLUDE_DIRS})
+target_compile_definitions(popsift-perf-test PRIVATE ${Boost_DEFINITIONS})
+target_link_libraries(popsift-perf-test PUBLIC PopSift::popsift ${PD_LINK_LIBS})
+
+# ##############################################################################
+# Running a whole dataset with warmup
+# ##############################################################################
+
+add_executable(popsift-frametime-test frame_time_perf_test.cpp pgmread.cpp
+                                      pgmread.h)
+
+target_compile_options(popsift-frametime-test PRIVATE ${PD_COMPILE_OPTIONS})
+target_include_directories(popsift-frametime-test PUBLIC PopSift::popsift
+                                                         ${PD_INCLUDE_DIRS})
+
+target_compile_definitions(popsift-frametime-test PRIVATE ${Boost_DEFINITIONS})
+target_link_libraries(popsift-frametime-test PUBLIC PopSift::popsift
+                                                    ${PD_LINK_LIBS})
+
+# ##############################################################################
+# Retriving large pool of descriptors
+# ##############################################################################
+
+add_executable(popsift-extract-descriptors
+               performance_tests/retrive_descriptors.cpp pgmread.cpp pgmread.h)
+
+target_compile_options(popsift-extract-descriptors
+                       PRIVATE ${PD_COMPILE_OPTIONS})
+
+target_include_directories(popsift-extract-descriptors
+                           PUBLIC PopSift::popsift ${PD_INCLUDE_DIRS})
+
+target_compile_definitions(popsift-extract-descriptors
+                           PRIVATE ${Boost_DEFINITIONS})
+target_link_libraries(popsift-extract-descriptors PUBLIC PopSift::popsift
+                                                         ${PD_LINK_LIBS})
+
+# ##############################################################################
+# Performance testing of mattching using pool extracted above ^
+# ##############################################################################
+
+add_executable(
+  popsift-matc-perf-test-pool
+  performance_tests/performance_testing_of_matching.cpp pgmread.cpp pgmread.h)
+
+target_compile_options(popsift-matc-perf-test-pool
+                       PRIVATE ${PD_COMPILE_OPTIONS})
+
+target_include_directories(popsift-matc-perf-test-pool
+                           PUBLIC PopSift::popsift ${PD_INCLUDE_DIRS})
+
+target_compile_definitions(popsift-matc-perf-test-pool
+                           PRIVATE ${Boost_DEFINITIONS})
+target_link_libraries(popsift-matc-perf-test-pool PUBLIC PopSift::popsift
+                                                         ${PD_LINK_LIBS})
+
+# ##############################################################################
 # installation
 # ##############################################################################
 
 install(TARGETS popsift-demo DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS popsift-match DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS popsift-perf-test DESTINATION ${CMAKE_INSTALL_BINDIR})

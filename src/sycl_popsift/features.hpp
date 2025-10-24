@@ -9,9 +9,13 @@
 
 #include "sift_constants.hpp"
 #include "sycl/queue.hpp"
+#include "sycl_popsift/sift_desc_config.hpp"
+#include "sycl_popsift/sift_extremum.h"
 
 #include <iostream>
 #include <vector>
+
+#define TRANSFORM_TO_HALF true
 
 namespace popsift {
 
@@ -92,6 +96,7 @@ class FeaturesHost : public FeaturesBase
     // void unpin();
 
     inline Feature* getFeatures() { return _ext; }
+
     inline Descriptor* getDescriptors() { return _ori; }
 
     void print(std::ostream& ostr, bool write_as_uchar) const;
@@ -115,12 +120,19 @@ class FeaturesDev : public FeaturesBase
 #if USE_JOINT_MATRIX
     float* _squared_norms;
     sycl::event _norms_computed_event;
+#if TRANSFORM_TO_HALF
+    DescriptorHalf* _ori_half; // array of desciptors
+#endif
+
 #endif
 
   public:
     FeaturesDev() = delete;
     FeaturesDev(sycl::queue Q);
     FeaturesDev(sycl::queue Q, int num_ext, int num_ori);
+
+    // Constructor where you load in your features from external file/code
+    FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::Descriptor>& features);
     ~FeaturesDev() override;
 
     void reset(int num_ext, int num_ori);
@@ -132,7 +144,9 @@ class FeaturesDev : public FeaturesBase
      */
     void match(FeaturesDev* other);
 
+#if USE_JOINT_MATRIX
     void compute_squared_norms();
+#endif
 
     /** This function performs one-directional brute force matching on
      *  the GPU between the Descriptors in this objects and the object
@@ -202,7 +216,13 @@ class FeaturesDev : public FeaturesBase
     inline int* getReverseMap() { return _rev; }
 #if USE_JOINT_MATRIX
     inline float* getSquaredNorms() { return _squared_norms; }
+    inline DescriptorHalf* getDescriptorsHalf() { return _ori_half; }
     sycl::event getNormsEvent() { return _norms_computed_event; }
+#endif
+
+#if PERF_TESTING_FUNCTIONS
+    sycl::event matrix_match_event;
+    sycl::event matrix_remainder_event;
 #endif
 
     Descriptor* getDescriptor(int descIndex);

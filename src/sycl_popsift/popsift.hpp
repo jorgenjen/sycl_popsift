@@ -8,6 +8,10 @@
 #include "sycl_popsift/sift_constants.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 
+#if PERF_TESTING_FUNCTIONS
+#include <sycl_popsift/sift_desc_config.hpp> // For FeatureType
+#endif
+
 #include <sycl/sycl.hpp>
 
 #include <future>
@@ -135,7 +139,41 @@ class PopSift
 
     SiftJob* enqueue(int w, int h, const unsigned char* imageData);
 
+    // matrix is wheter or not to use matrix version if compiling with JointMatrix=ON when running cmake then
+    // matrix=false will run normal mode but with sycl::half/fp16 to get float results configure with JointMatrix off
+    // and set matrix to false
+    // ouput_file is a csv formatted file
+    void benchmarkMatchingPerformance(bool matrix,
+                                      int seed,
+                                      const std::string& img_dir_l,
+                                      const std::string& img_dir_r,
+                                      const std::string& output_filename);
+
     inline static bool matrixSupported = false;
+    inline static int sg_per_cu = -1; // sub-group per execution-unit -- Start as not defined(-1)
+    inline static int num_cu;
+
+#if PERF_TESTING_FUNCTIONS
+    void benchmarkMatchingPerformance(bool matrix, int seed, std::vector<std::array<FeatureType, 128>> desc_pool);
+#endif
+
+#if USE_PERSISTENT
+
+    inline int max_span()
+    {
+        // _h_gauss.inc.span[_h_gauss.required_filter_stages + 2] should always be largest I think
+        // The final if always largest aswell as it's based on the sigma which grows with the level
+
+        // return max(_h_gauss.dd.span[0], _h_gauss.inc.span[_h_gauss.required_filter_stages + 2]);
+
+        // for(int i = 0; i <= _config.levels + 2; ++i)
+        // {
+        //     std::printf("lvl = %d -- span = %d\n", i, _h_gauss.inc.span[i]);
+        // }
+
+        return _h_gauss.inc.span[_config.levels + 2];
+    }
+#endif
 
   private:
     void modifyImage();
@@ -181,6 +219,8 @@ class PopSift
     ImageMode _image_mode;
 
     Pipe _pipe;
+
+    void set_sg_per_cu();
 
     /// whether the object is initialized
     bool _isInit{true};

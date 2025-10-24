@@ -1,11 +1,13 @@
 #include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/common/debug_macros.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
+#include "sycl_popsift/popsift.hpp"
 #include "sycl_popsift/s_image.hpp"
 #include "sycl_popsift/sift_octave.hpp"
 #include "sycl_popsift/sift_pyramid.hpp"
 
 #include <cstdio>
+#include <ios>
 #include <vector>
 
 /* It makes no sense whatsoever to change this value */
@@ -21,6 +23,8 @@ namespace popsift {
 //                   // only used once so I just use a lambda instead of a functor in namespace
 //
 // }
+
+struct Downscale; // For Profiing tools
 
 // not sure if we want the se to be inline they were in CUDA popsift
 inline sycl::event Pyramid::downscale_from_prev_octave(int octave)
@@ -43,9 +47,12 @@ inline sycl::event Pyramid::downscale_from_prev_octave(int octave)
 
     sycl::event dependency = prev_oct_obj.getLevelCompleteEvent(_levels - PREV_LEVEL);
 
+    // This kernel is almost 3 times slower than the texture kernel of cuda version...
+    // And they are almost identical so it does not make sense. Don't get how a texture could make that much of a
+    // differences so need to compare the ptx
     return _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on(dependency);
-        cgh.parallel_for(sycl::nd_range(global, local), [=](sycl::nd_item<2> it) {
+        cgh.parallel_for<Downscale>(sycl::nd_range(global, local), [=](sycl::nd_item<2> it) {
             int x = it.get_global_id(1);
             int y = it.get_global_id(0);
 
@@ -139,12 +146,20 @@ sycl::event Pyramid::vert_from_interm(int octave,
     return sycl::event(); // just to return for now to avoid warning for compiler
 }
 
+// }
+
+// Kernel that does persistent way:
+
 void Pyramid::build_pyramid(const Config& conf,
                             ImageBase* base_img,
                             sycl::event d_gauss_write,
                             sycl::event img_transfer)
 {
     GaussTableChoice gaussTableChoice;
+
+#ifdef USE_PERSISTENT
+    bool use_persistent_block;
+#endif
 
     if(conf.getGaussMode() == Config::VLFeat_Relative)
         gaussTableChoice = Interpolated_FromPrevious;
@@ -154,37 +169,372 @@ void Pyramid::build_pyramid(const Config& conf,
     for(int octave = 0; octave < _num_octaves; octave++)
     {
         Octave& oct_obj = _octaves[octave];
+#ifdef USE_PERSISTENT
+        // sg_region = compute_persistent_sg_region_block(oct_obj.getWidth(), oct_obj.getHeight());
 
-        for(int level = 0; level < _levels; level++)
+        // if(octave == 0)
+        // {
+        //     use_persistent_block = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+        // }
+        // else
+        // {
+        //     // TODO: Add version for from prev octave
+        //     // use_persistent_block = build_octave_one_wave_prev_octave(octave);
+        //     use_persistent_block = false;
+        // }
+
+        // // if(sg_region.use_persistent_block == true)
+        // if(use_persistent_block)
+        // {
+        //     // Launch using persistent block
+        // }
+        // else
+#endif
         {
-            if(level == 0)
+            for(int level = 0; level < _levels; level++)
             {
-                if(octave == 0)
+                if(level == 0)
                 {
-                    sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
-                    oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                    if(octave == 0)
+                    {
+#define ONLY_HORIZ false
+                        // fprintf(stderr, "PRE ONE WAVE \n");
+                        // build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+#if ONLY_HORIZ
+                        sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+#else
+
+                        // WORKS AS BOTH HORIZ AND VERT FOR THIS LEVEL
+                        // oct_obj._level_complete_events[0] =
+                        //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+#endif
+
+                        // fprintf(stderr, "AFTER ONE WAVE \n");
+
+                        sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+
+                        // Storing event to class only for profiling not needed for normal use
+
+                        //
+                        //
+                        //
+
+                        // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+
+                        // sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+                        // Store event in the level that is the dependency for downscale from prev octave for next
+                        // octave so it works with normal building mode
+                        //
+                        //
+
+                        // ##################################################################################
+                        // # FOR FULL OCTAVE BUILD SIMPLE
+                        // oct_obj._level_complete_events[_levels - PREV_LEVEL] =
+                        //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+                        // FOR FULL OCTAVE END
+                        // ##################################################################################
+
+                        // Copy so that it can be used for DoG kernel as well
+                        // oct_obj._level_complete_events[_levels - 1] =
+                        //   oct_obj._level_complete_events[_levels - PREV_LEVEL];
+
+                        //
+
+                        // oct_obj._level_complete_events[_levels - PREV_LEVEL].wait();
+                        // //
+                        //
+                        // for(int i = 0; i < _levels - 1; ++i)
+                        // {
+                        //     printf("level %d -- ", i);
+                        //     popsift::sycl_common::print_region(oct_obj.getDogArrayHost()[i],
+                        //                                        "DoG PERSISTENT\n",
+                        //                                        0,
+                        //                                        8,
+                        //                                        0,
+                        //                                        16,
+                        //                                        oct_obj.getWidth(),
+                        //                                        _device_queue);
+                        // }
+
+                        // build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer).wait();
+
+                        // for(int i = 0; i < _levels; ++i)
+                        // {
+                        //     printf("Level %d/%d -- ", i, _levels);
+                        //     popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[i],
+                        //                                        "persistent\n",
+                        //                                        0,
+                        //                                        8,
+                        //                                        0,
+                        //                                        16,
+                        //                                        oct_obj.getWidth(),
+                        //                                        _device_queue);
+                        // }
+
+#if QUEUE_PROFILING
+                        _input_horiz_event = horiz;
+// #if ONLY_HORIZ
+//                         // _input_horiz_event = horiz; // copy it for use later
+// #else
+//                         // _input_horiz_event = oct_obj._level_complete_events[0]; // When working as both horiz and
+//                         // vert
+// #endif
+#endif
+#if ONLY_HORIZ
+                        // oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+#endif
+
+                        // My own test case We do horiz normaly and then Vert with wave code
+
+                        // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                        // sycl::event horiz = build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+                        // _input_horiz_event = horiz; // copy it for use later
+
+                        // horiz.wait();
+                        // double frame_start =
+                        //   horiz.template get_profiling_info<sycl::info::event_profiling::command_start>();
+                        //
+                        // double frame_end =
+                        //   horiz.template get_profiling_info<sycl::info::event_profiling::command_end>();
+                        //
+                        // double frame_time = frame_end - frame_start;
+                        //
+                        // std::printf(
+                        //   "Time to compute first horiz = %lf ns == %lf ms\n\n", frame_time, frame_time / 1000000);
+
+                        // horiz.wait();
+
+                        // popsift::sycl_common::print_region(oct_obj.getIntermediate(),
+                        //                                    "AFTER HORIZ o=0 l=0",
+                        //                                    0,
+                        //                                    10,
+                        //                                    0,
+                        //                                    120,
+                        //                                    oct_obj.getWidth(),
+                        //                                    _device_queue);
+
+                        // Test if vert part works alone
+
+                        // horiz.wait();
+
+                        // oct_obj._level_complete_events[0] =
+                        //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+
+                        // oct_obj._level_complete_events[0] = horiz;
+
+                        // ##
+                        //
+
+                        // _input_horiz_event = oct_obj._level_complete_events[0]; // For one wave (both horiz and vert)
+
+                        // oct_obj._level_complete_events[0].wait(); // Just for testing
+
+                        //
+
+                        // ########################################## HERERE RERERERERER
+
+                        // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+
+                        oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+
+                        // _device_queue.wait();
+                        // popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[0],
+                        //                                    "NORMAL -- Level 0\n",
+                        //                                    0,
+                        //                                    8,
+                        //                                    0,
+                        //                                    16,
+                        //                                    oct_obj.getWidth(),
+                        //                                    _device_queue);
+
+                        // ########################################## DONE DONE DONE
+
+                        //
+
+                        // oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+
+                        // oct_obj._level_complete_events[0].wait();
+
+                        // popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[0],
+                        //                                    "AFTER HORIZ o=0 l=0",
+                        //                                    0,
+                        //                                    10,
+                        //                                    0,
+                        //                                    120,
+                        //                                    oct_obj.getWidth(),
+                        //                                    _device_queue);
+                    }
+                    else
+                    {
+                        oct_obj._level_complete_events[0] = downscale_from_prev_octave(octave);
+                    }
                 }
                 else
                 {
-                    oct_obj._level_complete_events[0] = downscale_from_prev_octave(octave);
-                }
-            }
-            else
-            {
-                // Depends on set level event from prev level
-                sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
+                    // Depends on set level event from prev level
 
-                oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
+                    // if(octave == 0)
+                    // {
+                    //     // printf("Not running for Octave 0\n");
+                    // }
+                    // else
+                    {
+                        // printf("Running for octave %d and level = %d\n", octave, level);
+                        // horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
+
+                        sycl::event horiz = horiz_from_prev_level(octave, level, gaussTableChoice);
+
+                        oct_obj._level_complete_events[level] = vert_from_interm_basic(octave, level, horiz);
+
+                        // if(octave == 0)
+                        // {
+                        //     _device_queue.wait();
+                        //     printf("level %d -- ", level);
+                        //     popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[level],
+                        //                                        "NORMAL\n",
+                        //                                        0,
+                        //                                        8,
+                        //                                        0,
+                        //                                        16,
+                        //                                        oct_obj.getWidth(),
+                        //                                        _device_queue);
+                        // }
+                    }
+                }
             }
         }
     }
 
-    for(int octave = 0; octave < _num_octaves; octave++) //
+#ifdef USE_PERSISTENT
+    // // if(!sg_region.use_persistent_block)
+    // if(!use_persistent_block) // Don't need DoG kernel if using persistent block as it's embedded
+#endif
     {
-        Octave& oct_obj = _octaves[octave];
+        // _device_queue.wait(); // REMOVE
+        for(int octave = 0; octave < _num_octaves; octave++)
+        // for(int octave = 1; octave < _num_octaves; octave++) // Skip first one for this test
+        {
+            Octave& oct_obj = _octaves[octave];
 
-        oct_obj._dog_done_event = dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]);
+            oct_obj._dog_done_event = dogs_from_blurred(octave, _levels, oct_obj._level_complete_events[_levels - 1]);
+
+            // if(octave == 0)
+            // {
+            //     _device_queue.wait();
+            //     for(int i = 0; i < _levels - 1; ++i)
+            //     {
+            //         printf("level %d -- ", i);
+            //         popsift::sycl_common::print_region(
+            //           oct_obj.getDogArrayHost()[i], "DoG NORMAL\n", 0, 8, 0, 16, oct_obj.getWidth(), _device_queue);
+            //     }
+            // }
+        }
     }
 }
 
 } // namespace popsift
+
+#if false
+
+// Too complex would require multiple different versions  with template so takes too much time to develop hence using simple 
+// chain that would result in less ideal memory coaleced reads which was the goal and plan with this segmentation that is not complete 
+
+    if(sg_region.use_persistent_block)
+    {
+        // TODO: Figure out col block size
+
+        // Now we know the number of blocks we have to divide to column into should strive to make it a multiple of 32
+        // but that will not be possible so should make all a multiple of 32/sg_widht besides the last one in the corner
+        // that is not -- It will not be a row multiple but it will be wrap around just to have full usage of the
+        // threads
+
+        // Four types of shecduling. Main region, Bottom row, Rightmost col and corner.
+        // Row blocks are all sg_widht wide and each row block has a pixel multiple of sg_widht for full usage. Corner
+        // takes the remaining pixels of Need to pass x_remainder for col start postion and wraping to be computed what
+        // is passed as col block is just the lenght and each work_item need to compute the positions that they are
+        // responsible for
+
+        y_remainder = height % sg_region.sg_block.height;
+
+        if(x_remainder != 0)
+        {
+            // Need to deal with column and possibly corner
+
+            int num_rows_per_sg = sg_region.sg_block.width / x_remainder; // 1
+            int sg_remainder = sg_region.sg_block.width % x_remainder;    // 5
+
+            if(sg_remainder > x_remainder)
+            {
+                // Need to think differently
+            }
+            else
+            {
+                // num_rows_per_sg is always one here
+
+                // Need a set of main rows and a set of rows that will fill full rows for remainder
+
+                // Need full remainder rows
+                int full_rows_sg_remainder = 1;
+
+                while((full_rows_sg_remainder * x_remainder) % sg_remainder != 0)
+                {
+                    full_rows_sg_remainder++;
+                }
+
+                int num_coalesced_rows = (full_rows_sg_remainder * x_remainder) / sg_remainder;
+
+                int total_rows = num_coalesced_rows + full_rows_sg_remainder;
+
+                if(total_rows < sg_region.sg_block.height)
+                {
+                    // It's small enough now we need to figure out if it's usable or if it leaves to large a remainder
+                    int max_rows =
+                      ((sg_region.sg_block.width * sg_region.sg_block.height) * remainder_percentage) / x_remainder;
+
+                    int inner_block_count = total_rows
+                }
+
+                if(total_blocks + y_blocks + 1 <= max_total_sg)
+                {
+                    // Can use two columns for remainder col;
+                    // Not sure if we want to do that
+                }
+
+                if(y_remainder %) {}
+                else
+                {
+                    // Do encoding that is chaing of pixels less coaleced memory reads so less optimal
+                }
+            }
+            else
+            {
+                // No need for corner and column
+            }
+
+            // if(right_col_pixels != 0)
+            // {
+            //     int sg_for_col = max_total_sg - total_blocks - x_blocks; // Free sg that can use for col
+            //     // Might not be need for corner
+            //     if(right_col_pixels % sg_region.sg_block.width == 0 &&
+            //        (right_col_pixels / sg_region.sg_block.width) % sg_for_col == 0)
+            //     {
+            //         // No need for corner
+            //     }
+            //     else
+            //     {
+            //         // Save one for corner
+            //         int rows_per_col_sg = (right_col_pixels / sg_region.sg_block.width) / (sg_for_col - 1);
+            //
+            //         int rows_for_corner = (right_col_pixels / sg_region.sg_block.width) % (sg_for_col - 1);
+            //         int reminder_col_pixels = right_col_pixels % sg_region.sg_block.width;
+            //     }
+            // }
+        }
+        // else we don't need col so should launch a different version throught templte and local and global does not
+        // need it
+        // printf("Free blocks for col =  %d", sg_for_col);
+    }
+#endif

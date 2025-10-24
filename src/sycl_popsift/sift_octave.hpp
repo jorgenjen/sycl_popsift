@@ -10,7 +10,10 @@
 // don't think this is used and hence needed
 // #include "sycl_popsift/s_image.hpp"
 #include "sycl/queue.hpp"
+// #include "sycl_popsift/common/assist.h"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
+#include "sycl_popsift/persistent_config_macros.h" // For USE_ROOT_GROUP macro want one definition
+#include "sycl_popsift/persistent_configuration.hpp"
 
 #include <sycl/sycl.hpp>
 // #include "sift_constants.h"
@@ -44,6 +47,10 @@ class OctaveBase
 
     OctaveBase() = delete;
     OctaveBase(sycl::queue Q);
+
+#if USE_PERSISTENT
+    persistent_pyramid_octave_config _sg_region;
+#endif
 
     void alloc(const Config& conf, int width, int height, int levels);
 

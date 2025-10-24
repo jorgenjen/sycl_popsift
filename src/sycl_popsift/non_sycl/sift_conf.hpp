@@ -328,6 +328,8 @@ struct Config
 
     inline bool getCpuOnly() const { return _cpu_only; }
 
+    inline int getSgPerCu() const { return _sub_group_per_cu; }
+
     bool equal(const Config& other) const;
 
   private:
@@ -400,6 +402,8 @@ struct Config
     bool _print_gauss_tables;
 
     bool _cpu_only;
+
+    int _sub_group_per_cu;
 };
 
 inline bool operator==(const Config& l, const Config& r) { return l.equal(r); }

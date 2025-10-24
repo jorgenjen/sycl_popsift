@@ -20,7 +20,30 @@ option(BindlessInput "Use bindless input image for upscaling" ON)
 option(BindlessArray "Use bindless image array for pyramid" ON)
 
 # Set to off as default and should stay off until it has a working version
-option(JointMatrix "Use Joint Matrix for matching (specific funtion)" ON)
+option(JointMatrix "Use Joint Matrix for matching (specific funtion)" OFF)
+
+# option(JointMatrixBlur "Use Joint Matrix for building the image pyramid" OFF)
+
+# This option is only to attempt to get better performance for the most time
+# using part throught one long lasting wave instead of many kernel launches Only
+# used for sufficiently large octaves
+option(
+  PersistentThreads
+  "Use threads that last for the whole octave building, only used for sufficiently large octaves"
+  OFF)
+
+# For some performance analysis of multiple kernels as I've not been able to
+# make nsight systems record kernel's, But for singular kernel lauches I've been
+# able to use nsight compute so this flags does not do kernel by kernel
+# timerecording as nsight compute deals with that (but could be added) --
+# IMPORANT to remember that the profiling itself adds a small overhead (accurate
+# due to using sycl queue profiler)
+option(Profiling "Time certain parts of application" OFF)
+
+option(
+  PerfTestingFunctions
+  "Compiles different functions used for performance testing and data generation"
+  OFF)
 
 # option(Profiling "For profiling mode (used for nsight)" ON)
 
@@ -53,6 +76,8 @@ include(cmake/ConfigureSYCL.cmake)
 # # Enable AddressSanitizer set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}
 # -fsanitize=address")
 
+# list(APPEND SYCL_FALGS -fsycl-device-code-split=per_kernel)
+
 # TODO: Make it like this for amd and intel gpu's too so you can toggle on and
 # off cpu only
 if(${ENABLE_CUDA})
@@ -70,7 +95,23 @@ else()
   list(APPEND SYCL_FLAGS -O3)
 endif()
 
-# if(${Profiling}) message(STATUS "Running with lineinfo flag fro profiling")
+if(${Profiling})
+  # message(STATUS "Running with lineinfo flag fro profiling")
+  message(
+    STATUS
+      "Profiling -- Compiling with --lineinfo and -q with -O3, Also using sycl queue profiling for overall metrics"
+  )
+  list(APPEND SYCL_FLAGS -gline-tables-only -g -O3)
+  # list(APPEND SYCL_FLAGS -gline-tables-only)
+
+  # For sycl queue profiling (for overall frame performance and such)
+  add_compile_definitions(QUEUE_PROFILING=1)
+endif()
+
+if(${PersistentThreads})
+  add_compile_definitions(USE_PERSISTENT=1)
+endif()
+
 #
 # list(APPEND SYCL_FLAGS -lineinfo) endif()
 
@@ -100,6 +141,15 @@ if(PopSift_EXPERIMENTAL AND ${ENABLE_CUDA})
     message(
       STATUS "Joint matrix is ${JointMatrix} - Using float for descriptor")
   endif()
+
+  # Not using Joint matrix for blurint due to using fp16 and fp32 mix so not
+  # well for repeated convolutions
+
+  # if(JointMatrixBlur) add_compile_definitions(BLUR_JOINT_MATRIX=1) message(
+  # STATUS "JointMatrixBlur ${JointMatrixBlur} -- Using Joint matrix to build
+  # pyramid" ) else() add_compile_definitions(BLUR_JOINT_MATRIX=1) message(
+  # STATUS "JointMatrixBlur ${JointMatrixBlur} -- Normal split convolution for
+  # pyramid building" ) endif()
 else()
   # Non CUDA or non Experimental
   if(PopSift_EXPERIMENTAL)
@@ -128,6 +178,26 @@ else()
   # Not cuda exclusive
   add_compile_definitions(USE_JOINT_MATRIX=0)
 
+endif()
+
+if(PerfTestingFunctions)
+  add_compile_definitions(PERF_TESTING_FUNCTIONS=1)
+  message(STATUS "Performance Testing functions ${PerfTestingFunctions}")
+else()
+  add_compile_definitions(PERF_TESTING_FUNCTIONS=0)
+  message(STATUS "Performance Testing functions ${PerfTestingFunctions}")
+endif()
+
+# Need to figure out number of sub-groups per Compute Unit for GPU (this can be
+# overriden in config class passed to PopSift)
+
+if(${ENABLE_CUDA})
+  message(STATUS "CUDA_COMPUTE_CAPABILITY = ${CUDA_COMPUTE_CAPABILITY}")
+  add_compile_definitions(CUDA_CC=${CUDA_COMPUTE_CAPABILITY})
+endif()
+
+if(${ENABLE_HIP})
+  add_compile_definitions(HIP_ARCH=${HIP_GFX_ARCH})
 endif()
 
 # ==============================================================================

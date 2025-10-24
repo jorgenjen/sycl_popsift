@@ -54,6 +54,8 @@ struct DevBuffers
     Feature* features;
 };
 
+// persistent_pyramid_octave_config compute_persistent_sg_region_block(int width, int height);
+
 // extern thread_local ExtremaCounters hct;
 // extern __device__ ExtremaCounters dct;
 // extern thread_local ExtremaBuffers hbuf;
@@ -102,6 +104,16 @@ class Pyramid
     // cudaStream_t _download_stream;
 
   public:
+#if QUEUE_PROFILING
+    // For ease of use it's in Public (only for data collection)
+    sycl::event _input_horiz_event; // For timing each frame compute
+    sycl::event _final_desc_event;
+#endif
+
+#ifdef USE_PERSISTENT
+    inline static int largest_span;
+#endif
+
     enum GaussTableChoice
     {
         Interpolated_FromPrevious,
@@ -148,6 +160,14 @@ class Pyramid
 
   private:
     // sycl::event horiz_from_input_image(const Config& conf, Image* base, sycl::event d_gauss_write);
+
+#ifdef USE_PERSISTENT
+    // bool build_octave_one_wave_input(const Config& conf,
+    sycl::event build_octave_one_wave_input(const Config& conf,
+                                            ImageBase* base,
+                                            sycl::event d_gauss_write,
+                                            sycl::event img_write);
+#endif
 
     sycl::event horiz_from_input_image(const Config& conf,
                                        ImageBase* base,

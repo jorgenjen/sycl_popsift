@@ -7,7 +7,10 @@
 #include "sycl_popsift/gauss_filter.hpp"
 #include "sycl_popsift/non_sycl/sift_conf.hpp"
 #include "sycl_popsift/sift_constants.hpp"
+#include "sycl_popsift/sift_extremum.h"
+#include "sycl_popsift/sift_pyramid.hpp"
 
+// #include <sycl/ext/oneapi/device_info.hpp> // For Num compute units extension
 #include <sycl/sycl.hpp>
 
 #include <cmath> // ceilf
@@ -22,28 +25,20 @@ using std::endl;
 using std::max;
 using std::min;
 
-namespace syclexp = sycl::ext::oneapi::experimental;
-
-// bool matrixSuported()
-// {
-//     using myparams =
-//       syclexp::matrix::matrix_params<syclexp::architecture::nvidia_gpu_sm_86, int8_t, int8_t, int, int, 16, 16, 32>;
-//     size_t NDRangeM = M / myparams::M; // Assertion would happen at this line
-//     size_t NDRangeN = N / myparams::N;
+// #include <cuda_runtime_api.h>
 //
-//     return true;
+// int get_max_warps_per_sm()
+// {
+//     cudaDeviceProp prop;
+//     cudaGetDeviceProperties(&prop, 0);
+//     return prop.maxThreadsPerMultiProcessor / prop.warpSize;
 // }
 
-// Primary template: assumes unsupported
+#define PRINT_MATRIX_OPTIONS 0
 
-// template<typename Group,
-//          typename T,
-//          size_t Rows,
-//          size_t Cols,
-//          syclexp::matrix::matrix_layout Layout,
-//          syclexp::matrix::access::mode Mode>
-// struct joint_matrix_supported;
+namespace syclexp = sycl::ext::oneapi::experimental;
 
+#if PRINT_MATRIX_OPTIONS
 std::string matrix_type_to_string(syclexp::matrix::matrix_type type)
 {
     switch(type)
@@ -60,9 +55,68 @@ std::string matrix_type_to_string(syclexp::matrix::matrix_type type)
         default: return "unknown";
     }
 }
+#endif
+
+inline void PopSift::set_sg_per_cu()
+{
+// Decide Number of sub_groups per Compute Unit
+// Not the best way of doing it and need's to be maintained. Can also be supplied in config as argument which then is
+// used instead of this selection
+// Should be replaced if possible to make this selection accurately at runtime
+#ifdef CUDA_CC
+    if constexpr(CUDA_CC == 86 || CUDA_CC == 89 || CUDA_CC == 30 || CUDA_CC == 35)
+    {
+        sg_per_cu = 48;
+    }
+    else if constexpr(CUDA_CC < 20)
+    {
+        sg_per_cu = 24;
+    }
+    else if constexpr(CUDA_CC < 35)
+    {
+        sg_per_cu = 32;
+    }
+    else
+    {
+        // Most common case
+        sg_per_cu = 64;
+    }
+#endif
+
+#ifdef HIP_ARCH
+
+#define STRINGIFY(x) #x                  // Adds quotes around x
+#define STRINGIFY_EXPAND(x) STRINGIFY(x) // Forces expansion of x first
+
+    const char* gfx_arch_str = STRINGIFY_EXPAND(HIP_ARCH);
+    const int gfx_version = std::atoi(gfx_arch_str + 3); // Remove gfx part of name (untested no access to amd card)
+
+    if(gfx_version > 1000 && gfx_version < 1030)
+    {
+        sg_per_cu = 40; // RDNA1 has 40 wavefronts per CU the rest of modern has 32
+    }
+    else
+    {
+        sg_per_cu = 32;
+    }
+
+#endif
+
+    // If it's intel GPU I've not found a good way and thye are split in to slices and seem to be more dynamic so not so
+    // easy to figure out in that case would be better to use the config to set the value for the card you are using
+
+    // Testing different values for cards can always be beneficial. If not set and it stays at -1 then persistent
+    // threads will not be used
+}
 
 inline void PopSift::initQueue()
 {
+#if QUEUE_PROFILING
+    sycl::property_list queue_proplist = sycl::property_list{sycl::property::queue::enable_profiling{}};
+#else
+    sycl::property_list queue_proplist = {};
+#endif
+
 #ifndef CPU_ONLY
     // should probably also have a compile time flag --experimental to enable this feature
     if constexpr(USE_BINDLESS_INPUT && USE_BINDLESS_ARRAY &&
@@ -78,12 +132,14 @@ inline void PopSift::initQueue()
             if(dev.has(sycl::aspect::ext_oneapi_bindless_images) && dev.has(sycl::aspect::ext_oneapi_image_array) &&
                dev.has(sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d))
             {
-                std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>()
-                          << std::endl
+                // std::cout << "Running on: " << _device_queue.get_device().get_info<sycl::info::device::name>()
+                std::cout << "Running on: " << dev.get_info<sycl::info::device::name>() << std::endl
                           << "\t--> supports ext_oneapi_bindless_images: YES" << std::endl
                           << "\t--> supports ext_oneapi_image_array: YES" << std::endl;
 
-                _device_queue = sycl::queue(sycl::context{dev}, dev);
+                // _device_queue = sycl::queue(sycl::context{dev}, dev);
+                _device_queue = sycl::queue(sycl::context{dev}, dev, queue_proplist);
+
                 return; // We always select first gpu that had the aspect (might be a way to select the best one)
                         // but most systems will be single gpu anyways
             }
@@ -112,9 +168,9 @@ inline void PopSift::initQueue()
                           << std::endl
                           << std::endl;
 
-                _device_queue = sycl::queue(sycl::context{dev}, dev);
-                break; // We always select first gpu that had the aspect (might be a way to select the best one)
-                       // but most systems will be single gpu anyways
+                _device_queue = sycl::queue(sycl::context{dev}, dev, queue_proplist);
+                return; // We always select first gpu that had the aspect (might be a way to select the best one)
+                        // but most systems will be single gpu anyways
             }
         }
 
@@ -130,7 +186,7 @@ inline void PopSift::initQueue()
             // If there is no GPU it will throw exception and use CPU in catch
 
             sycl::device dev = sycl::device{sycl::gpu_selector_v};
-            _device_queue = sycl::queue(sycl::context{dev}, dev);
+            _device_queue = sycl::queue(sycl::context{dev}, dev, queue_proplist);
         }
         catch(sycl::exception const& ex)
         {
@@ -158,7 +214,7 @@ inline void PopSift::initQueue()
         //   sycl::property::queue::enable_profiling{}});
 
         sycl::device dev = sycl::device{sycl::cpu_selector_v};
-        _device_queue = sycl::queue(sycl::context{dev}, dev);
+        _device_queue = sycl::queue(sycl::context{dev}, dev, queue_proplist);
     }
     catch(const sycl::exception& e)
     {
@@ -209,15 +265,47 @@ PopSift::PopSift(const popsift::Config& config, popsift::Config::ProcessingMode 
     else
         _pipe._thread_stage2.reset(new std::thread(&PopSift::matchPrepareLoop, this));
 
+    sycl::device dev = _device_queue.get_device();
+    if(dev.has(sycl::aspect::queue_profiling))
+    {
+        std::cout << "Queue profiling is supported.\n";
+    }
+
+    num_cu = dev.get_info<sycl::info::device::max_compute_units>(); // static public
+    set_sg_per_cu();
+
 // #if USE_JOINT_MATRIX && !CPU_ONLY // I
 #if USE_JOINT_MATRIX // AMX (currently only on 4th, 5th and 6th generation xeon CPU's) does supoprt the matrix extension
     // Should be done before first call to match if not it will use normal version until it's true
     // This could be done at compile time if you pass the arcitecture from cmake check and use the compile time query
     // But I think in this case it does not matter much. As this way is more flexible (and easier to implement :D)
-    sycl::device dev = _device_queue.get_device();
+    // sycl::device dev = _device_queue.get_device();
     auto combinations = dev.get_info<sycl::ext::oneapi::experimental::info::device::matrix_combinations>();
+
+    auto max_cu = dev.get_info<sycl::info::device::max_compute_units>();
+    auto max_wg = dev.get_info<sycl::info::device::max_work_group_size>();
+    auto max_wi_dimensions = dev.get_info<sycl::info::device::max_work_item_dimensions>();
+
+// There is an extension that is supposed to be more consistent and less ambigous, but I could not make it work
+// auto num_cu_ext = dev.get_info<sycl::ext::oneapi::info::device::num_compute_units>();
+// auto num_cu_ext = dev.get_info<sycl::info::device::num_compute_units>();
+// auto num_cu_ext = sycl::ext::oneapi::info::device::num_compute_units()
+#ifdef SYCL_EXT_ONEAPI_DEVICE_ARCHITECTURE
+    printf("Device arhitectures are defined and can be used\n");
+
+#endif
+
+    printf("\n\nMax CU = %d -- Max WG = %zu -- WI dims = %d\n\n", max_cu, max_wg, max_wi_dimensions);
     for(const auto& combo : combinations)
     {
+#if PRINT_MATRIX_OPTIONS
+        std::cout << "M: " << combo.msize << ", N: " << combo.nsize << ", K: " << combo.ksize
+                  << ", A type: " << matrix_type_to_string(combo.atype)
+                  << ", B type: " << matrix_type_to_string(combo.btype)
+                  << ", C type: " << matrix_type_to_string(combo.ctype)
+                  << ", D type: " << matrix_type_to_string(combo.dtype) << "\n";
+#endif
+
         if(combo.atype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp16 &&
            combo.btype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp16 &&
            combo.ctype == sycl::ext::oneapi::experimental::matrix::matrix_type::fp32 &&
@@ -289,6 +377,15 @@ sycl::event PopSift::init_gauss_filter()
           1, __FILE__, __LINE__, "Failed to allocate gauss filter on device", _device_queue);
     }
 
+#ifdef USE_PERSISTENT
+    popsift::Pyramid::largest_span = max_span();
+
+    // Find largest span and use that
+
+    // const int span = d_gauss->dd.span[0];
+
+#endif
+
     // Look into partial updates for this one (currently any change to config would be expensive...) but again who
     // updates config while it's running...
     return _device_queue.memcpy(_d_gauss, &_h_gauss, sizeof(popsift::GaussInfo));
@@ -325,6 +422,12 @@ bool PopSift::applyConfiguration(bool force)
         _d_gauss_write = this->init_gauss_filter();
 
         _d_consts_write = this->init_constants();
+
+        if(_config.getSgPerCu() != -1)
+        {
+            printf("Setting sub_group per Compute Unit value\n");
+            this->sg_per_cu = _config.getSgPerCu();
+        }
     }
     _shadow_config = _config;
     return true;
@@ -411,7 +514,7 @@ void PopSift::uploadImages()
 
         job->setImg(img, _config.getUpscaleFactor());
 
-        _device_queue.wait();
+        // _device_queue.wait();
 
         _pipe._queue_stage2.push(job);
     }
@@ -438,7 +541,12 @@ void PopSift::extractDownloadLoop()
 
         p._pyramid->step1(_config, img, _d_gauss_write, job->getImgTransferEvent());
 
-        _device_queue.wait(); // SHould not be needed
+        // _device_queue.wait(); // SHould not be needed
+
+#if QUEUE_PROFILING
+        double frame_start =
+          p._pyramid->_input_horiz_event.template get_profiling_info<sycl::info::event_profiling::command_start>();
+#endif
 
         // uploaded Image object is no longer needed, release for reuse
         p._unused.push(img);
@@ -457,6 +565,21 @@ void PopSift::extractDownloadLoop()
 
         // Fufill the promise
         _device_queue.wait_and_throw(); // SHoud use event to wait for last part
+
+#if QUEUE_PROFILING
+        double frame_end =
+          p._pyramid->_final_desc_event.template get_profiling_info<sycl::info::event_profiling::command_end>();
+
+        printf("\n\nFrame time = %lf nanoseconds == %lf ms\n\n",
+               frame_end - frame_start,
+               (frame_end - frame_start) / 1000000);
+
+        // TODO: Store to file in csv of json format, STORE multiple timings per frame time from start to Gaussian is
+        // done, Then to DoG is done, Then to extrema is done and then orientation ans so on. (Due to not using in-order
+        // queue I don't know which will finish last so would probably need to track multiple and use the largest value
+        // as end time)
+#endif
+
         job->setFeatures(features);
     }
 
@@ -494,6 +617,8 @@ void PopSift::matchPrepareLoop()
             // There are wait's in step2 descriptor hence this works TODO: Replace with events
 
             features = p._pyramid->clone_device_descriptors(_config);
+            // WARNING: Truly need to remove this wait a huge bottleneck to wait for a mem transfer there is no more
+            // work to be done here... This is probably why there is such a gap between running kernels
             _device_queue.wait(); // Should be removed and only depend on dependencies events
         }
         catch(const std::exception& e)
@@ -508,7 +633,6 @@ void PopSift::matchPrepareLoop()
         // Matching functions using tensor will wait for thie do be done by event
         // Could add function to wait for it do be done if user is using it's own matching function
 
-        // BUG: SOMETHING IS NOT CORRECT HERE CAUSES ILLEGAL MEMORY ADDRESS
         features->compute_squared_norms();
 #endif
         // Now squared norm is scheduled to be computed and we can fuill promise and move on to next
@@ -591,3 +715,29 @@ void PopSift::Pipe::uninit()
         delete img;
     }
 }
+
+/*************************************************************
+ * PERFORMANCE TESTING FUNCTIONS
+ *************************************************************/
+#if PERF_TESTING_FUNCTIONS
+
+// Function exists essentially only to use the _device_queue so that we dont have to copy that selection process to
+// benchmark file
+// void PopSift::benchmarkMatchingPerformance(bool matrix, int seed, std::vector<std::array<FeatureType, 128>>
+// desc_pool)
+// {
+//     // Semi syntetic benchmark using pool of descriptors and randomly selecting (based on seed for repetablility) the
+//     // descriptors to include in the test. Then it's done many times for multiple test cases
+//     printf("Hello monkey land\n");
+//
+//     // Run 3 iterations to get rid of cold start behaviour (loading and such as the startup jitter is not that
+//     // important it's the real performance that is sustained that is most likely going to be used in real world
+//
+//     popsift::FeaturesDev features(_device_queue);
+//
+//     // popsift::Descriptor* descs = features.getDescriptors();
+//
+//     memcpy
+// }
+
+#endif

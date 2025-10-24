@@ -25,6 +25,8 @@
 #include <memory>
 #include <sstream>
 
+#define ZERO_PADDED_REMAINDER_MATRIX true
+
 using namespace std;
 
 namespace popsift {
@@ -133,6 +135,72 @@ FeaturesDev::FeaturesDev(sycl::queue Q, int num_ext, int num_ori)
     reset(num_ext, num_ori);
 }
 
+// Load from external file
+FeaturesDev::FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::Descriptor>& features)
+  : _device_queue(Q)
+  , _ext(nullptr)
+  , _ori(nullptr)
+  , _rev(nullptr)
+#if USE_JOINT_MATRIX
+  , _squared_norms(nullptr)
+#endif
+{
+#if ZERO_PADDED_REMAINDER_MATRIX && !TRANSFORM_TO_HALF
+    // Need it to be able to zero padd  hence large neought segment for that to avoid tail logic for matrix match
+    _ori =
+      popsift::sycl_common::malloc_sharedT<Descriptor>(num_ori + num_ori % 16,
+                                                       __FILE__,
+                                                       __LINE__,
+                                                       "Could not allocate shared memory for orientation Descriptors",
+                                                       _device_queue);
+
+    // Set the tail of the segment to 0 (zero padd )
+    _device_queue.memset(_ori + num_ori, 0, (num_ori % 16) * sizeof(popsift::Descriptor));
+#else
+    _ori = popsift::sycl_common::malloc_sharedT<Descriptor>(
+      num_ori, __FILE__, __LINE__, "Could not allocate shared memory for orientation Descriptors", _device_queue);
+#endif
+
+#if ZERO_PADDED_REMAINDER_MATRIX && TRANSFORM_TO_HALF
+    _ori_half = popsift::sycl_common::malloc_devT<DescriptorHalf>(
+      num_ori + num_ori % 16,
+      __FILE__,
+      __LINE__,
+      "Could not allocate shared memory for orientation Descriptors in fp16",
+      _device_queue);
+
+    // Set the tail of the segment to 0 (zero padd )
+    _device_queue.memset(_ori_half + num_ori, 0, (num_ori % 16) * sizeof(popsift::DescriptorHalf));
+    // The rest is set in squared_norms part
+#endif
+
+    _device_queue.memcpy(_ori, features.data(), num_ori * sizeof(popsift::Descriptor));
+
+#if USE_JOINT_MATRIX
+    if(_squared_norms != nullptr)
+    {
+        sycl::free(_squared_norms, _device_queue);
+        _squared_norms = nullptr;
+    }
+
+#if ZERO_PADDED_REMAINDER_MATRIX
+    _squared_norms = popsift::sycl_common::malloc_devT<float>(
+      num_ori + num_ori % 16, __FILE__, __LINE__, "Failed to allocate squared norms array", _device_queue);
+
+    _device_queue.memset(_squared_norms + num_ori, 0, (num_ori % 16) * sizeof(float));
+#else
+    _squared_norms = popsift::sycl_common::malloc_devT<float>(
+      num_ori, __FILE__, __LINE__, "Failed to allocate squared norms array", _device_queue);
+#endif
+
+#endif
+
+    setDescriptorCount(num_ori);
+
+    // Slow should return the event but fine for mathinc benchmarking but not real world
+    _device_queue.wait();
+}
+
 FeaturesDev::~FeaturesDev()
 {
     sycl::free(_ext, _device_queue);
@@ -141,11 +209,15 @@ FeaturesDev::~FeaturesDev()
 
 #if USE_JOINT_MATRIX
     sycl::free(_squared_norms, _device_queue);
+#if ZERO_PADDED_REMAINDER_MATRIX && TRANSFORM_TO_HALF
+    sycl::free(_ori_half, _device_queue);
+#endif
 #endif
 }
 
 void FeaturesDev::reset(int num_ext, int num_ori)
 {
+    fprintf(stderr, "WER ARE CALLING RESET????\n\n");
     if(_ext != nullptr)
     {
         sycl::free(_ext, _device_queue);
@@ -161,22 +233,35 @@ void FeaturesDev::reset(int num_ext, int num_ori)
         sycl::free(_rev, _device_queue);
         _rev = nullptr;
     }
-#if USE_JOINT_MATRIX
+#if ZERO_PADDED_REMAINDER_MATRIX && USE_JOINT_MATRIX
     if(_squared_norms != nullptr)
     {
         sycl::free(_squared_norms, _device_queue);
         _squared_norms = nullptr;
     }
     _squared_norms = popsift::sycl_common::malloc_devT<float>(
-      num_ori, __FILE__, __LINE__, "Failed to allocate squared norms array", _device_queue);
+      num_ori + num_ori % 16, __FILE__, __LINE__, "Failed to allocate squared norms array", _device_queue);
 #endif
 
     // TODO: Look into using malloc_deviceT as I don't see why we need shared (managed in cuda)
     // If user want host access just get a hostPointer no?
     _ext = popsift::sycl_common::malloc_sharedT<Feature>(
       num_ext, __FILE__, __LINE__, "Could not allocate shared memory Feautre for clone ", _device_queue);
+
+#if ZERO_PADDED_REMAINDER_MATRIX && USE_JOINT_MATRIX
+    // Need segment to be full multiple of 16 descriptors so the remainder can be zero padded allowing for non-special
+    // handling Of tail which have taken alot of the compute time
+    _ori = popsift::sycl_common::malloc_sharedT<Descriptor>(num_ori + num_ori % 16,
+                                                            __FILE__,
+                                                            __LINE__,
+                                                            "Could not allocate shared memory Descriptor for clone ",
+                                                            _device_queue);
+
+#else
     _ori = popsift::sycl_common::malloc_sharedT<Descriptor>(
       num_ori, __FILE__, __LINE__, "Could not allocate shared memory Descriptor for clone ", _device_queue);
+#endif
+
     _rev = popsift::sycl_common::malloc_sharedT<int>(
       num_ori, __FILE__, __LINE__, "Could not allocate shared memory int array for clone ", _device_queue);
 
@@ -190,10 +275,7 @@ template<typename GroupType>
 inline FeatureType l2_in_t0(const sycl::vec<FeatureType, 4>* lptr,
                             const sycl::vec<FeatureType, 4>* rptr,
                             GroupType& group,
-                            sycl::nd_item<1>& it,
-                            float l_norm, // DELETE
-                            float r_norm  // DELETE
-)
+                            sycl::nd_item<1>& it)
 {
     const sycl::vec<FeatureType, 4> lval = lptr[it.get_local_id(0)];
     const sycl::vec<FeatureType, 4> rval = rptr[it.get_local_id(0)];
@@ -205,7 +287,7 @@ inline FeatureType l2_in_t0(const sycl::vec<FeatureType, 4>* lptr,
 
     float res = mval.x() * mval.x() + mval.y() * mval.y() + mval.z() * mval.z() + mval.w() * mval.w();
 #else
-#define COMPUTE_MATRIX_LIKE 1
+#define COMPUTE_MATRIX_LIKE 0
 
 #if COMPUTE_MATRIX_LIKE
     // JUST FOR VERIFICATION OF USING THE NORMS
@@ -254,21 +336,17 @@ class Compute_distance
     int l_len;
     Descriptor* r;
     int r_len;
-    float* l_norm;
-    float* r_norm;
 
   public:
-    // Compute_distance(sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len)
-    Compute_distance(
-      sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len, float* l_norm, float* r_norm)
+    Compute_distance(sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len)
+      // Compute_distance(
+      //   sycl::vec<int, 3>* match_matrix, Descriptor* l, int l_len, Descriptor* r, int r_len, float* l_norm, float*
+      //   r_norm)
       : match_matrix(match_matrix)
       , l(l)
       , l_len(l_len)
       , r(r)
-      , r_len(r_len)
-      , l_norm(l_norm) // REMOVE
-      , r_norm(r_norm) // REMOVE jUST FOR TESTING
-    {};
+      , r_len(r_len) {};
 
     inline void operator()(sycl::nd_item<1> it) const
     {
@@ -296,7 +374,7 @@ class Compute_distance
         {
             const sycl::vec<FeatureType, 4>* rptr = reinterpret_cast<const sycl::vec<FeatureType, 4>*>(&r[i]);
 
-            const float res = l2_in_t0(lptr, rptr, group, it, l_norm[idx], r_norm[i]);
+            const float res = l2_in_t0(lptr, rptr, group, it);
 
             if(it.get_local_id(0) == 0) // Could use group.leader() for sub_group version
             {
@@ -321,15 +399,15 @@ class Compute_distance
             bool accept = ((match_1st_val / match_2nd_val) < 0.8f);
             match_matrix[it.get_group(0)] = sycl::vec<int, 3>(match_1st_idx, match_2nd_idx, accept);
 
-            if(accept)
-            {
-                syclexp::printf("match_matrix[%d] = (%d, %d) --> (%f, %f)\n",
-                                idx,
-                                match_1st_idx,
-                                match_2nd_idx,
-                                match_1st_val,
-                                match_2nd_val);
-            }
+            // if(accept)
+            // {
+            //     syclexp::printf("match_matrix[%d] = (%d, %d) --> (%f, %f)\n",
+            //                     idx,
+            //                     match_1st_idx,
+            //                     match_2nd_idx,
+            //                     match_1st_val,
+            //                     match_2nd_val);
+            // }
         }
     }
 };
@@ -391,6 +469,45 @@ class Compute_squared_norm
     }
 };
 
+#if TRANSFORM_TO_HALF
+class Compute_squared_norm_fp16_transform
+{
+  private:
+    Descriptor* desc;          // Need float precision for square
+    DescriptorHalf* desc_half; // Need half for matrix compute fp16 and tf32 gives same result due to 10 mantisa bits
+    float* squared_norms;
+
+  public:
+    Compute_squared_norm_fp16_transform(Descriptor* desc, DescriptorHalf* desc_half, float* squared_norms)
+      : desc(desc)
+      , desc_half(desc_half)
+      , squared_norms(squared_norms) {};
+
+    inline void operator()(sycl::nd_item<1> it) const
+    {
+        const int idx = it.get_group(0);
+
+        const sycl::vec<float, 4>* desc_ptr = reinterpret_cast<const sycl::vec<float, 4>*>(&desc[idx]);
+
+        sycl::vec<float, 4> desc_val = desc_ptr[it.get_local_id(0)];
+
+        sycl::vec<sycl::half, 4>* half_ptr = reinterpret_cast<sycl::vec<sycl::half, 4>*>(&desc_half[idx]);
+
+        half_ptr[it.get_local_id(0)] = desc_val.convert<sycl::half>();
+
+        desc_val = desc_val * desc_val;
+        sycl::half sum = desc_val.x() + desc_val.y() + desc_val.z() + desc_val.w();
+
+        sum = sycl::reduce_over_group(it.get_sub_group(), sum, sycl::plus<sycl::half>());
+        if(it.get_local_id(0) == 0)
+        {
+            // Only leader writes
+            squared_norms[idx] = static_cast<float>(sum); // to avoid cast in matching kernel
+        }
+    }
+};
+#endif
+
 struct scan_state
 {
     sycl::vec<float, 2> value;
@@ -398,13 +515,14 @@ struct scan_state
 };
 
 // template<bool SWAP> // Wheter l is the objects descriptrs or if it was swaped due to l_len < r_len
+
 class Compute_distance_matrix_pre_norm
 {
     sycl::vec<int, 3>* match_matrix;
     // Descriptor* l;
     sycl::half* l;
     float* l_norm;
-    // int l_len; // NOTE: Don't think I need l_len
+    int l_len; // Needed for remainder
     // Descriptor* r;
     sycl::half* r; // for clear intent and one cast
     float* r_norm;
@@ -418,7 +536,7 @@ class Compute_distance_matrix_pre_norm
     Compute_distance_matrix_pre_norm(sycl::vec<int, 3>* match_matrix,
                                      sycl::half* l,
                                      float* l_norm,
-                                     // int l_len,
+                                     int l_len,
                                      sycl::half* r,
                                      float* r_norm,
                                      int r_len,
@@ -426,7 +544,7 @@ class Compute_distance_matrix_pre_norm
       : match_matrix(match_matrix)
       , l(l)
       , l_norm(l_norm)
-      // , l_len(l_len)
+      , l_len(l_len) // Needed to support remainder
       , r(r)
       , r_norm(r_norm)
       , r_len(r_len)
@@ -721,6 +839,8 @@ class Compute_distance_matrix_pre_norm
         // Loop over the tail features of r to match with this set of 16 l features (not sure where the limit goes for
         // when it's better to do zero padding now just doing one by one for all)
 
+#if !ZERO_PADDED_REMAINDER_MATRIX
+
         const sycl::vec<sycl::half, 4>* lptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(l_start);
         const sycl::vec<sycl::half, 4>* rptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(r);
 
@@ -770,6 +890,7 @@ class Compute_distance_matrix_pre_norm
                 }
             }
         }
+#endif
 
         // Then need to do the 80 percent of nearest neigtour and write back the match matrix
         if(!second_row) // x < 16
@@ -804,26 +925,15 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     sycl::event matchEvent;
     if(useSubGroup)
     {
-        matchEvent =
-          _device_queue.parallel_for<compute_distance_sub_group>(sycl::nd_range{global, local},
-                                                                 Compute_distance<true>(match_matrix,
-                                                                                        getDescriptors(),
-                                                                                        l_len,
-                                                                                        other->getDescriptors(),
-                                                                                        r_len,
-                                                                                        getSquaredNorms(),
-                                                                                        other->getSquaredNorms()));
+        matchEvent = _device_queue.parallel_for<compute_distance_sub_group>(
+          sycl::nd_range{global, local},
+          Compute_distance<true>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
     }
     else
     {
-        matchEvent = _device_queue.parallel_for(sycl::nd_range{global, local},
-                                                Compute_distance<false>(match_matrix,
-                                                                        getDescriptors(),
-                                                                        l_len,
-                                                                        other->getDescriptors(),
-                                                                        r_len,
-                                                                        getSquaredNorms(),
-                                                                        other->getSquaredNorms()));
+        matchEvent = _device_queue.parallel_for(
+          sycl::nd_range{global, local},
+          Compute_distance<false>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
     }
 
     auto wait_for_matrix = [event = std::make_shared<sycl::event>(matchEvent), &Q = _device_queue]() {
@@ -846,6 +956,7 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     return std::make_tuple(match_matrix, wait_for_matrix, free_matrix);
 }
 
+#if USE_JOINT_MATRIX
 void FeaturesDev::compute_squared_norms()
 {
     // const int l_len = getDescriptorCount();
@@ -853,18 +964,35 @@ void FeaturesDev::compute_squared_norms()
     sycl::range global{static_cast<size_t>(getDescriptorCount() * 32)};
     sycl::range local{32};
 
+#if TRANSFORM_TO_HALF
+    _norms_computed_event = _device_queue.parallel_for(
+      sycl::nd_range{global, local},
+      Compute_squared_norm_fp16_transform(getDescriptors(), getDescriptorsHalf(), getSquaredNorms()));
+
+#else
+    fprintf(stderr,
+            "Doing fp16_transform size of %zu == 128 * 4 == 512 -- half %zu\n",
+            sizeof(popsift::Descriptor),
+            sizeof(popsift::DescriptorHalf));
     _norms_computed_event = _device_queue.parallel_for(sycl::nd_range{global, local},
                                                        Compute_squared_norm(getDescriptors(), getSquaredNorms()));
 
+#endif
+
     // Compute_distance(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
 }
+#endif
 
+#define USE_MATRIX_FOR_REMAINDER true
+
+#define VERIFY_MATRIX_SUPPORT false
 std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> FeaturesDev::preNormMatrixMatchAndReturn(
   FeaturesDev* other)
 {
 #if !USE_JOINT_MATRIX
     return matchAndReturn(other);
 #else
+#if VERIFY_MATRIX_SUPPORT
     if(!PopSift::matrixSupported)
     {
         // Could have gotten here before we have found supported matrix layout or matrix layout not supported
@@ -876,21 +1004,31 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
                 "condition of setting the flag\n");
         return matchAndReturn(other);
     }
+#endif
     int l_len = getDescriptorCount();
     int r_len = other->getDescriptorCount();
 
-    // should swap around so that we use l as the longest for better occupancy
+#if ZERO_PADDED_REMAINDER_MATRIX
+    int remainder = (l_len % 16) * 32;
 
+    // Padd to be diviisble by 16
+    l_len += l_len % 16;
+    r_len += r_len % 16;
+
+    sycl::range global{static_cast<size_t>((l_len >> 4) * 32)}; // Ensured to be divisible by 16
+#else
+    sycl::range global{static_cast<size_t>((l_len >> 4) * 32)}; // floor division by 16 then multiply by 32
+#endif
+
+    // printf("l_len = %d -- r_len = %d\n", l_len, r_len);
+
+    // This one is also larger tan needed in case of remaidner
     sycl::vec<int, 3>* match_matrix =
       popsift::sycl_common::malloc_sharedT<sycl::vec<int, 3>>(l_len, __FILE__, __LINE__, "", _device_queue);
 
     // sycl::event matchEvent;
 
     // sycl::range global{static_cast<size_t>(((l_len) - (l_len % 16)) * 32)}; // WRONG
-    sycl::range global{static_cast<size_t>((l_len >> 4) * 32)}; // floor division by 16 then multiply by 32
-    // Need to deal with remainder in normal loop (different kernel)
-
-    // sycl::range global{32}; // just one for testing
     sycl::range local{32};
 
     sycl::event matchEvent = _device_queue.submit([&](sycl::handler& cgh) {
@@ -899,20 +1037,34 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
         auto compute_tile = sycl::local_accessor<float, 1>(16 * 16, cgh);
         cgh.parallel_for(sycl::nd_range{global, local},
                          Compute_distance_matrix_pre_norm(match_matrix,
+#if TRANSFORM_TO_HALF
+                                                          reinterpret_cast<sycl::half*>(getDescriptorsHalf()),
+#else
                                                           reinterpret_cast<sycl::half*>(getDescriptors()),
+#endif
                                                           getSquaredNorms(),
+                                                          l_len,
+
+#if TRANSFORM_TO_HALF
+                                                          reinterpret_cast<sycl::half*>(other->getDescriptorsHalf()),
+#else
                                                           reinterpret_cast<sycl::half*>(other->getDescriptors()),
+#endif
                                                           other->getSquaredNorms(),
                                                           r_len,
                                                           compute_tile));
     });
 
+#if USE_MATRIX_FOR_REMAINDER
+
     sycl::range remainderGlobal{static_cast<size_t>((l_len % 16) * 32)};
+
+// FROM INITIAL TEST NOT USING NORM IS FASTER (not huge (1.894ms vs 1.839))
 
 // DATA COLLECTION TO PERFORM:
 // SHOULD HAVE AN EXPERIMENT WHERE WE COMPARE USING PRECOMPUTED NORMS VS NOT FOR PERFORMANCE BOTH INCLUDING THE NORM
 // COMPUTE COST AND WITHOUT Could have all three in a plot and from that justify design decision
-#define USE_NORMS 1
+#define USE_NORMS 0
 #if USE_NORMS
     sycl::event remainderMatchEvent = _device_queue.parallel_for(
       sycl::nd_range{remainderGlobal, local},
@@ -960,8 +1112,10 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
 
 #else
 
+#if !ZERO_PADDED_REMAINDER_MATRIX
     sycl::event remainderMatchEvent = _device_queue.parallel_for(
       sycl::nd_range{remainderGlobal, local},
+      {getNormsEvent(), other->getNormsEvent()},
       [=,
        l = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(getDescriptors() + (l_len - (l_len % 16))),
        r = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(other->getDescriptors()),
@@ -1000,8 +1154,21 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
           const bool accept = ((leader.value.x() / leader.value.y()) < 0.8f);
           match_matrix[l_base + it.get_group(0)] = sycl::vec<int, 3>(leader.idx.x(), leader.idx.y(), accept);
       });
+#endif // !ZERO_PADDED_ROW
+#endif
+#endif // !USE_MATRIX_FOR_REMAINDER
+
+#if PERF_TESTING_FUNCTIONS
+    matrix_match_event = matchEvent;
+    matrix_remainder_event = remainderMatchEvent;
 #endif
 
+#if TRANSFORM_TO_HALF
+    auto wait_for_matrix = [event = std::make_shared<sycl::event>(matchEvent), &Q = _device_queue]() {
+        event->wait();
+        Q.wait();
+    };
+#else
     auto wait_for_matrix = [event = std::make_shared<sycl::event>(matchEvent),
                             remainderEvent = std::make_shared<sycl::event>(remainderMatchEvent),
                             &Q = _device_queue]() {
@@ -1009,6 +1176,8 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
         remainderEvent->wait();
         Q.wait();
     };
+
+#endif
 
     auto free_matrix = [match_matrix, ctx = _device_queue.get_context()]() {
         if(sycl::get_pointer_type(match_matrix, ctx) != sycl::usm::alloc::unknown)

@@ -465,16 +465,22 @@ void popsift::Pyramid::descriptors(const Config& conf)
         if(use_sub_group) // basing decision on Ext_desc_loop (not the one I'm launching
                           // as I was not able to pass struct/class to parallel_for and use it as in last one
         {
-            _device_queue.parallel_for(
-              sycl::nd_range{global, local},
-              Normalize_histogram<NormalizeRootSift, false>(_dbuf_host.desc, _d_consts, _hct.ori_total));
+#if QUEUE_PROFILING // Conditionally stores the event
+            _final_desc_event =
+#endif
+              _device_queue.parallel_for(
+                sycl::nd_range{global, local},
+                Normalize_histogram<NormalizeRootSift, false>(_dbuf_host.desc, _d_consts, _hct.ori_total));
         }
         else
         {
-            // Template param is work_gropu scan
-            _device_queue.parallel_for(
-              sycl::nd_range{global, local},
-              Normalize_histogram<NormalizeRootSift, true>(_dbuf_host.desc, _d_consts, _hct.ori_total));
+#if QUEUE_PROFILING
+            _final_desc_event =
+#endif
+              // Template param is work_gropu scan
+              _device_queue.parallel_for(
+                sycl::nd_range{global, local},
+                Normalize_histogram<NormalizeRootSift, true>(_dbuf_host.desc, _d_consts, _hct.ori_total));
         }
     }
     else

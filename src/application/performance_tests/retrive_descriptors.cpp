@@ -1,4 +1,5 @@
 #include "sycl_popsift/features.hpp"
+#include "sycl_popsift/sift_extremum.h"
 
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
@@ -22,8 +23,10 @@
 // Popsift includes
 #include <boost/filesystem.hpp>
 #include <boost/program_options.hpp>
+#include <sycl_popsift/features.hpp>
 #include <sycl_popsift/non_sycl/sift_conf.hpp>
 #include <sycl_popsift/popsift.hpp>
+#include <sycl_popsift/sift_extremum.h>
 #include <unistd.h>
 
 #include <chrono> // only for test
@@ -37,12 +40,9 @@
 
 using namespace std;
 
-static bool write_as_uchar = false;
-static bool write_features = true; // Takse loads of time when running many
-
 // should probably use a similar options struct as popsift in the future
 // revisions just for initial layout
-static void parseargs(int argc, char** argv, popsift::Config* config, std::string& inputFile)
+static void parseargs(int argc, char** argv, popsift::Config* config, std::string& inputFile, std::string& outputFile)
 {
     // using namespace boost::program_options;
     using boost::program_options::options_description;
@@ -52,12 +52,32 @@ static void parseargs(int argc, char** argv, popsift::Config* config, std::strin
 
     options_description options("Options");
     {
-        options.add_options()("help,h",
-                              "Print usage")("input-file,i", value<std::string>(&inputFile)->required(), "Input file");
+        options.add_options()("help,h", "Print usage")
+          /* ("verbose,v", bool_switch()->notifier([&](bool i) {if(i)
+             config.setVerbose(); }), "") */
+          /* ("log,l", bool_switch()->notifier([&](bool i) {if(i)
+             config.setLogMode(popsift::Config::All); }), "Write debugging
+             files")
+           */
+
+          ("input-file,i", value<std::string>(&inputFile)->required(), "Input file")(
+            "output-file,o", value<std::string>(&outputFile)->required(), "Feature output file");
     }
+    // options_description modes("Modes");
+    // {
+    //     modes.add_options()("cpu-only",
+    //                         boost::program_options::bool_switch()->notifier([&](bool a) {
+    //                             if(a)
+    //                                 config->setCpuOnly();
+    //                         }),
+    //                         "Use CPU only no accelerators.");
+    // }
 
     options_description all("Allowed options");
 
+    // currently just options
+    /* all.add(options).add(parameters).add(modes).add(informational); */
+    // all.add(options).add(modes);
     all.add(options);
     variables_map vm;
 
@@ -157,22 +177,19 @@ SiftJob* process_image(const std::string& inputFile, PopSift& PopSift)
 #endif
 }
 
-void read_job(SiftJob* job)
+void write_descriptors_to_file(const std::string& filename,
+                               popsift::Descriptor* descriptors,
+                               size_t count,
+                               bool append = false)
 {
-    popsift::FeaturesHost* feature_list = job->getHost(); // wait for job to complete
+    std::ios_base::openmode mode = std::ios::binary | (append ? std::ios::app : std::ios::out);
+    std::ofstream out(filename, mode);
 
-    fprintf(stderr,
-            "\nNumbmer of features points: %d  number of feature descriptors: %d\n",
-            feature_list->getFeatureCount(),
-            feature_list->getDescriptorCount());
+    if(!out)
+        throw std::runtime_error("Failed to open file for writing: " + filename);
 
-    if(write_features)
-    {
-        std::ofstream of("output-features.txt");
-        feature_list->print(of, write_as_uchar);
-    }
-
-    delete feature_list;
+    out.write(reinterpret_cast<const char*>(descriptors), count * sizeof(popsift::Descriptor));
+    out.close();
 }
 
 int main(int argc, char** argv)
@@ -180,14 +197,11 @@ int main(int argc, char** argv)
     popsift::Config config; // Init with default parameters
     list<string> inputFiles;
     string inputFile{};
+    string outputFile{};
 
     try
     {
-        parseargs(argc,
-                  argv,
-                  &config,
-                  inputFile); // Parse command line -- should add config
-                              // as parameter so it can be modified
+        parseargs(argc, argv, &config, inputFile, outputFile);
         std::cout << inputFile << std::endl;
     }
     catch(std::exception& e)
@@ -238,17 +252,40 @@ int main(int argc, char** argv)
         jobs.push(job);
     }
 
+    // PopSift.allMainThread();
+
+    bool initial = true;
+
+    int total_desc = 0;
     while(!jobs.empty())
     {
         SiftJob* job = jobs.front();
         jobs.pop();
+
         if(job)
         {
-            read_job(job);
+            popsift::FeaturesHost* feature_list = job->getHost(); // wait for job to complete
+            feature_list->getDescriptors();
+            write_descriptors_to_file(
+              outputFile, feature_list->getDescriptors(), feature_list->getDescriptorCount(), !initial);
+
+            total_desc += feature_list->getDescriptorCount();
+            if(initial)
+                initial = false;
+
+            delete feature_list;
 
             delete job;
         }
     }
+
+#if USE_JOINT_MATRIX
+    printf("Total fp16 descriptors extracted:");
+#else
+    printf("Total fp32 descriptors extracted:");
+
+#endif
+    printf(" %d \n", total_desc);
 
     return EXIT_SUCCESS;
 }

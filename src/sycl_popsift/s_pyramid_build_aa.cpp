@@ -100,6 +100,13 @@ class Horiz
         const float v3 = syclexp::sample_image<float>(src, sycl::float2{read_x, read_y});
         out += (v3 * g);
 
+        // if(write_x < 120 && write_x > 110 && write_y < 120 && write_y > 110)
+        // if(write_x < 900 && write_x > 890 && write_y < 500 && write_y > 490)
+        // {
+        //     syclexp::printf(
+        //       "write(%d, %d) --> out = %f -- read_x = %f - read_y = %f\n", write_x, write_y, out, read_x, read_y);
+        // }
+
         dst_data[write_x + write_y * dst_w] = out * 255.0f;
     };
 };
@@ -198,7 +205,7 @@ class Horiz
 class Vert
 {
   private:
-    float* intermediate; // or is it intermediate :D IDK
+    float* intermediate;
     float* dst_data;
     popsift::GaussInfo* d_gauss;
     const int width;
@@ -247,21 +254,38 @@ class Vert
         float out = 0.0f;
 
         for(int offset = span; offset > 0; offset--)
+        // for(int offset = span - 1; offset > 0; offset--)
         {
             g = filter[offset];
 
             idy = y - offset;
             val = idy < 0 ? intermediate[x] : intermediate[x + idy * width]; // clamp edge
             out += (val * g);
+            // if(x == 0 && y == 97 && level == 0)
+            // // if(x == 0 && y == 97)
+            // {
+            //     syclexp::printf("offset = %d span =%d vals: Above=%.10f ", offset, span, val);
+            // }
 
             idy = y + offset;
             val = idy >= height ? intermediate[x + (height - 1) * width] : intermediate[x + idy * width]; // clamp edge
             out += (val * g);
+            // if(x == 0 && y == 97 && level == 0)
+            // // if(x == 0 && y == 97)
+            // {
+            //     // syclexp::printf("offset = %d vals: Above=%f Below=%f FILTER=%f\n", offset, val_1, val, g);
+            //     syclexp::printf("Below=%.10f FILTER=%.20f\n", val, g);
+            // }
         }
 
         g = filter[0];
         val = intermediate[x + y * width];
         out += (val * g);
+
+        // if(x == 0 && y == 97 && level == 0)
+        // {
+        //     syclexp::printf("Val self = %.10f FILTER=%.20f\n Final out = %.10f\n", val, g, out);
+        // }
 
         dst_data[x + y * width] = out;
     }
@@ -269,6 +293,7 @@ class Vert
 
 } // namespace absoluteSource
 
+struct horiz_if;
 sycl::event Pyramid::horiz_from_input_image(const Config& conf,
                                             ImageBase* base,
                                             sycl::event d_gauss_write,
@@ -286,6 +311,23 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf,
     if constexpr(USE_BINDLESS_INPUT && sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_images>() &&
                  sycl::any_device_has<sycl::aspect::ext_oneapi_bindless_sampled_image_fetch_2d>())
     {
+        auto kernel_id = sycl::get_kernel_id<horiz_if>();
+        auto kernel_bundle = sycl::get_kernel_bundle<sycl::bundle_state::executable>(_device_queue.get_context());
+        auto kernel = kernel_bundle.get_kernel(kernel_id);
+
+        auto compiled_num_sg = kernel.template get_info<sycl::info::kernel_device_specific::compile_num_sub_groups>(
+          _device_queue.get_device());
+        auto max_num_sg =
+          kernel.template get_info<sycl::info::kernel_device_specific::max_num_sub_groups>(_device_queue.get_device());
+        auto prefered_wg_multiple =
+          kernel.template get_info<sycl::info::kernel_device_specific::preferred_work_group_size_multiple>(
+            _device_queue.get_device());
+
+        // printf("\n\nHoriz Compiled num_sg = %d -- max_num_sg = %d -- pref_wg_multiple = %zu\n\n",
+        //        compiled_num_sg,
+        //        max_num_sg,
+        //        prefered_wg_multiple);
+
         // Bindless version
         float shift = 0.5f * powf(2.0f, conf.getUpscaleFactor());
 
@@ -300,7 +342,7 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf,
         }
         else
         {
-            return _device_queue.parallel_for(
+            return _device_queue.parallel_for<horiz_if>(
               sycl::nd_range{global, local},
               {d_gauss_write, img_write},
               normalizedSource::Horiz<true>(
@@ -321,7 +363,7 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf,
         }
         else
         {
-            return _device_queue.parallel_for(
+            return _device_queue.parallel_for<horiz_if>(
               sycl::nd_range{global, local},
               {d_gauss_write, img_write},
               absoluteSource::Horiz<1, true>(
@@ -355,6 +397,7 @@ sycl::event Pyramid::horiz_from_prev_level_basic(int octave, int level)
       absoluteSource::Horiz<1, false>(prev_level, cur_intm, _d_gauss, width, height, level));
 }
 
+struct vert_kernel;
 sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event intm_write)
 {
     Octave& oct_obj = _octaves[octave];
@@ -368,9 +411,35 @@ sycl::event Pyramid::vert_from_interm_basic(int octave, int level, sycl::event i
     float* intermediate = oct_obj.getIntermediate();
     float* dst_data = oct_obj.getDataArrayHost()[level]; // Uses host array to get device pointer
 
-    return _device_queue.parallel_for(sycl::nd_range{global, local},
-                                      intm_write,
-                                      absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
+    auto kernel_id = sycl::get_kernel_id<vert_kernel>();
+    auto kernel_bundle = sycl::get_kernel_bundle<sycl::bundle_state::executable>(_device_queue.get_context());
+    auto kernel = kernel_bundle.get_kernel(kernel_id);
+
+    auto compiled_num_sg =
+      kernel.template get_info<sycl::info::kernel_device_specific::compile_num_sub_groups>(_device_queue.get_device());
+    auto max_num_sg =
+      kernel.template get_info<sycl::info::kernel_device_specific::max_num_sub_groups>(_device_queue.get_device());
+    auto prefered_wg_multiple =
+      kernel.template get_info<sycl::info::kernel_device_specific::preferred_work_group_size_multiple>(
+        _device_queue.get_device());
+    auto compiled_wg_size =
+      kernel.template get_info<sycl::info::kernel_device_specific::compile_work_group_size>(_device_queue.get_device());
+
+    // printf(
+    //   "\n\nVERTYYYYYYY Compiled num_sg = %d -- max_num_sg = %d -- pref_wg_multiple = %zu -- compiled_wg_size = (%zu,
+    //   "
+    //   "%zu, %zu)\n\n",
+    //   compiled_num_sg,
+    //   max_num_sg,
+    //   prefered_wg_multiple,
+    //   compiled_wg_size[0],
+    //   compiled_wg_size[1],
+    //   compiled_wg_size[2]);
+
+    return _device_queue.parallel_for<vert_kernel>(
+      sycl::nd_range{global, local},
+      intm_write,
+      absoluteSource::Vert(intermediate, dst_data, _d_gauss, width, height, level));
 }
 
 } // namespace popsift
