@@ -164,11 +164,11 @@ int main(int argc, char** argv)
 
 #define WARMUP_RUNS 11 // 10 warmup runs
 
-#define TEST_JOINT_MATRIX true
+#define TEST_JOINT_MATRIX false
 #define MAX_DESC_SIZE 50000 // Was 50000
 #define STEP 1000
 
-#if false
+#if true
     bool doing_warmup = false;
     int warmup_count = 0;
     for(int i = STEP; i <= MAX_DESC_SIZE; i += STEP)
@@ -184,8 +184,6 @@ int main(int argc, char** argv)
             if(warmup_count < WARMUP_RUNS)
             {
                 warmup_count++;
-                i = 2000;
-                j = 2000;
             }
             if(warmup_count == WARMUP_RUNS)
             {

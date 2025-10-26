@@ -26,6 +26,7 @@
 #include <sstream>
 
 #define ZERO_PADDED_REMAINDER_MATRIX true
+#define NUM_SG_PER_WG 3
 
 using namespace std;
 
@@ -161,7 +162,7 @@ FeaturesDev::FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::
       num_ori, __FILE__, __LINE__, "Could not allocate shared memory for orientation Descriptors", _device_queue);
 #endif
 
-#if ZERO_PADDED_REMAINDER_MATRIX && TRANSFORM_TO_HALF
+#if ZERO_PADDED_REMAINDER_MATRIX && TRANSFORM_TO_HALF && USE_JOINT_MATRIX
     _ori_half = popsift::sycl_common::malloc_devT<DescriptorHalf>(
       num_ori + num_ori % 16,
       __FILE__,
@@ -275,13 +276,15 @@ template<typename GroupType>
 inline FeatureType l2_in_t0(const sycl::vec<FeatureType, 4>* lptr,
                             const sycl::vec<FeatureType, 4>* rptr,
                             GroupType& group,
-                            sycl::nd_item<1>& it)
+                            const int lane_id)
 {
     // const sycl::vec<FeatureType, 4> lval = lptr[it.get_local_id(0)];
     // const sycl::vec<FeatureType, 4> rval = rptr[it.get_local_id(0)];
 
-    const sycl::vec<FeatureType, 4> lval = lptr[group.get_local_id()[0]];
-    const sycl::vec<FeatureType, 4> rval = rptr[group.get_local_id()[0]];
+    // const sycl::vec<FeatureType, 4> lval = lptr[group.get_local_id()[0]];
+    // const sycl::vec<FeatureType, 4> rval = rptr[group.get_local_id()[0]];
+    const sycl::vec<FeatureType, 4> lval = lptr[lane_id];
+    const sycl::vec<FeatureType, 4> rval = rptr[lane_id];
 
 #if 0
     // Verbose write out of SSD
@@ -362,7 +365,8 @@ class Compute_distance
         // For better occupancy
         // const int idx = it.get_group(0) * (it.get_local_range(0) / 32) + it.get_local_id(0);
         // const int idx = it.get_group(0) * it.get_group_range(0);
-        const int idx = it.get_global_id(0) / 32;
+        const int idx = it.get_global_id(0) >> 5;
+        const int lane_id = it.get_local_id(0) % 32; // 0..31 inside the sub-group
 
         if(idx >= l_len)
             return;
@@ -393,12 +397,12 @@ class Compute_distance
         {
             const sycl::vec<FeatureType, 4>* rptr = reinterpret_cast<const sycl::vec<FeatureType, 4>*>(&r[i]);
 
-            const float res = l2_in_t0(lptr, rptr, group, it);
+            const float res = l2_in_t0(lptr, rptr, group, lane_id);
 
             // if(it.get_local_id(0) == 0) // Could use group.leader() for sub_group version
             // if(it.get_local_id(0) == 0) // Could use group.leader() for sub_group version
             // if (group.get_group_id(0)/
-            if(group.leader())
+            if(lane_id == 0)
             {
                 if(res < match_1st_val)
                 {
@@ -417,7 +421,7 @@ class Compute_distance
         }
 
         // if(it.get_local_id(0) == 0)
-        if(group.leader())
+        if(lane_id == 0)
         {
             bool accept = ((match_1st_val / match_2nd_val) < 0.8f);
             // match_matrix[it.get_group(0)] = sycl::vec<int, 3>(match_1st_idx, match_2nd_idx, accept);
@@ -581,6 +585,13 @@ class Compute_distance_matrix_pre_norm
 
         // Store start for this sub_group/work_group
         // sycl::half* l_start = l + (it.get_group(0) << 7); // ERROR( need to offset for 16 vectors not just one)
+
+        // TODO: THIS WOULD BE POSSIBLE JUST NEED MORE SHARED MEMORY AND DIFFERENT INDEXING (could use lane_id for x)
+        // But the sahred memory usage is the tricky part. But his is needed to get better than 33% occupancy think cap
+        // here is 67% due to register usage
+        // const int lane_id = it.get_local_id(0) % 32; // 0..31 inside the sub-group
+        // const int idx = it.get_global_id(0) >> 5;
+        // sycl::half* l_start = l + (idx << 11); // * 2048 == 128 * 16 (so 16 descriptors)
 
         sycl::half* l_start = l + (it.get_group(0) << 11); // * 2048 == 128 * 16 (so 16 descriptors)
 

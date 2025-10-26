@@ -228,9 +228,10 @@ void schedule_jobs(popsift::SyncQueue<SiftJob*>& jobs,
 
     // The actuall test
 
-#define TEST_ITERATIONS 15
+#define TEST_ITERATIONS 20
     for(int i = 0; i < TEST_ITERATIONS; ++i)
     {
+        printf("Doing iteration %i\n", i);
         for(const auto& currFile : inputFiles)
         {
             // printf("Scheduling %s\n", currFile.c_str());
