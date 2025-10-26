@@ -277,8 +277,11 @@ inline FeatureType l2_in_t0(const sycl::vec<FeatureType, 4>* lptr,
                             GroupType& group,
                             sycl::nd_item<1>& it)
 {
-    const sycl::vec<FeatureType, 4> lval = lptr[it.get_local_id(0)];
-    const sycl::vec<FeatureType, 4> rval = rptr[it.get_local_id(0)];
+    // const sycl::vec<FeatureType, 4> lval = lptr[it.get_local_id(0)];
+    // const sycl::vec<FeatureType, 4> rval = rptr[it.get_local_id(0)];
+
+    const sycl::vec<FeatureType, 4> lval = lptr[group.get_local_id()[0]];
+    const sycl::vec<FeatureType, 4> rval = rptr[group.get_local_id()[0]];
 
 #if 0
     // Verbose write out of SSD
@@ -352,9 +355,25 @@ class Compute_distance
     {
         // Could remove this statement when using global l_len * 32 and local 32 so one per
         // Hence no group could be superflous
-        if(it.get_group(0) >= l_len) // Should be impossible (considering l_len is setting the dimension of global
+        // if(it.get_group(0) >= l_len)
+        //     return;
+
+        // const int idx = it.get_group(0);
+        // For better occupancy
+        // const int idx = it.get_group(0) * (it.get_local_range(0) / 32) + it.get_local_id(0);
+        // const int idx = it.get_group(0) * it.get_group_range(0);
+        const int idx = it.get_global_id(0) / 32;
+
+        if(idx >= l_len)
             return;
-        const int idx = it.get_group(0);
+
+        // if(it.get_local_id(0) == 0)
+        //     syclexp::printf("global_id = %d - idx = %d --- group range = %d - local_range = %d global_range = %d\n",
+        //                     static_cast<int>(it.get_global_id(0)),
+        //                     idx,
+        //                     static_cast<int>(it.get_group_range(0)),
+        //                     static_cast<int>(it.get_local_range(0)),
+        //                     static_cast<int>(it.get_global_range(0)));
 
         float match_1st_val = std::numeric_limits<FeatureType>::infinity();
         float match_2nd_val = std::numeric_limits<FeatureType>::infinity();
@@ -376,7 +395,10 @@ class Compute_distance
 
             const float res = l2_in_t0(lptr, rptr, group, it);
 
-            if(it.get_local_id(0) == 0) // Could use group.leader() for sub_group version
+            // if(it.get_local_id(0) == 0) // Could use group.leader() for sub_group version
+            // if(it.get_local_id(0) == 0) // Could use group.leader() for sub_group version
+            // if (group.get_group_id(0)/
+            if(group.leader())
             {
                 if(res < match_1st_val)
                 {
@@ -394,20 +416,12 @@ class Compute_distance
             sycl::group_barrier(group); // not sure if this is needed for sub_group
         }
 
-        if(it.get_local_id(0) == 0)
+        // if(it.get_local_id(0) == 0)
+        if(group.leader())
         {
             bool accept = ((match_1st_val / match_2nd_val) < 0.8f);
-            match_matrix[it.get_group(0)] = sycl::vec<int, 3>(match_1st_idx, match_2nd_idx, accept);
-
-            // if(accept)
-            // {
-            //     syclexp::printf("match_matrix[%d] = (%d, %d) --> (%f, %f)\n",
-            //                     idx,
-            //                     match_1st_idx,
-            //                     match_2nd_idx,
-            //                     match_1st_val,
-            //                     match_2nd_val);
-            // }
+            // match_matrix[it.get_group(0)] = sycl::vec<int, 3>(match_1st_idx, match_2nd_idx, accept);
+            match_matrix[idx] = sycl::vec<int, 3>(match_1st_idx, match_2nd_idx, accept);
         }
     }
 };
@@ -919,22 +933,68 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     int size = get_kernel_subgroup_size<compute_distance_sub_group>(_device_queue);
     bool useSubGroup = size >= 32;
 
-    sycl::range global{static_cast<size_t>(l_len * 32)}; // one 32 wide group per descriptor
-    sycl::range local{32};                               // Could channge to width of sub group mby
+    // sycl::range global{static_cast<size_t>((l_len / SG_PER_WG) * 32)};
+    // #define SG_PER_WG 3
+
+    // sycl::range global{static_cast<size_t>(sycl::ceil(l_len / SG_PER_WG) * 32)}; // ensure it's divisible by
+    // SG_PER_WG
+    // sycl::range local{32 * SG_PER_WG};
+
+    // size_t local_size = 32 * SG_PER_WG;
+    // size_t global_size = ((l_len + local_size - 1) / local_size) * local_size;
+    //
+    // sycl::range<1> local{local_size};
+    // sycl::range<1> global{global_size};
+    // sycl::range<1> local{32 * SG_PER_WG};
+    // sycl::range<1> global{((l_len + local[0] - 1) / local[0]) * local[0]};
+
+    constexpr int SG_SIZE = 32;
+    constexpr int SG_PER_WG = 3;
+
+    // size_t local_size = SG_SIZE * SG_PER_WG;
+    // size_t global_size = ((l_len + SG_PER_WG - 1) / SG_PER_WG) * local_size / SG_PER_WG * SG_PER_WG;
+    //
+    // sycl::range<1> local{local_size};
+    // sycl::range<1> global{global_size};
+
+    // sycl::range global{static_cast<size_t>((l_len + (l_len % SG_PER_WG)) * SG_SIZE)};
+    // sycl::range global{static_cast<size_t>(l_len * SG_SIZE + ((l_len * SG_SIZE) % 96))};
+
+    int extra = l_len % SG_PER_WG ? (SG_PER_WG - (l_len % SG_PER_WG)) : 0;
+
+    sycl::range global{static_cast<size_t>((l_len + extra) * SG_SIZE)};
+    sycl::range local{static_cast<size_t>(SG_SIZE * SG_PER_WG)};
+
+    // fprintf(stderr, "l_len = %d, Ceil_div=%d --> %d", l_len, SG_PER_WG, (l_len + SG_PER_WG - 1) / SG_PER_WG);
+    // fprintf(stderr,
+    //         "l_len = %d, SG_PER_WG = %d\n"
+    //         "Computed local = %zu, global = %zu\n"
+    //         "Ratio (global/local) = %.2f\n",
+    //         l_len,
+    //         SG_PER_WG,
+    //         local[0],
+    //         global[0],
+    //         (double)global[0] / (double)local[0]);
 
     sycl::event matchEvent;
     if(useSubGroup)
     {
+        // printf("Use sub_group\n");
         matchEvent = _device_queue.parallel_for<compute_distance_sub_group>(
           sycl::nd_range{global, local},
           Compute_distance<true>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
     }
     else
     {
+        // printf("Use work_group\n");
         matchEvent = _device_queue.parallel_for(
           sycl::nd_range{global, local},
           Compute_distance<false>(match_matrix, getDescriptors(), l_len, other->getDescriptors(), r_len));
     }
+
+    // _device_queue.wait();
+    //
+    // printf("Done with this iteration\n\n\n\n\n");
 
     auto wait_for_matrix = [event = std::make_shared<sycl::event>(matchEvent), &Q = _device_queue]() {
         event->wait();
