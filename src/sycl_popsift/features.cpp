@@ -26,7 +26,7 @@
 #include <sstream>
 
 #define ZERO_PADDED_REMAINDER_MATRIX true
-#define NUM_SG_PER_WG 3
+// #define NUM_SG_PER_WG 3
 
 using namespace std;
 
@@ -371,14 +371,6 @@ class Compute_distance
         if(idx >= l_len)
             return;
 
-        // if(it.get_local_id(0) == 0)
-        //     syclexp::printf("global_id = %d - idx = %d --- group range = %d - local_range = %d global_range = %d\n",
-        //                     static_cast<int>(it.get_global_id(0)),
-        //                     idx,
-        //                     static_cast<int>(it.get_group_range(0)),
-        //                     static_cast<int>(it.get_local_range(0)),
-        //                     static_cast<int>(it.get_global_range(0)));
-
         float match_1st_val = std::numeric_limits<FeatureType>::infinity();
         float match_2nd_val = std::numeric_limits<FeatureType>::infinity();
         int match_1st_idx = 0;
@@ -537,11 +529,9 @@ struct scan_state
 class Compute_distance_matrix_pre_norm
 {
     sycl::vec<int, 3>* match_matrix;
-    // Descriptor* l;
     sycl::half* l;
     float* l_norm;
-    int l_len; // Needed for remainder
-    // Descriptor* r;
+    int l_len;     // Needed for remainder
     sycl::half* r; // for clear intent and one cast
     float* r_norm;
     int r_len;
@@ -549,8 +539,6 @@ class Compute_distance_matrix_pre_norm
     sycl::local_accessor<float, 1> compute_tile;
 
   public:
-    // sycl::vec<int, 3>* match_matrix, Descriptor* l, float* l_norm, int l_len, Descriptor* r, float* r_norm, int
-    // r_len)
     Compute_distance_matrix_pre_norm(sycl::vec<int, 3>* match_matrix,
                                      sycl::half* l,
                                      float* l_norm,
@@ -570,45 +558,17 @@ class Compute_distance_matrix_pre_norm
 
     inline void operator()(sycl::nd_item<1> it) const
     {
-        // compute
-        // We have norms
-        // need to compute ab -> then do norm + norm - 2ab; then find best along columns if presistent is B
-
-        // Could transpose and store in shared memory but that would cause the shared memory usage for that to be
-        // 128*16*2 = 4096 per sub_group which is too much even for ada lovlace with 48 warps per SM resuling in memory
-        // usage of 4096*48 = 196608 which is more than the 128KB available L1 cache (shared memory) Hence occupancy
-        // would be lower (31 would be max) and we already need more shared memory for the column compute hence it would
-        // be too much (so would have to rely on fast transpose by the hardware by doing the load transposed)
-
         sycl::sub_group sg = it.get_sub_group();
-        // const int desc_start = it.get_group(0);
 
-        // Store start for this sub_group/work_group
-        // sycl::half* l_start = l + (it.get_group(0) << 7); // ERROR( need to offset for 16 vectors not just one)
+        const int sg_id_in_wg = it.get_local_id(0) / 32; // 0..2 for 96 threads
+        const int x = it.get_local_id(0) % 32;           // lane_id 0 - 31
+        const int idx = it.get_global_id(0) >> 5;        // divide by 32
+        // idx is the sub group idx so the start is multiplied by 16 to get descriptor
 
-        // TODO: THIS WOULD BE POSSIBLE JUST NEED MORE SHARED MEMORY AND DIFFERENT INDEXING (could use lane_id for x)
-        // But the sahred memory usage is the tricky part. But his is needed to get better than 33% occupancy think cap
-        // here is 67% due to register usage
-        // const int lane_id = it.get_local_id(0) % 32; // 0..31 inside the sub-group
-        // const int idx = it.get_global_id(0) >> 5;
-        // sycl::half* l_start = l + (idx << 11); // * 2048 == 128 * 16 (so 16 descriptors)
+        if((idx << 4) >= l_len) // Only skip fully padded sub_groups (not zero padded partial sg)
+            return;
 
-        sycl::half* l_start = l + (it.get_group(0) << 11); // * 2048 == 128 * 16 (so 16 descriptors)
-
-        // Move outer loop invariant pointers to start position for this sub_group/work_group
-        // l += (desc_start << 7);
-        // match_matrix += (desc_start << 7);
-
-        // Prefeth first tiles as early as possible
-        // syclexp::matrix::joint_matrix_prefetch<16, 16>(sg, l_start, 128, syclexp::matrix::layout::col_major);
-        // syclexp::matrix::joint_matrix_prefetch<16, 16>(sg, r, 128, syclexp::matrix::layout::row_major);
-
-        // syclexp::matrix::joint_matrix_prefetch<16, 16>(sg, l, 128, syclexp::matrix::layout::col_major);
-        // syclexp::matrix::joint_matrix_prefetch<16, 16>(sg, r, 128, syclexp::matrix::layout::row_major);
-
-        // Store the l_norms to shared memory as they are reused a lot
-        // NOTE: could try to store in registers but I'm afraid that would use too much registers unless we can
-        // partition work-items to only need to read one or two different norms then it could work...
+        sycl::half* l_start = l + (idx << 11); // * 2048 == 128 * 16 (so 16 descriptors)
 
         auto l_ptr =
           sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(l_start);
@@ -620,15 +580,6 @@ class Compute_distance_matrix_pre_norm
           sycl::address_space_cast<sycl::access::address_space::global_space, sycl::access::decorated::yes>(l_norm);
 
         auto compute = compute_tile.get_multi_ptr<sycl::access::decorated::yes>();
-
-        // auto my_norm_ptr = my_norm.get_multi_ptr<sycl::access::decorated::yes>();
-
-        // Did not work..
-        // auto compute =
-        //   compute_tile.get_multi_ptr<sycl::access::address_space::local_space, sycl::access::decorated::yes>();
-
-        // sycl::device_event load_my_norms = it.get_group().async_work_group_copy(my_norm_ptr, l_norm_ptr, 16); // can
-        // just store in register
 
         syclexp::matrix::joint_matrix<sycl::sub_group,
                                       sycl::half,
@@ -654,68 +605,50 @@ class Compute_distance_matrix_pre_norm
                                       16>
           C; // Accumulate the term for the vector pairs
 
-        const int x = it.get_local_id(0);
-        const float my_norm = l_norm[(it.get_group(0) << 4) + (x % 16)];
-        const unsigned char second_row = it.get_local_id(0) / 16; // 0-15 -> 0 -- 16-31 -> 1
+        const float my_norm = l_norm[(idx << 4) + (x % 16)]; // 0 and 16 get same etc along column
+        const unsigned char second_row = x / 16;             // 0-15 -> 0 -- 16-31 -> 1
 
-        // init global to large value so it will be replaced instantly by lower values
-        // could have an explicit first iterations out of the loop to avoid this but don't think that's worth the zero
-        // to minescule performance bump
         scan_state global_leader; // x > 15 don't really need this one (not used in their case)
         global_leader.value.x() = std::numeric_limits<float>::infinity();
         global_leader.value.y() = std::numeric_limits<float>::infinity();
 
+        // Always safe for zero padded will be perfectly divisible
         for(int outer = 0; outer < (r_len - 15); outer += 16) // Only full 16's remainder are in loop below this one
         {
             joint_matrix_fill(sg, C, 0); // reset
 #pragma unroll
             for(int i = 0; i < 8; ++i)
             {
-                // i * 16 == i << 4
                 syclexp::matrix::joint_matrix_load(sg, B, l_ptr + (i << 4), 128); // our tile - const in outer
                 syclexp::matrix::joint_matrix_load(sg, A, r_ptr + (i << 4) + (outer << 7), 128); // Changes in outer
-
-                // Hopefully removed the if by unroll
-                if(i < 7)
-                { // Could test with the prefetch being two ahead of the running instead of just one (more mem used)
-                  // prefetches next to L1 which is the default (can be set to l2 in passed properties)
-                  // syclexp::matrix::joint_matrix_prefetch<16, 16>(
-                  //   sg, l_start + ((i + 1) << 4), 128, syclexp::matrix::layout::col_major);
-                  // syclexp::matrix::joint_matrix_prefetch<16, 16>(
-                  //   sg, r + ((i + 1) << 4) + (outer << 7), 128, syclexp::matrix::layout::row_major);
-                }
 
                 syclexp::matrix::joint_matrix_mad(sg, C, A, B, C);
             }
 
-            syclexp::matrix::joint_matrix_store(sg, C, compute, 16, syclexp::matrix::layout::row_major);
+            syclexp::matrix::joint_matrix_store(
+              sg, C, compute + (sg_id_in_wg << 8), 16, syclexp::matrix::layout::row_major);
 
             // Compute l_norm + r_norm - 2C
+            sycl::group_barrier(sg); // could be SG I think
 
-            sycl::group_barrier(it.get_group());
-
-            // compute AB of 0, 0 in compute matrix as verifictaion
-
-            // Should unroll all 8 iterations
 #pragma unroll
             for(unsigned char i = 0; i < 16; i += 2)
             {
                 const float other_norm = r_norm[outer + (i + second_row)];
-                const unsigned char pos = (i << 4) + x; // 0 - 255 (16x16 tile positions)
+                const int pos = (i << 4) + x + (sg_id_in_wg << 8); // sg_id * 256
 
-                compute[pos] = my_norm + other_norm - (2 * compute[pos]);
+                compute[pos] = my_norm + other_norm - (2 * compute[pos]); // FINISH SSD compute
             }
 
-            sycl::group_barrier(it.get_group()); // Think it needs to be group and not subgroup for mem consistency
-            // Might not be needed as updating work-item is the one reading here so no communication between
-            // wrok-items
+            // sycl::group_barrier(it.get_group()); // could be SG I think
+            sycl::group_barrier(sg);
 
             // Compare the values in the column and find the best
             scan_state lead;
 
             // no bank conflicts
-            lead.value.x() = compute[x];
-            lead.value.y() = compute[x + 32];
+            lead.value.x() = compute[x + (sg_id_in_wg << 8)];
+            lead.value.y() = compute[x + 32 + (sg_id_in_wg << 8)];
 
             if(lead.value.y() < lead.value.x())
             {
@@ -739,7 +672,7 @@ class Compute_distance_matrix_pre_norm
 #pragma unroll
             for(unsigned char i = 4; i < 16; i += 2) // 6 iterations
             {
-                const float local_val = compute[(i << 4) + x];
+                const float local_val = compute[(i << 4) + x + (sg_id_in_wg << 8)];
                 if(local_val < lead.value.x())
                 {
                     // new leader delete second
@@ -820,34 +753,18 @@ class Compute_distance_matrix_pre_norm
                 // compare best
                 if(lead.value.x() < global_leader.value.x())
                 {
-#define USE_TMP 0
-#if USE_TMP
-                    // uses lead .y as tmp as it's discarded (not sure if better than using a local tmp variable)
-                    float tmp_value = global_leader.value.x();
-                    int tmp_idx = global_leader.idx.x();
-
-#else
                     // uses lead .y as tmp as it's discarded (not sure if better than using a local tmp variable)
                     lead.value.y() = global_leader.value.x();
                     lead.idx.y() = global_leader.idx.x();
-
-#endif
 
                     // Set local to new global leader
                     global_leader.value.x() = lead.value.x();
                     global_leader.idx.x() = lead.idx.x();
 
-#if USE_TMP
-                    // Store global (from tmp value) to local leader
-                    lead.value.x() = tmp_value;
-                    lead.idx.x() = tmp_idx;
-
-#else
                     // Store global (from tmp value) to local leader
                     lead.value.x() = lead.value.y();
                     lead.idx.x() = lead.idx.y();
 
-#endif
                     // swap complete
                 }
 
@@ -858,71 +775,12 @@ class Compute_distance_matrix_pre_norm
                     global_leader.idx.y() = lead.idx.x();
                 }
             }
-            // Global updated with the two smallest values and  correpsonding idx
         }
 
-        // Loop over the tail features of r to match with this set of 16 l features (not sure where the limit goes for
-        // when it's better to do zero padding now just doing one by one for all)
-
-#if !ZERO_PADDED_REMAINDER_MATRIX
-
-        const sycl::vec<sycl::half, 4>* lptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(l_start);
-        const sycl::vec<sycl::half, 4>* rptr = reinterpret_cast<const sycl::vec<sycl::half, 4>*>(r);
-
-        for(int outer = r_len - (r_len % 16); outer < r_len; outer++) // Remainder - done one by one
-        {
-            // Compute SSD and compare to global
-            float local_val = std::numeric_limits<float>::infinity(); // So it will lose to global if not replaced
-
-            // Compute the (0-16) SSD's
-            const sycl::vec<sycl::half, 4> rval = rptr[(outer << 5) + it.get_local_id(0)];
-#pragma unroll
-            for(int i = 0; i < 16; ++i) // loop over the 16 "our vectors / left"
-            {
-                // Compute AB
-
-                // each index is now 4 values so desc is 32 wide
-                const sycl::vec<sycl::half, 4> lval = lptr[(i << 5) + it.get_local_id(0)]; // load a quad per work-item
-                float res = static_cast<float>(sycl::dot(lval, rval));
-                res = sycl::reduce_over_group(sg, res, sycl::plus<float>());
-                if(x == i)
-                {
-                    local_val = res; // Store for compare with coresponding global_leader
-                }
-            }
-
-            if(x < 16) // could do !second_row but would keep in in scope for longer
-            {
-                // Compute A^2 + B^2 - 2 * AB
-                local_val = my_norm + r_norm[outer] - 2 * local_val;
-
-                // Compare the 16 values with their respective global_leader
-                if(local_val < global_leader.value.x())
-                {
-                    // New leader push first to second
-                    global_leader.value.y() = global_leader.value.x();
-                    global_leader.idx.y() = global_leader.idx.x();
-
-                    // Place new leader
-                    global_leader.value.x() = local_val;
-                    global_leader.idx.x() = outer;
-                }
-                else if(local_val < global_leader.value.y())
-                {
-                    // New second
-                    global_leader.value.y() = local_val;
-                    global_leader.idx.y() = outer;
-                }
-            }
-        }
-#endif
-
-        // Then need to do the 80 percent of nearest neigtour and write back the match matrix
         if(!second_row) // x < 16
         {
             const bool accept = ((global_leader.value.x() / global_leader.value.y()) < 0.8f);
-            match_matrix[(it.get_group(0) << 4) + x] =
-              sycl::vec<int, 3>(global_leader.idx.x(), global_leader.idx.y(), accept);
+            match_matrix[(idx << 4) + x] = sycl::vec<int, 3>(global_leader.idx.x(), global_leader.idx.y(), accept);
         }
     }
 };
@@ -1076,17 +934,42 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
         return matchAndReturn(other);
     }
 #endif
+
+    constexpr int SG_SIZE = 32;
+    constexpr int SG_PER_WG = 1;
     int l_len = getDescriptorCount();
     int r_len = other->getDescriptorCount();
 
 #if ZERO_PADDED_REMAINDER_MATRIX
-    int remainder = (l_len % 16) * 32;
+    // int remainder = (l_len % 16) * 32;
+    //
+    // // Padd to be diviisble by 16
+    // l_len += l_len % 16;
+    // r_len += r_len % 16;
+    // int extra = ((l_len >> 4) * 32) % (SG_PER_WG * SG_SIZE);
+    // sycl::range global{static_cast<size_t>((l_len >> 4) * 32 + extra)}; // Ensured to be divisible by 16
 
-    // Padd to be diviisble by 16
-    l_len += l_len % 16;
-    r_len += r_len % 16;
+    // constexpr int SG_SIZE = 32;
+    // constexpr int SG_PER_WG = 3;
+    constexpr int WG_SIZE = SG_SIZE * SG_PER_WG; // 96
 
-    sycl::range global{static_cast<size_t>((l_len >> 4) * 32)}; // Ensured to be divisible by 16
+    // Each SG processes one "left" block of 16 descriptors
+    int num_sg_needed = (l_len + 15) / 16; // ceil(l_len / 16)
+
+    // Each SG = 32 threads → total threads:
+    int total_threads = num_sg_needed * SG_SIZE;
+
+    // Round up total threads to next multiple of WG_SIZE for clean division
+    int global_threads = ((total_threads + WG_SIZE - 1) / WG_SIZE) * WG_SIZE;
+
+    sycl::range<1> global(global_threads);
+    sycl::range<1> local(WG_SIZE);
+
+    // Debug print
+    // std::cout << "l_len = " << l_len << "  r_len = " << r_len << "\nnum_sg_needed = " << num_sg_needed
+    //           << "\ntotal_threads = " << total_threads << "\nglobal_threads (rounded) = " << global_threads
+    //           << "\nlocal_threads (WG_SIZE)  = " << WG_SIZE << std::endl;
+
 #else
     sycl::range global{static_cast<size_t>((l_len >> 4) * 32)}; // floor division by 16 then multiply by 32
 #endif
@@ -1100,12 +983,13 @@ std::tuple<sycl::vec<int, 3>*, std::function<void()>, std::function<void()>> Fea
     // sycl::event matchEvent;
 
     // sycl::range global{static_cast<size_t>(((l_len) - (l_len % 16)) * 32)}; // WRONG
-    sycl::range local{32};
+    // sycl::range local{32};
+    // sycl::range local{SG_PER_WG * SG_SIZE};
 
     sycl::event matchEvent = _device_queue.submit([&](sycl::handler& cgh) {
         cgh.depends_on({getNormsEvent(), other->getNormsEvent()});
 
-        auto compute_tile = sycl::local_accessor<float, 1>(16 * 16, cgh);
+        auto compute_tile = sycl::local_accessor<float, 1>((16 * 16) * SG_PER_WG, cgh);
         cgh.parallel_for(sycl::nd_range{global, local},
                          Compute_distance_matrix_pre_norm(match_matrix,
 #if TRANSFORM_TO_HALF
