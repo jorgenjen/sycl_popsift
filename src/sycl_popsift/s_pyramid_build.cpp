@@ -232,7 +232,7 @@ void Pyramid::build_pyramid(const Config& conf,
                         // ##################################################################################
                         // # FOR FULL OCTAVE BUILD SIMPLE
                         // oct_obj._level_complete_events[_levels - PREV_LEVEL] =
-                        //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+                        // build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
                         // FOR FULL OCTAVE END
                         // ##################################################################################
 
