@@ -156,7 +156,7 @@ FeaturesDev::FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::
                                                        _device_queue);
 
     // Set the tail of the segment to 0 (zero padd )
-    _device_queue.memset(_ori + num_ori, 0, (num_ori % 16) * sizeof(popsift::Descriptor));
+    _device_queue.memset(_ori + num_ori, 1, (num_ori % 16) * sizeof(popsift::Descriptor));
 #else
     _ori = popsift::sycl_common::malloc_sharedT<Descriptor>(
       num_ori, __FILE__, __LINE__, "Could not allocate shared memory for orientation Descriptors", _device_queue);
