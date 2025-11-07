@@ -171,7 +171,7 @@ FeaturesDev::FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::
       _device_queue);
 
     // Set the tail of the segment to 0 (zero padd )
-    _device_queue.memset(_ori_half + num_ori, 0, (num_ori % 16) * sizeof(popsift::DescriptorHalf));
+    _device_queue.memset(_ori_half + num_ori, 256, (num_ori % 16) * sizeof(popsift::DescriptorHalf));
     // The rest is set in squared_norms part
 #endif
 
