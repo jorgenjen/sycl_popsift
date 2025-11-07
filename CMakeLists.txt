@@ -101,7 +101,8 @@ if(${Profiling})
     STATUS
       "Profiling -- Compiling with --lineinfo and -q with -O3, Also using sycl queue profiling for overall metrics"
   )
-  list(APPEND SYCL_FLAGS -gline-tables-only -g -O3)
+  # list(APPEND SYCL_FLAGS -gline-tables-only -g -O3)
+  list(APPEND SYCL_FLAGS -O3 -fno-fast-math)
   # list(APPEND SYCL_FLAGS -gline-tables-only)
 
   # For sycl queue profiling (for overall frame performance and such)
