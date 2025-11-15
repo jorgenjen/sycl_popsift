@@ -212,7 +212,7 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         // fprintf(stderr, "AFTER ONE WAVE \n");
 
-                        sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
+                        // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
 
                         // Storing event to class only for profiling not needed for normal use
 
@@ -231,8 +231,8 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         // ##################################################################################
                         // # FOR FULL OCTAVE BUILD SIMPLE
-                        // oct_obj._level_complete_events[_levels - PREV_LEVEL] =
-                        //   build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
+                        oct_obj._level_complete_events[_levels - PREV_LEVEL] =
+                          build_octave_one_wave_input(conf, base_img, d_gauss_write, img_transfer);
                         // FOR FULL OCTAVE END
                         // ##################################################################################
 
@@ -338,7 +338,7 @@ void Pyramid::build_pyramid(const Config& conf,
 
                         // sycl::event horiz = horiz_from_input_image(conf, base_img, d_gauss_write, img_transfer);
 
-                        oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
+                        // oct_obj._level_complete_events[0] = vert_from_interm(octave, 0, gaussTableChoice, horiz);
 
                         // _device_queue.wait();
                         // popsift::sycl_common::print_region(oct_obj.getDataArrayHost()[0],

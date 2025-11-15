@@ -164,7 +164,7 @@ int main(int argc, char** argv)
 
 #define WARMUP_RUNS 11 // 10 warmup runs
 
-#define TEST_JOINT_MATRIX true
+#define TEST_JOINT_MATRIX false
 #define MAX_DESC_SIZE 50000 // Was 50000
 #define STEP 1000
 

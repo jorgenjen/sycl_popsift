@@ -36,7 +36,7 @@ using namespace std;
  */
 #define WITH_VLFEAT_SMOOTHING
 
-#define HALF_PRECISION 1
+#define HALF_PRECISION 0
 namespace popsift {
 
 template<int half>
@@ -88,7 +88,7 @@ inline float exp(const float& x)
  */
 // inline static float smoothe(const float* const src, const int bin)
 inline static float smoothe(const sycl::local_accessor<float, 1> src, const int bin)
-{ // removed template as it did nothing
+{
     const int prev = (bin == 0) ? ORI_NBINS - 1 : bin - 1;
     const int next = (bin == ORI_NBINS - 1) ? 0 : bin + 1;
 

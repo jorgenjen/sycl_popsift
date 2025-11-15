@@ -161,7 +161,7 @@ FeaturesDev::FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::
       num_ori, __FILE__, __LINE__, "Could not allocate shared memory for orientation Descriptors", _device_queue);
 #endif
 
-#if ZERO_PADDED_REMAINDER_MATRIX && TRANSFORM_TO_HALF
+#if ZERO_PADDED_REMAINDER_MATRIX && TRANSFORM_TO_HALF && USE_JOINT_MATRIX
     _ori_half = popsift::sycl_common::malloc_devT<DescriptorHalf>(
       num_ori + num_ori % 16,
       __FILE__,
