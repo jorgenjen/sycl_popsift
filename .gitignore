@@ -19,3 +19,11 @@ new_build
 .ipynb_checkpoints
 build_normal
 build_normal_fp32
+.vscode
+build_gpu
+build_persistent
+correct_build
+no_bindless_build
+no_fast_math_build
+non_aligned_bindless_bitonic
+usm_build
