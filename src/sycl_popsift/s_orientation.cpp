@@ -36,7 +36,7 @@ using namespace std;
  */
 #define WITH_VLFEAT_SMOOTHING
 
-#define HALF_PRECISION 1
+#define HALF_PRECISION 0
 namespace popsift {
 
 template<int half>
@@ -326,7 +326,7 @@ class ori_par
         // Hence need to set this to 2 in that case (popcount)
         //      --> Is the min of popcount and ORIENTATION_MAX_COUNT
         // int max_count = ORIENTATION_MAX_COUNT;
-#define minimal_sort 1
+#define minimal_sort 0
 
 #if minimal_sort
         int my_index = -1; // if unmodified it was not assigned value in minimal

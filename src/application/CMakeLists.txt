@@ -128,6 +128,35 @@ target_compile_definitions(popsift-match PRIVATE ${Boost_DEFINITIONS})
 target_link_libraries(popsift-match PUBLIC PopSift::popsift ${PD_LINK_LIBS})
 
 # ##############################################################################
+# popsift-extract-desc
+# ##############################################################################
+
+add_executable(popsift-extract-descs extract_desc.cpp pgmread.cpp pgmread.h)
+#
+# set_property(TARGET popsift-match PROPERTY CXX_STANDARD 11)
+#
+target_compile_options(popsift-extract-descs PRIVATE ${PD_COMPILE_OPTIONS})
+target_include_directories(popsift-extract-descs PUBLIC PopSift::popsift
+                                                        ${PD_INCLUDE_DIRS})
+target_compile_definitions(popsift-extract-descs PRIVATE ${Boost_DEFINITIONS})
+target_link_libraries(popsift-extract-descs PUBLIC PopSift::popsift
+                                                   ${PD_LINK_LIBS})
+
+# ##############################################################################
+# popsift-eval
+# ##############################################################################
+
+add_executable(popsift-eval eval.cpp pgmread.cpp pgmread.h)
+#
+# set_property(TARGET popsift-match PROPERTY CXX_STANDARD 11)
+#
+target_compile_options(popsift-eval PRIVATE ${PD_COMPILE_OPTIONS})
+target_include_directories(popsift-eval PUBLIC PopSift::popsift
+                                               ${PD_INCLUDE_DIRS})
+target_compile_definitions(popsift-eval PRIVATE ${Boost_DEFINITIONS})
+target_link_libraries(popsift-eval PUBLIC PopSift::popsift ${PD_LINK_LIBS})
+
+# ##############################################################################
 # installation
 # ##############################################################################
 

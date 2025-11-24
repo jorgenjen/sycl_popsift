@@ -295,7 +295,8 @@ sycl::event Pyramid::horiz_from_input_image(const Config& conf,
             return _device_queue.parallel_for(
               sycl::nd_range{global, local},
               {d_gauss_write, img_write},
-              normalizedSource::Horiz<false>(
+              // normalizedSource::Horiz<false>(
+              normalizedSource::Horiz<true>(
                 base->getInputImage(), oct_obj.getIntermediate(), _d_gauss, width, height, shift));
         }
         else

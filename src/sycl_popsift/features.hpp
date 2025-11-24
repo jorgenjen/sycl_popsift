@@ -117,10 +117,16 @@ class FeaturesDev : public FeaturesBase
     sycl::event _norms_computed_event;
 #endif
 
+    float* _squared_norms;
+    sycl::event _norms_computed_event;
+
   public:
     FeaturesDev() = delete;
     FeaturesDev(sycl::queue Q);
     FeaturesDev(sycl::queue Q, int num_ext, int num_ori);
+
+    FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::Descriptor>& features);
+
     ~FeaturesDev() override;
 
     void reset(int num_ext, int num_ori);
@@ -204,6 +210,9 @@ class FeaturesDev : public FeaturesBase
     inline float* getSquaredNorms() { return _squared_norms; }
     sycl::event getNormsEvent() { return _norms_computed_event; }
 #endif
+
+    inline float* getSquaredNorms() { return _squared_norms; }
+    sycl::event getNormsEvent() { return _norms_computed_event; }
 
     Descriptor* getDescriptor(int descIndex);
     const Descriptor* getDescriptor(int descIndex) const;

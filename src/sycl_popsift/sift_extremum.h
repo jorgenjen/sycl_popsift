@@ -77,9 +77,14 @@ struct Extremum
 // #endif
 // };
 
+// struct Descriptor
+// {
+//     FeatureType features[128];
+// };
+
 struct Descriptor
 {
-    FeatureType features[128];
+    float features[128];
 };
 
 // Temporary will template

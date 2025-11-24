@@ -1,4 +1,5 @@
 #include "sycl_popsift/features.hpp"
+#include "sycl_popsift/sift_extremum.h"
 
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
@@ -22,8 +23,10 @@
 // Popsift includes
 #include <boost/filesystem.hpp>
 #include <boost/program_options.hpp>
+#include <sycl_popsift/features.hpp>
 #include <sycl_popsift/non_sycl/sift_conf.hpp>
 #include <sycl_popsift/popsift.hpp>
+#include <sycl_popsift/sift_extremum.h>
 #include <unistd.h>
 
 #include <chrono> // only for test
@@ -37,12 +40,9 @@
 
 using namespace std;
 
-static bool write_as_uchar = false;
-static bool write_features = true; // Takse loads of time when running many
-
 // should probably use a similar options struct as popsift in the future
 // revisions just for initial layout
-static void parseargs(int argc, char** argv, popsift::Config* config, std::string& inputFile)
+static void parseargs(int argc, char** argv, popsift::Config* config, std::string& inputFile, std::string& outputFile)
 {
     // using namespace boost::program_options;
     using boost::program_options::options_description;
@@ -60,7 +60,8 @@ static void parseargs(int argc, char** argv, popsift::Config* config, std::strin
              files")
            */
 
-          ("input-file,i", value<std::string>(&inputFile)->required(), "Input file");
+          ("input-file,i", value<std::string>(&inputFile)->required(), "Input file")(
+            "output-file,o", value<std::string>(&outputFile)->required(), "Feature output file");
     }
     // options_description modes("Modes");
     // {
@@ -176,20 +177,86 @@ SiftJob* process_image(const std::string& inputFile, PopSift& PopSift)
 #endif
 }
 
-void read_job(SiftJob* job)
+// void write_features(const std::string& filename, popsift::Feature* feats, size_t count)
+// {
+//     std::ofstream out(filename, std::ios::binary);
+//     if(!out)
+//     {
+//         throw std::runtime_error("Failed to open file for writing: " + filename);
+//     }
+//
+//     // Write number of features
+//     uint64_t n = count;
+//     out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+//
+//     for(size_t i = 0; i < count; i++)
+//     {
+//         const popsift::Feature& f = feats[i];
+//
+//         // Keypoint metadata
+//         out.write(reinterpret_cast<const char*>(&f.xpos), sizeof(float));
+//         out.write(reinterpret_cast<const char*>(&f.ypos), sizeof(float));
+//         out.write(reinterpret_cast<const char*>(&f.sigma), sizeof(float));
+//         out.write(reinterpret_cast<const char*>(&f.num_ori), sizeof(int));
+//
+//         // Orientations + descriptors
+//         for(int o = 0; o < f.num_ori; o++)
+//         {
+//             out.write(reinterpret_cast<const char*>(&f.orientation[o]), sizeof(float));
+//
+//             // write the 128 descriptor values
+//             out.write(reinterpret_cast<const char*>(f.desc[o]->features), sizeof(float) * 128);
+//         }
+//     }
+// }
+
+void write_features(const std::string& filename, popsift::Feature* feats, size_t count, bool append = false)
 {
-    popsift::FeaturesHost* feature_list = job->getHost(); // wait for job to complete
+    std::ios::openmode mode = std::ios::binary | (append ? std::ios::app : std::ios::out);
 
-    cerr << "Number of feature points: " << feature_list->getFeatureCount()
-         << " number of feature descriptors: " << feature_list->getDescriptorCount() << endl;
+    std::ofstream out(filename, mode);
+    if(!out)
+        throw std::runtime_error("Failed to open file for writing");
 
-    if(write_features)
+    for(size_t i = 0; i < count; i++)
     {
-        std::ofstream of("output-features.txt");
-        feature_list->print(of, write_as_uchar);
-    }
+        const auto& f = feats[i];
 
-    delete feature_list;
+        out.write((char*)&f.xpos, sizeof(float));
+        out.write((char*)&f.ypos, sizeof(float));
+        out.write((char*)&f.sigma, sizeof(float));
+        out.write((char*)&f.num_ori, sizeof(int));
+
+        for(int o = 0; o < f.num_ori; o++)
+        {
+            out.write((char*)&f.orientation[o], sizeof(float));
+            out.write((char*)f.desc[o]->features, sizeof(float) * 128);
+        }
+    }
+}
+void write_descriptors_to_file(const std::string& filename,
+                               popsift::Feature* features,
+                               size_t count,
+                               bool append = false)
+{
+    std::ios_base::openmode mode = std::ios::binary | (append ? std::ios::app : std::ios::out);
+    std::ofstream out(filename, mode);
+
+    if(!out)
+        throw std::runtime_error("Failed to open file for writing: " + filename);
+
+    out.write(reinterpret_cast<const char*>(features), count * sizeof(popsift::Feature));
+
+    out.close();
+
+    // std::ios_base::openmode mode = std::ios::binary | (append ? std::ios::app : std::ios::out);
+    // std::ofstream out(filename, mode);
+    //
+    // if(!out)
+    //     throw std::runtime_error("Failed to open file for writing: " + filename);
+    //
+    // out.write(reinterpret_cast<const char*>(descriptors), count * sizeof(popsift::Descriptor));
+    // out.close();
 }
 
 int main(int argc, char** argv)
@@ -197,18 +264,11 @@ int main(int argc, char** argv)
     popsift::Config config; // Init with default parameters
     list<string> inputFiles;
     string inputFile{};
-
-    // cout << "Le upscalefactor: " << config.getUpscaleFactor() << endl;
-    // cout << "Config gauus mode: " << config.getGaussMode()
-    //      << "is same as: " << popsift::Config::VLFeat_Relative << endl;
+    string outputFile{};
 
     try
     {
-        parseargs(argc,
-                  argv,
-                  &config,
-                  inputFile); // Parse command line -- should add config
-                              // as parameter so it can be modified
+        parseargs(argc, argv, &config, inputFile, outputFile);
         std::cout << inputFile << std::endl;
     }
     catch(std::exception& e)
@@ -261,17 +321,41 @@ int main(int argc, char** argv)
 
     // PopSift.allMainThread();
 
+    bool initial = true;
+
+    int total_desc = 0;
     while(!jobs.empty())
     {
         SiftJob* job = jobs.front();
         jobs.pop();
+
         if(job)
         {
-            read_job(job);
+            popsift::FeaturesHost* feature_list = job->getHost(); // wait for job to complete
+            // feature_list->getDescriptors();
+            // write_descriptors_to_file(
+            //   outputFile, feature_list->getDescriptors(), feature_list->getDescriptorCount(), !initial);
+
+            // feature_list->getFeatures();
+            write_features(outputFile, feature_list->getFeatures(), feature_list->getFeatureCount(), !initial);
+
+            total_desc += feature_list->getDescriptorCount();
+            if(initial)
+                initial = false;
+
+            delete feature_list;
 
             delete job;
         }
     }
+
+#if USE_JOINT_MATRIX
+    printf("Total fp16 descriptors extracted:");
+#else
+    printf("Total fp32 descriptors extracted:");
+
+#endif
+    printf(" %d \n", total_desc);
 
     return EXIT_SUCCESS;
 }

@@ -133,6 +133,73 @@ FeaturesDev::FeaturesDev(sycl::queue Q, int num_ext, int num_ori)
     reset(num_ext, num_ori);
 }
 
+// Load from external file
+FeaturesDev::FeaturesDev(sycl::queue Q, int num_ori, const std::vector<popsift::Descriptor>& features)
+  : _device_queue(Q)
+  , _ext(nullptr)
+  , _ori(nullptr)
+  , _rev(nullptr)
+#if USE_JOINT_MATRIX
+  , _squared_norms(nullptr)
+#endif
+{
+    // #if ZERO_PADDED_REMAINDER_MATRIX && !TRANSFORM_TO_HALF
+    //     // Need it to be able to zero padd  hence large neought segment for that to avoid tail logic for matrix match
+    //     _ori =
+    //       popsift::sycl_common::malloc_sharedT<Descriptor>(num_ori + num_ori % 16,
+    //                                                        __FILE__,
+    //                                                        __LINE__,
+    //                                                        "Could not allocate shared memory for orientation
+    //                                                        Descriptors", _device_queue);
+    //
+    //     // Set the tail of the segment to 0 (zero padd )
+    //     _device_queue.memset(_ori + num_ori, 0, (num_ori % 16) * sizeof(popsift::Descriptor));
+    // #else
+    printf("Num ori %d\n", num_ori);
+    _ori = popsift::sycl_common::malloc_sharedT<Descriptor>(
+      num_ori, __FILE__, __LINE__, "Could not allocate shared memory for orientation Descriptors", _device_queue);
+    // #endif
+
+    // #if ZERO_PADDED_REMAINDER_MATRIX && TRANSFORM_TO_HALF
+    //     _ori_half = popsift::sycl_common::malloc_devT<DescriptorHalf>(
+    //       num_ori + num_ori % 16,
+    //       __FILE__,
+    //       __LINE__,
+    //       "Could not allocate shared memory for orientation Descriptors in fp16",
+    //       _device_queue);
+    //
+    //     // Set the tail of the segment to 0 (zero padd )
+    //     _device_queue.memset(_ori_half + num_ori, 0, (num_ori % 16) * sizeof(popsift::DescriptorHalf));
+    //     // The rest is set in squared_norms part
+    // #endif
+
+    _device_queue.memcpy(_ori, features.data(), num_ori * sizeof(popsift::Descriptor));
+
+    // #if USE_JOINT_MATRIX
+    // if(_squared_norms != nullptr)
+    //     {
+    //         sycl::free(_squared_norms, _device_queue);
+    //         _squared_norms = nullptr;
+    //     }
+    //
+    // #if ZERO_PADDED_REMAINDER_MATRIX
+    //     _squared_norms = popsift::sycl_common::malloc_devT<float>(
+    //       num_ori + num_ori % 16, __FILE__, __LINE__, "Failed to allocate squared norms array", _device_queue);
+    //
+    //     _device_queue.memset(_squared_norms + num_ori, 0, (num_ori % 16) * sizeof(float));
+    // #else
+    //     _squared_norms = popsift::sycl_common::malloc_devT<float>(
+    //       num_ori, __FILE__, __LINE__, "Failed to allocate squared norms array", _device_queue);
+    // #endif
+    //
+    // #endif
+
+    setDescriptorCount(num_ori);
+
+    // Slow should return the event but fine for mathinc benchmarking but not real world
+    _device_queue.wait();
+}
+
 FeaturesDev::~FeaturesDev()
 {
     sycl::free(_ext, _device_queue);
