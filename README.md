@@ -1,85 +1,20 @@
-## Changes in structure from Popsift CUDA
+## Where we tested the code
 
-1. Move d_gauss from global to an attribute of popsift. As you canot pass global variables to a sycl kernel. And sycl does not support constant memory (global memory with better caching) as cuda does
-2. Modify grid_divide so that it gives the complete outer size as sycl does not do blockidx like cuda.
-3. Modify add another scale fucntion that is not bound to a class so we deal wit two widths heights
-    - Done like this due to the way popsift utilizes the texture engine to do the upscale and I'm currently not using that so need to replicate teh same functionality in software
-4. Could not use the generic structure for ori_prefix_sum as it resulted in 80 registers per work-item and thus more register than allowed which caused an error (surprisingly not register spilling) this was the error
-    - ```bash 
-      what():  Exceeded the number of registers available on the hardware.
-        The number registers per work-group cannot exceed 65536 for this kernel on this device.
-        The kernel uses 80 registers per work-item for a total of 1024 work-items per work-group.
+1. The branch `feature/evaluate-sift-descriptors` was used to run the sift versions and evaluate them with distance metrics
+2. The branch `feature/multi-wg-matrix-matchng` was used to test both the matching performance
 
-    ```
+The same test code was used on PopSift with minor modifications to make it work with CUDA and the slight differences in API for sycl_popsift and PopSift
 
-## Known problems currently:
+The main head does not have working sift which was broken due to the persistent threads experient that we merged in. Hence testing of sift from states before that. 
 
-1. Segfault happening when running in quick succession. Seems to happen on first octave after or during level 5 so could be related to level 5 (final level) or subsampling for next octave. Always happens for the first octave atelast in the examples I've gotten so far.
-    - Now it seems to not segfault anymore but fails every other run that is back to back due to 
+`Bin_counter` branch is the one used to retrive number of non -INFINITY in the sorting stage. 
 
-2. Doing kernel invocatons wrong in 2d as linearization should be as describled in documentation(see below) to get the sub-groups to read from coaleced memory to replicate the cuda code and get the sub-groups to equal the accesses of the cuda warps.
-    - So in sycl we need the following conversions from cuda kernel to sycl in 2D
-        - cuda.x --> nd[1] && cuda.y --> nd[0]
-    - in 3D:
-        - cuda.x --> nd[2] && cuda.y --> nd[1] && cuda.z --> nd[0]
-        
-![sycl linearization](/linearization_in_sycl.png)
-
-
-## Things that needs to be done:
-
-- [ ] Improve error handlng (preferably asynchronous errors (refer to chap 5 in book)). 
-
-- [ ] Make it work for cpu aswell (could not work due to local and global sizes does not match with what the cpu can handle? device_multiple? Look into using prefered device multiple instead to create the nd_ranges for the kernels
-
-- [ ] Get rid of unnecessary shared USM memory (hapers performance)
-
-
-## Profiling/analysis
-
-Easy way to profile individual kernels and operations that is tied to an event by comparing event start and end. From sycl documentation
-
-```c++
-#include <sycl/sycl.hpp>
-
-#include <cstdlib>
-#include <cstring>
-
-
-int main() {
-  sycl::property_list properties{sycl::property::queue::enable_profiling()};
-  auto q = sycl::queue(sycl::default_selector_v, properties);
-
-  std::cout
-      << "  Platform: "
-      << q.get_device().get_platform().get_info<sycl::info::platform::name>()
-      << std::endl;
-
-  const int num_ints = 1024 * 1024;
-  const size_t num_bytes = num_ints * sizeof(int);
-  const int alignment = 8;
-
-  // Alloc memory on host
-  auto src = std::aligned_alloc(alignment, num_bytes);
-  std::memset(src, 1, num_bytes);
-
-  // Alloc memory on device
-  auto dst = sycl::malloc_device<int>(num_ints, q);
-  q.memset(dst, 0, num_bytes).wait();
-
-  // Copy from host to device
-  auto event = q.memcpy(dst, src, num_bytes);
-  event.wait();
-
-
-  auto end =
-      event.get_profiling_info<sycl::info::event_profiling::command_end>();
-
-  auto start =
-      event.get_profiling_info<sycl::info::event_profiling::command_start>();
-
-  std::cout << "Elapsed time: " << (end - start) / 1.0e9 << " seconds\n";
-
-  sycl::free(dst, q);
-}
+There are some options in the cmake.
+```bash
+cmake ..  -DCMAKE_CXX_COMPILER=icpx -DENABLE_CUDA=ON -DJointMatrix=off -DProfiling=OFF -DPopSift_USE_GRID_FILTER=OFF -DOptimistic_ori_scheduling=off -DPersistentThreads=OFF -DPerfTestingFunctions=OFF -DPopSift_EXPERIMENTAL=ONA
 ```
+These are all the options They do not all do anything however. The important ones are `JointMatrix` to toggle that on and of for matching. And `ENABLE_CUDA` to toggle GPU/CPU mode 
+there is also `PopSift_EXPERIMENTAL` that toggles experiemntal features off like jointmatrix and bindless iamges
+
+
+
